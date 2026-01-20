@@ -1,0 +1,40 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && (!data.exists() || auth.uid == $uid)"
+      }
+    },
+
+    "inviteCodes": {
+      ".read": "auth != null",
+      "$codeId": {
+        ".write": "auth != null && (!data.exists() || data.child('used').val() == false)"
+      }
+    },
+
+    "shopping-list": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "shopping-history": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "common-items": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "less-common-items": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}
