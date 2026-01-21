@@ -11,7 +11,7 @@ import {
 import { ref, set, get, remove, onValue } from 'firebase/database';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 
-const CATEGORIES = ['VEGGIES', 'FRUIT', 'DELI, DAIRY, EGGS', 'MEAT & FISH', 'FROZEN', 'PREPARED FOODS', 'BAKING, SPICES & OILS', 'DRY GOODS', 'RANCH 99 / WEEE / BERKELEY BOWL', 'PHARMACY / OTC', 'TARGET / AMAZON / COSTCO', 'COSTCO BULK FOODS'];
+const CATEGORIES = ['VEGGIES', 'FRUIT', 'MEAT & FISH', 'DELI, DAIRY, EGGS', 'FROZEN', 'DRY GOODS', 'BAKING, SPICES & OILS', 'PREPARED FOODS', 'RANCH 99 / WEEE / BERKELEY BOWL', 'PHARMACY / OTC', 'TARGET / AMAZON / COSTCO', 'COSTCO BULK FOODS'];
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const DEFAULT_ITEMS = {
