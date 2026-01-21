@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList } from 'lucide-react';
 import { auth, database, firestore } from './firebase';
-import { 
-  createUserWithEmailAndPassword, 
+import {
+  createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
-  onAuthStateChanged
+  onAuthStateChanged,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { ref, set, get, remove, onValue } from 'firebase/database';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
@@ -62,12 +63,31 @@ function Login({ onLoginSuccess }) {
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   const handleSignIn = async () => {
     setLoading(true);
     setError('');
+    setSuccess('');
     try {
       await signInWithEmailAndPassword(auth, email, password);
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  const handleResetPassword = async () => {
+    if (!email) {
+      setError('Please enter your email address');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setSuccess('Password reset email sent! Check your inbox.');
     } catch (err) {
       setError(err.message);
     }
@@ -77,6 +97,7 @@ function Login({ onLoginSuccess }) {
   const handleSignUp = async () => {
     setLoading(true);
     setError('');
+    setSuccess('');
     try {
       const usersSnapshot = await get(ref(database, 'users'));
       const isFirstUser = !usersSnapshot.exists();
@@ -164,10 +185,16 @@ function Login({ onLoginSuccess }) {
             </div>
           )}
           {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
+          {success && <div className="bg-green-50 text-green-600 px-4 py-3 rounded-xl text-sm font-medium border border-green-200">{success}</div>}
           <button onClick={mode === 'signin' ? handleSignIn : handleSignUp} disabled={loading} className="w-full text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90" style={{ backgroundColor: loading ? undefined : '#FF7A7A' }}>
             {loading ? 'Loading...' : mode === 'signin' ? 'Sign In' : 'Sign Up'}
           </button>
-          <button onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); }} className="w-full text-sm font-semibold hover:underline" style={{ color: '#FF7A7A' }}>
+          {mode === 'signin' && (
+            <button onClick={handleResetPassword} disabled={loading} className="w-full text-sm font-semibold hover:underline text-gray-600 transition-colors">
+              Forgot password?
+            </button>
+          )}
+          <button onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); setSuccess(''); }} className="w-full text-sm font-semibold hover:underline" style={{ color: '#FF7A7A' }}>
             {mode === 'signin' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
           </button>
         </div>
