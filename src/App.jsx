@@ -11,7 +11,7 @@ import {
 import { ref, set, get, remove, onValue } from 'firebase/database';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 
-const CATEGORIES = ['VEGGIES', 'FRUIT', 'MEAT & FISH', 'DELI, DAIRY, EGGS', 'FROZEN', 'DRY GOODS', 'BAKING, SPICES & OILS', 'PREPARED FOODS', 'RANCH 99 / WEEE / BERKELEY BOWL', 'PHARMACY / OTC', 'TARGET / AMAZON / COSTCO', 'COSTCO BULK FOODS'];
+const CATEGORIES = ['VEGGIES', 'FRUIT', 'MEAT & FISH', 'DELI, DAIRY, EGGS', 'FROZEN', 'DRY GOODS', 'BAKING, SPICES & OILS', 'PREPARED FOODS', 'PHARMACY / OTC', 'TARGET / AMAZON / COSTCO', 'COSTCO BULK FOODS', 'RANCH 99 / WEEE / BERKELEY BOWL'];
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const DEFAULT_ITEMS = {
@@ -321,8 +321,12 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(true);
   const [showHeader, setShowHeader] = useState(true);
   const [showStickyToolbar, setShowStickyToolbar] = useState(false);
+  const [isScrolling, setIsScrolling] = useState(false);
+  const scrollTimeoutRef = useRef(null);
   const prevQuickAddMode = useRef(quickAddMode);
   const lastScrollY = useRef(0);
+  const lastScrollTime = useRef(Date.now());
+  const smoothedVelocity = useRef(0);
   const toolbarRef = useRef(null);
 
   useEffect(() => {
@@ -615,6 +619,30 @@ export default function App() {
         }
       }
 
+      // Detect scrolling for fade effects - only at moderate to fast speeds
+      const now = Date.now();
+      const timeDelta = Math.max(now - lastScrollTime.current, 1);
+      const scrollDelta = Math.abs(currentScrollY - lastScrollY.current);
+      const instantVelocity = (scrollDelta / timeDelta) * 1000; // pixels per second
+
+      // Smooth the velocity to avoid flickering
+      smoothedVelocity.current = smoothedVelocity.current * 0.7 + instantVelocity * 0.3;
+
+      const velocityThreshold = 800; // pixels per second
+
+      if (smoothedVelocity.current >= velocityThreshold) {
+        setIsScrolling(true);
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current);
+        }
+        scrollTimeoutRef.current = setTimeout(() => {
+          setIsScrolling(false);
+          smoothedVelocity.current = 0;
+        }, 150);
+      }
+
+      lastScrollTime.current = now;
+
       lastScrollY.current = currentScrollY;
     };
 
@@ -643,12 +671,44 @@ export default function App() {
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-        
+
         * {
           font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }
+
+        .scroll-fade-full {
+          transition: none;
+        }
+        .scroll-fade-full.is-scrolling {
+          opacity: 0;
+          transition: opacity 0.1s ease-out;
+        }
+
+        .scroll-fade-border {
+          transition: none;
+        }
+        .scroll-fade-border.is-scrolling {
+          border-color: transparent;
+          transition: border-color 0.1s ease-out;
+        }
+
+        .scroll-fade-partial {
+          transition: none;
+        }
+        .scroll-fade-partial.is-scrolling {
+          opacity: 0.5;
+          filter: grayscale(100%);
+          transition: opacity 0.1s ease-out, filter 0.1s ease-out;
+        }
+
+        .scroll-fade-bg {
+          transition: none;
+        }
+        .scroll-fade-bg.is-scrolling {
+          transition: background-color 0.1s ease-out;
+        }
       `}</style>
-      <div className="min-h-screen" style={{ backgroundColor: '#F7F7F7' }}>
+      <div className={`min-h-screen scroll-fade-bg ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: isScrolling ? '#FFFFFF' : '#F7F7F7' }}>
         <div className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
           <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-4">
             <div className="flex items-center gap-3">
@@ -707,7 +767,7 @@ export default function App() {
                 <div className="fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-40 transition-transform duration-300" style={{ transform: showHeader ? 'translateY(72px)' : 'translateY(0)' }}>
                   <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3">
                     <div className="flex items-stretch gap-3">
-                      <div className="bg-white rounded-2xl p-1.5 border-2 border-gray-200 flex-1">
+                      <div className={`bg-white rounded-2xl p-1.5 border-2 border-gray-200 flex-1 scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''}`}>
                         <div className="flex gap-1 h-full">
                           <button
                             onClick={() => setQuickAddMode(false)}
@@ -735,7 +795,7 @@ export default function App() {
                           </button>
                         </div>
                       </div>
-                      <div className={`rounded-2xl p-1.5 border-2 transition-colors ${list.filter(i => i.done).length === 0 ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
+                      <div className={`rounded-2xl p-1.5 border-2 transition-colors scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''} ${list.filter(i => i.done).length === 0 ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
                         <button onClick={clearDone} disabled={list.filter(i => i.done).length === 0} className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all h-full ${list.filter(i => i.done).length === 0 ? 'text-gray-400' : 'text-white'}`} style={{ backgroundColor: list.filter(i => i.done).length === 0 ? 'transparent' : '#FF7A7A' }}>
                           <Check size={18} strokeWidth={2.5} />
                           <span>Clear</span>
@@ -748,7 +808,7 @@ export default function App() {
 
               {/* Original toolbar in page */}
               <div ref={toolbarRef} className="flex items-stretch gap-3 mb-6">
-                <div className="bg-white rounded-2xl p-1.5 border-2 border-gray-200 flex-1">
+                <div className={`bg-white rounded-2xl p-1.5 border-2 border-gray-200 flex-1 scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''}`}>
                   <div className="flex gap-1 h-full">
                     <button
                       onClick={() => setQuickAddMode(false)}
@@ -776,7 +836,7 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                <div className={`rounded-2xl p-1.5 border-2 transition-colors ${list.filter(i => i.done).length === 0 ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
+                <div className={`rounded-2xl p-1.5 border-2 transition-colors scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''} ${list.filter(i => i.done).length === 0 ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
                   <button onClick={clearDone} disabled={list.filter(i => i.done).length === 0} className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all h-full ${list.filter(i => i.done).length === 0 ? 'text-gray-400' : 'text-white'}`} style={{ backgroundColor: list.filter(i => i.done).length === 0 ? 'transparent' : '#FF7A7A' }}>
                     <Check size={18} strokeWidth={2.5} />
                     <span>Clear</span>
@@ -791,7 +851,7 @@ export default function App() {
                   const isExpanded = expandedCategories[g.category];
 
                   return (
-                    <div key={g.category} className="space-y-2 bg-white border border-gray-200 rounded-2xl overflow-hidden">
+                    <div key={g.category} className={`space-y-2 bg-white border border-gray-200 rounded-2xl overflow-hidden scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
                       <button
                         onClick={() => toggleCategory(g.category)}
                         className={`w-full py-4 px-4 flex items-center gap-3 transition-colors ${
@@ -801,9 +861,9 @@ export default function App() {
                         }`}
                       >
                         {isExpanded ? (
-                          <ChevronDown size={20} className={quickAddMode ? "text-gray-600" : "text-gray-400"} />
+                          <ChevronDown size={20} className={`scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${quickAddMode ? "text-gray-600" : "text-gray-400"}`} />
                         ) : (
-                          <ChevronRight size={20} className={quickAddMode ? "text-gray-600" : "text-gray-400"} />
+                          <ChevronRight size={20} className={`scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${quickAddMode ? "text-gray-600" : "text-gray-400"}`} />
                         )}
                         <h3 className={`flex-1 text-left uppercase tracking-wide ${
                           quickAddMode
@@ -811,7 +871,7 @@ export default function App() {
                             : "font-semibold text-gray-500 text-sm"
                         }`}>{g.category}</h3>
                         {uncheckedCount > 0 && (
-                          <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2.5 py-1 rounded-full min-w-[24px] text-center">
+                          <span className={`bg-gray-200 text-gray-700 text-xs font-bold px-2.5 py-1 rounded-full min-w-[24px] text-center scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
                             {uncheckedCount}
                           </span>
                         )}
@@ -820,7 +880,7 @@ export default function App() {
                       {isExpanded && (
                         <>
                           {quickAddMode && (
-                            <div className="px-4 pb-3">
+                            <div className={`px-4 pb-3 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
                               <div className="relative">
                                 <Search className="absolute left-3 top-3 text-gray-400" size={18} />
                                 <input type="text" value={search} onChange={(e) => setCategorySearches(prev => ({ ...prev, [g.category]: e.target.value }))} placeholder={`Add to ${g.category}...`} className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors" />
@@ -840,26 +900,26 @@ export default function App() {
                                 if (item.type === 'list') {
                                   const li = item.data;
                                   return (
-                                    <div key={li.id} className="flex items-center gap-3 py-3 px-4 border-t border-gray-100">
-                                      <button onClick={() => toggleDone(li.id)} className={`flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all ${li.done ? 'border-transparent' : 'border-gray-300 bg-white'}`} style={{ backgroundColor: li.done ? '#FF7A7A' : undefined }}>
+                                    <div key={li.id} className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                                      <button onClick={() => toggleDone(li.id)} className={`flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'border-transparent' : 'border-gray-300 bg-white'}`} style={{ backgroundColor: li.done ? '#FF7A7A' : undefined }}>
                                         {li.done && <Check size={16} className="text-white" strokeWidth={3} />}
                                       </button>
                                       <span className={`flex-1 font-medium text-sm ${li.done ? 'line-through text-gray-400' : 'text-gray-800'}`}>{li.name}</span>
                                       {editingId === li.id ? (
-                                        <input type="text" value={editingQty} onChange={(e) => setEditingQty(e.target.value)} onBlur={finishEditQty} onKeyPress={(e) => e.key === 'Enter' && finishEditQty()} className="min-w-[60px] max-w-[120px] px-3 py-1.5 border-2 border-gray-300 rounded-lg text-right font-medium text-sm focus:outline-none focus:border-gray-400 transition-colors" autoFocus />
+                                        <input type="text" value={editingQty} onChange={(e) => setEditingQty(e.target.value)} onBlur={finishEditQty} onKeyPress={(e) => e.key === 'Enter' && finishEditQty()} className={`min-w-[60px] max-w-[120px] px-3 py-1.5 border-2 border-gray-300 rounded-lg text-right font-medium text-sm focus:outline-none focus:border-gray-400 transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`} autoFocus />
                                       ) : (
-                                        <button onClick={() => { setEditingId(li.id); setEditingQty(li.quantity); }} className={`px-2 py-1 rounded-md font-medium text-sm transition-colors ${li.done ? 'text-gray-400 bg-transparent' : 'text-gray-600 bg-gray-100 hover:bg-gray-200'} ${li.quantity.length <= 2 ? 'min-w-[32px] text-center' : 'min-w-[48px] text-right'}`}>
+                                        <button onClick={() => { setEditingId(li.id); setEditingQty(li.quantity); }} className={`px-2 py-1 rounded-md font-medium text-sm transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'text-gray-400 bg-transparent' : 'text-gray-600 bg-gray-100 hover:bg-gray-200'} ${li.quantity.length <= 2 ? 'min-w-[32px] text-center' : 'min-w-[48px] text-right'}`}>
                                           {li.quantity}
                                         </button>
                                       )}
-                                      <button onClick={() => removeItem(li.id)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={20} /></button>
+                                      <button onClick={() => removeItem(li.id)} className={`text-gray-400 hover:text-gray-600 transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}><X size={20} /></button>
                                     </div>
                                   );
                                 } else {
                                   const qi = item.data;
                                   return (
-                                    <button key={`qa-${idx}`} onClick={() => addItem(qi.name, g.category)} className="w-full flex items-center gap-3 py-3 px-4 hover:bg-gray-50 transition-colors border-t border-gray-100">
-                                      <div className="w-6 h-6 rounded-md flex items-center justify-center" style={{ backgroundColor: '#FF7A7A' }}><Plus size={16} className="text-white" strokeWidth={2.5} /></div>
+                                    <button key={`qa-${idx}`} onClick={() => addItem(qi.name, g.category)} className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-gray-50 transition-colors border-t border-gray-100 scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                                      <div className={`w-6 h-6 rounded-md flex items-center justify-center scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: '#FF7A7A' }}><Plus size={16} className="text-white" strokeWidth={2.5} /></div>
                                       <span className="flex-1 text-left font-semibold text-sm" style={{ color: '#FF7A7A' }}>{qi.name}</span>
                                     </button>
                                   );
