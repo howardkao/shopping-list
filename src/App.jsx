@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw } from 'lucide-react';
 import { auth, database, firestore } from './firebase';
 import {
   createUserWithEmailAndPassword,
@@ -10,9 +10,35 @@ import {
 } from 'firebase/auth';
 import { ref, set, get, remove, onValue } from 'firebase/database';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
+import {
+  initOfflineDB,
+  saveShoppingListLocally,
+  loadShoppingListLocally,
+  saveShoppingHistoryLocally,
+  loadShoppingHistoryLocally,
+  saveCommonItemsLocally,
+  loadAllCommonItemsLocally,
+  saveLessCommonItemsLocally,
+  loadAllLessCommonItemsLocally,
+  getLastSyncTime
+} from './offlineStorage';
 
 const CATEGORIES = ['VEGGIES', 'FRUIT', 'MEAT & FISH', 'DELI, DAIRY, EGGS', 'FROZEN', 'DRY GOODS', 'BAKING, SPICES & OILS', 'PREPARED FOODS', 'PHARMACY / OTC', 'TARGET / AMAZON / COSTCO', 'COSTCO BULK FOODS', 'RANCH 99 / WEEE / BERKELEY BOWL'];
 const generateId = () => Math.random().toString(36).substr(2, 9);
+
+const formatRelativeTime = (timestamp) => {
+  const now = Date.now();
+  const diff = now - timestamp;
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (seconds < 60) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+};
 
 const DEFAULT_ITEMS = {
   'VEGGIES': ['asparagus', 'broccoli', 'carrots', 'green beans', 'onion, yellow'],
@@ -319,6 +345,8 @@ export default function App() {
   const [expandedCategories, setExpandedCategories] = useState({});
   const [isOnline, setIsOnline] = useState(true);
   const [isConnected, setIsConnected] = useState(true);
+  const [localDataLoaded, setLocalDataLoaded] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState(null);
   const [showHeader, setShowHeader] = useState(true);
   const [showStickyToolbar, setShowStickyToolbar] = useState(false);
   const [isScrolling, setIsScrolling] = useState(false);
@@ -342,6 +370,48 @@ export default function App() {
       setAuthLoading(false);
     });
     return () => unsubscribe();
+  }, []);
+
+  // Load data from IndexedDB on mount (before Firebase connects)
+  useEffect(() => {
+    async function loadLocalData() {
+      try {
+        await initOfflineDB();
+
+        const [localList, localHistory, localCommon, localLessCommon, syncTime] = await Promise.all([
+          loadShoppingListLocally(),
+          loadShoppingHistoryLocally(),
+          loadAllCommonItemsLocally(),
+          loadAllLessCommonItemsLocally(),
+          getLastSyncTime()
+        ]);
+
+        // Only use local data if we have it and Firebase hasn't loaded yet
+        if (localList !== null && localList !== undefined) {
+          setList(localList);
+        }
+        if (localHistory !== null && localHistory !== undefined) {
+          setHistory(new Set(localHistory));
+        }
+        if (localCommon && Object.keys(localCommon).length > 0) {
+          setCommonItems(localCommon);
+        }
+        if (localLessCommon && Object.keys(localLessCommon).length > 0) {
+          setLessCommonItems(localLessCommon);
+        }
+        if (syncTime) {
+          setLastSyncTime(syncTime);
+        }
+
+        setLocalDataLoaded(true);
+        setLoading(false);
+      } catch (error) {
+        console.error('Failed to load local data:', error);
+        setLocalDataLoaded(true);
+      }
+    }
+
+    loadLocalData();
   }, []);
 
   useEffect(() => {
@@ -369,15 +439,23 @@ export default function App() {
     const lessCommonRef = ref(database, 'less-common-items');
 
     const unsubList = onValue(listRef, (snapshot) => {
-      setList(snapshot.val() || []);
+      const data = snapshot.val() || [];
+      setList(data);
+      // Save to IndexedDB for offline access
+      saveShoppingListLocally(data);
+      setLastSyncTime(Date.now());
     });
 
     const unsubHistory = onValue(historyRef, (snapshot) => {
-      setHistory(new Set(snapshot.val() || []));
+      const data = snapshot.val() || [];
+      setHistory(new Set(data));
+      // Save to IndexedDB for offline access
+      saveShoppingHistoryLocally(data);
     });
 
     const unsubCommon = onValue(commonRef, (snapshot) => {
       const data = snapshot.val();
+      let processedData;
       if (data) {
         // Decode Firebase keys back to category names
         const decoded = {};
@@ -386,14 +464,20 @@ export default function App() {
           decoded[actualCat] = data[encodedKey];
         });
         const first = Object.keys(decoded)[0];
-        setCommonItems(first && Array.isArray(decoded[first]) && typeof decoded[first][0] === 'string' ? migrateItems(decoded) : decoded);
+        processedData = first && Array.isArray(decoded[first]) && typeof decoded[first][0] === 'string' ? migrateItems(decoded) : decoded;
       } else {
-        setCommonItems(migrateItems(DEFAULT_ITEMS));
+        processedData = migrateItems(DEFAULT_ITEMS);
       }
+      setCommonItems(processedData);
+      // Save to IndexedDB for offline access
+      Object.keys(processedData).forEach(cat => {
+        saveCommonItemsLocally(cat, processedData[cat]);
+      });
     });
 
     const unsubLessCommon = onValue(lessCommonRef, (snapshot) => {
       const data = snapshot.val();
+      let processedData;
       if (data) {
         // Decode Firebase keys back to category names
         const decoded = {};
@@ -402,10 +486,15 @@ export default function App() {
           decoded[actualCat] = data[encodedKey];
         });
         const first = Object.keys(decoded)[0];
-        setLessCommonItems(first && Array.isArray(decoded[first]) && typeof decoded[first][0] === 'string' ? migrateItems(decoded) : decoded);
+        processedData = first && Array.isArray(decoded[first]) && typeof decoded[first][0] === 'string' ? migrateItems(decoded) : decoded;
       } else {
-        setLessCommonItems({});
+        processedData = {};
       }
+      setLessCommonItems(processedData);
+      // Save to IndexedDB for offline access
+      Object.keys(processedData).forEach(cat => {
+        saveLessCommonItemsLocally(cat, processedData[cat]);
+      });
     });
 
     setLoading(false);
@@ -755,7 +844,7 @@ export default function App() {
 
         {(!isOnline || !isConnected) && (
           <div className="bg-red-600 text-white px-4 py-2 text-center text-sm font-medium">
-            ⚠️ You're offline. Changes will sync when connection is restored.
+            ⚠️ You're offline. {lastSyncTime ? `Last synced ${formatRelativeTime(lastSyncTime)}.` : ''} Changes will sync when connection is restored.
           </div>
         )}
 
