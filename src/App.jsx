@@ -993,7 +993,7 @@ export default function App() {
                                       <button onClick={() => toggleDone(li.id)} className={`flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'border-transparent' : 'border-gray-300 bg-white'}`} style={{ backgroundColor: li.done ? '#FF7A7A' : undefined }}>
                                         {li.done && <Check size={16} className="text-white" strokeWidth={3} />}
                                       </button>
-                                      <span className={`flex-1 font-medium text-sm ${li.done ? 'line-through text-gray-400' : 'text-gray-800'}`}>{li.name}</span>
+                                      <span className={`flex-1 font-semibold text-sm ${li.done ? 'line-through text-gray-400' : ''}`} style={{ color: li.done ? undefined : '#FF7A7A' }}>{li.name}</span>
                                       {editingId === li.id ? (
                                         <input type="text" value={editingQty} onChange={(e) => setEditingQty(e.target.value)} onBlur={finishEditQty} onKeyPress={(e) => e.key === 'Enter' && finishEditQty()} className={`min-w-[60px] max-w-[120px] px-3 py-1.5 border-2 border-gray-300 rounded-lg text-right font-medium text-sm focus:outline-none focus:border-gray-400 transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`} autoFocus />
                                       ) : (
