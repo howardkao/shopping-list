@@ -318,3 +318,65 @@ export async function hasPendingSyncOperations() {
   const operations = await getQueuedSyncOperations();
   return operations.length > 0;
 }
+
+/**
+ * Save cached user info (for offline-first auth)
+ */
+export async function saveCachedUser(userInfo) {
+  await initOfflineDB();
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORES.META, 'readwrite');
+    const store = transaction.objectStore(STORES.META);
+    const request = store.put({
+      key: 'cachedUser',
+      ...userInfo,
+      cachedAt: Date.now()
+    });
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
+ * Load cached user info (for offline-first auth)
+ */
+export async function loadCachedUser() {
+  try {
+    await initOfflineDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORES.META, 'readonly');
+      const store = transaction.objectStore(STORES.META);
+      const request = store.get('cachedUser');
+      request.onsuccess = () => {
+        const record = request.result;
+        if (!record) { resolve(null); return; }
+        // saveCachedUser spreads userInfo directly (uid, email, isAdmin, cachedAt)
+        // so we extract those fields, not a nested .data property
+        const { key, cachedAt, ...userInfo } = record;
+        resolve(Object.keys(userInfo).length > 0 ? userInfo : null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error('Failed to load cached user:', error);
+    return null;
+  }
+}
+
+/**
+ * Clear cached user info (on explicit logout)
+ */
+export async function clearCachedUser() {
+  await initOfflineDB();
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORES.META, 'readwrite');
+    const store = transaction.objectStore(STORES.META);
+    const request = store.delete('cachedUser');
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}

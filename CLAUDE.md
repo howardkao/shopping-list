@@ -134,6 +134,19 @@ Categories are defined in `CATEGORIES` constant (App.jsx:14) and cannot be chang
  'RANCH 99 / WEEE / BERKELEY BOWL']
 ```
 
+## Production Logging System
+
+A comprehensive logging system automatically captures client-side events for debugging:
+
+- **Automatic collection**: Always enabled, logs stored in Firebase for 30 days
+- **Log categories**: Auth, Network, Firebase, Sync, OfflineStorage, App, Error
+- **Admin access**: View logs via Admin Panel → "View Production Logs"
+- **Debug panel**: Available to admins via bug icon, Ctrl+Shift+D, or ?debug=true
+- **Retention**: Automatic cleanup after 30 days (runs daily on login)
+- **Storage**: Firebase (`/logs/{userId}/{sessionId}/`) + IndexedDB (offline)
+
+See `LOGGING.md` for detailed documentation.
+
 ## Notes
 
 - The entire React application is contained in a single file: `src/App.jsx`

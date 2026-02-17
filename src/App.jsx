@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw } from 'lucide-react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Activity } from 'lucide-react';
 import { auth, database, firestore } from './firebase';
 import {
   createUserWithEmailAndPassword,
@@ -20,8 +20,15 @@ import {
   loadAllCommonItemsLocally,
   saveLessCommonItemsLocally,
   loadAllLessCommonItemsLocally,
-  getLastSyncTime
+  getLastSyncTime,
+  saveCachedUser,
+  loadCachedUser,
+  clearCachedUser
 } from './offlineStorage';
+import { logger } from './logger';
+import DebugPanel from './DebugPanel';
+import AdminLogViewer from './AdminLogViewer';
+import LogAnalytics from './LogAnalytics';
 
 const CATEGORIES = ['VEGGIES', 'FRUIT', 'MEAT & FISH', 'DELI, DAIRY, EGGS', 'FROZEN', 'DRY GOODS', 'BAKING, SPICES & OILS', 'PREPARED FOODS', 'PHARMACY / OTC', 'TARGET / AMAZON / COSTCO', 'COSTCO BULK FOODS', 'RANCH 99 / WEEE / BERKELEY BOWL'];
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -95,9 +102,16 @@ function Login({ onLoginSuccess }) {
     setLoading(true);
     setError('');
     setSuccess('');
+    logger.info('Auth', 'Sign in attempt', { email });
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      logger.info('Auth', 'Sign in successful', { email });
     } catch (err) {
+      logger.error('Auth', 'Sign in failed', {
+        email,
+        error: err.message,
+        code: err.code
+      });
       setError(err.message);
     }
     setLoading(false);
@@ -124,11 +138,14 @@ function Login({ onLoginSuccess }) {
     setLoading(true);
     setError('');
     setSuccess('');
+    logger.info('Auth', 'Sign up attempt', { email });
     try {
       const usersSnapshot = await get(ref(database, 'users'));
       const isFirstUser = !usersSnapshot.exists();
+      logger.info('Auth', 'Sign up - user check', { isFirstUser });
 
       if (!isFirstUser && !inviteCode) {
+        logger.warn('Auth', 'Sign up failed - invitation code required');
         setError('Invitation code required');
         setLoading(false);
         return;
@@ -142,10 +159,17 @@ function Login({ onLoginSuccess }) {
         );
 
         if (!validCode) {
+          logger.warn('Auth', 'Sign up failed - invalid invitation code', {
+            providedCode: inviteCode
+          });
           setError('Invalid or already used invitation code');
           setLoading(false);
           return;
         }
+
+        logger.info('Auth', 'Valid invitation code found', {
+          codeId: validCode[0]
+        });
 
         await set(ref(database, `inviteCodes/${validCode[0]}/used`), true);
         await set(ref(database, `inviteCodes/${validCode[0]}/usedBy`), email);
@@ -154,6 +178,12 @@ function Login({ onLoginSuccess }) {
 
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
+
+      logger.info('Auth', 'User created successfully', {
+        uid: user.uid,
+        email: user.email,
+        isFirstUser
+      });
 
       await set(ref(database, `users/${user.uid}`), {
         email: user.email,
@@ -166,8 +196,16 @@ function Login({ onLoginSuccess }) {
           email: user.email,
           createdAt: Date.now()
         });
+        logger.info('Auth', 'First user - admin privileges granted');
       }
+
+      logger.info('Auth', 'Sign up completed successfully');
     } catch (err) {
+      logger.error('Auth', 'Sign up failed', {
+        email,
+        error: err.message,
+        code: err.code
+      });
       setError(err.message);
     }
     setLoading(false);
@@ -229,11 +267,78 @@ function Login({ onLoginSuccess }) {
   );
 }
 
-function AdminPanel({ onClose }) {
+function UpdateToast({ onUpdate, onDismiss }) {
+  return (
+    <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 z-50 animate-slide-up">
+      <div className="bg-white rounded-xl shadow-lg border-2 border-gray-200 p-4">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-lg" style={{ backgroundColor: '#FFE5E5' }}>
+            <RefreshCw size={20} className="text-[#FF7A7A]" />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-bold text-gray-800 text-sm mb-1">
+              Update Available
+            </h3>
+            <p className="text-gray-600 text-xs mb-3">
+              A new version is ready. Reload to get the latest features.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={onUpdate}
+                className="flex-1 px-3 py-2 text-white rounded-lg font-semibold text-sm hover:opacity-90 transition-opacity"
+                style={{ backgroundColor: '#FF7A7A' }}
+              >
+                Reload Now
+              </button>
+              <button
+                onClick={onDismiss}
+                className="px-3 py-2 text-gray-600 rounded-lg font-semibold text-sm hover:bg-gray-100 transition-colors"
+              >
+                Later
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OfflineReadyToast({ onDismiss }) {
+  return (
+    <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 z-50 animate-slide-up">
+      <div className="bg-white rounded-xl shadow-lg border-2 border-gray-200 p-4">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-lg bg-green-100">
+            <CheckCircle size={20} className="text-green-600" />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-bold text-gray-800 text-sm mb-1">
+              Ready to Work Offline
+            </h3>
+            <p className="text-gray-600 text-xs mb-3">
+              You can now use this app without an internet connection.
+            </p>
+            <button
+              onClick={onDismiss}
+              className="px-3 py-2 text-gray-600 rounded-lg font-semibold text-sm hover:bg-gray-100 transition-colors"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminPanel({ onClose, currentUser }) {
   const [invitations, setInvitations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [copiedCode, setCopiedCode] = useState(null);
+  const [showLogs, setShowLogs] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   useEffect(() => {
     const codesRef = ref(database, 'inviteCodes');
@@ -279,13 +384,28 @@ function AdminPanel({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-3xl shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col border border-gray-200">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-2xl font-bold text-gray-800">Admin Panel</h2>
-          <p className="text-gray-600 font-medium">Manage invitation codes</p>
-        </div>
+    <>
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-3xl shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col border border-gray-200">
+          <div className="p-6 border-b border-gray-200">
+            <h2 className="text-2xl font-bold text-gray-800">Admin Panel</h2>
+            <p className="text-gray-600 font-medium">Manage invitation codes and view logs</p>
+          </div>
         <div className="p-6 flex-1 overflow-y-auto">
+          <div className="space-y-3 mb-6">
+            <button
+              onClick={() => setShowAnalytics(true)}
+              className="w-full bg-purple-600 text-white py-3.5 rounded-xl font-bold hover:opacity-90 flex items-center justify-center gap-2 transition-opacity"
+            >
+              <Activity size={20} strokeWidth={2.5} />Log Analytics (All Users)
+            </button>
+            <button
+              onClick={() => setShowLogs(true)}
+              className="w-full bg-blue-600 text-white py-3.5 rounded-xl font-bold hover:opacity-90 flex items-center justify-center gap-2 transition-opacity"
+            >
+              <Search size={20} strokeWidth={2.5} />My Logs (Real-time)
+            </button>
+          </div>
           <button onClick={createInvitation} disabled={creating} className="w-full text-white py-3.5 rounded-xl font-bold hover:opacity-90 disabled:bg-gray-300 flex items-center justify-center gap-2 mb-6 transition-opacity" style={{ backgroundColor: creating ? undefined : '#10B981' }}>
             <Plus size={20} strokeWidth={2.5} />{creating ? 'Creating...' : 'Create New Code'}
           </button>
@@ -319,6 +439,13 @@ function AdminPanel({ onClose }) {
         </div>
       </div>
     </div>
+    {showLogs && currentUser && (
+      <AdminLogViewer userId={currentUser.uid} onClose={() => setShowLogs(false)} />
+    )}
+    {showAnalytics && (
+      <LogAnalytics onClose={() => setShowAnalytics(false)} />
+    )}
+    </>
   );
 }
 
@@ -356,27 +483,259 @@ export default function App() {
   const lastScrollTime = useRef(Date.now());
   const smoothedVelocity = useRef(0);
   const toolbarRef = useRef(null);
+  const [showUpdateToast, setShowUpdateToast] = useState(false);
+  const [showOfflineToast, setShowOfflineToast] = useState(false);
+  const [pendingUpdate, setPendingUpdate] = useState(null);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+
+  // Check for debug mode in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('debug') === 'true') {
+      setShowDebugPanel(true);
+      logger.info('Debug', 'Debug panel activated via URL parameter');
+    }
+
+    // Keyboard shortcut: Ctrl+Shift+D to toggle debug panel
+    const handleKeyPress = (e) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+        e.preventDefault();
+        setShowDebugPanel(prev => !prev);
+        logger.info('Debug', 'Debug panel toggled via keyboard shortcut');
+      }
+    };
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setUser(user);
-        const adminDoc = await getDoc(doc(firestore, 'admins', user.uid));
-        setIsAdmin(adminDoc.exists());
+    logger.info('Auth', 'Auth initialization started');
+
+    // Load cached user immediately (offline-first)
+    loadCachedUser().then(cachedUser => {
+      if (cachedUser && !user) {
+        logger.info('Auth', 'Loaded cached user', {
+          uid: cachedUser.uid,
+          email: cachedUser.email,
+          isAdmin: cachedUser.isAdmin
+        });
+        // Use cached user info while Firebase auth is loading
+        setUser({
+          uid: cachedUser.uid,
+          email: cachedUser.email,
+          cached: true // flag to indicate this is from cache
+        });
+        setIsAdmin(cachedUser.isAdmin || false);
+        logger.setUserId(cachedUser.uid);
       } else {
-        setUser(null);
-        setIsAdmin(false);
+        logger.debug('Auth', 'No cached user found or user already set');
+      }
+    }).catch(err => {
+      logger.error('Auth', 'Failed to load cached user', { error: err.message });
+    });
+
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      logger.info('Auth', 'onAuthStateChanged fired', {
+        hasUser: !!firebaseUser,
+        uid: firebaseUser?.uid,
+        email: firebaseUser?.email
+      });
+
+      if (firebaseUser) {
+        setUser(firebaseUser);
+        logger.setUserId(firebaseUser.uid);
+
+        let isAdminUser = false;
+        try {
+          const adminDoc = await getDoc(doc(firestore, 'admins', firebaseUser.uid));
+          isAdminUser = adminDoc.exists();
+        } catch (err) {
+          logger.error('Auth', 'Failed to check admin status (network error?), using cached value', {
+            error: err.message,
+            code: err.code
+          });
+          // Fall back to cached admin status so the UI stays correct on tab resume
+          const cachedUser = await loadCachedUser().catch(() => null);
+          isAdminUser = cachedUser?.isAdmin || false;
+        }
+        setIsAdmin(isAdminUser);
+
+        logger.info('Auth', 'User authenticated', {
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          isAdmin: isAdminUser
+        });
+
+        // Save user info to IndexedDB for offline-first auth
+        await saveCachedUser({
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          isAdmin: isAdminUser
+        }).then(() => {
+          logger.debug('Auth', 'Cached user saved to IndexedDB');
+        }).catch(err => {
+          logger.error('Auth', 'Failed to save cached user', { error: err.message });
+        });
+      } else {
+        logger.warn('Auth', 'Firebase auth returned null user');
+
+        // Only clear user if we don't have cached data
+        // This prevents logout when offline
+        const cachedUser = await loadCachedUser().catch(() => null);
+        if (!cachedUser) {
+          logger.info('Auth', 'No cached user, clearing auth state');
+          setUser(null);
+          setIsAdmin(false);
+        } else {
+          logger.info('Auth', 'Using cached user while offline', {
+            uid: cachedUser.uid,
+            email: cachedUser.email
+          });
+        }
       }
       setAuthLoading(false);
+      logger.debug('Auth', 'Auth loading completed');
     });
     return () => unsubscribe();
   }, []);
 
+  // Register PWA update callbacks
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    import('./main.jsx').then(({ registerUpdateCallback, registerOfflineCallback }) => {
+      registerUpdateCallback((updateSW) => {
+        setPendingUpdate(() => updateSW);
+        setShowUpdateToast(true);
+      });
+
+      registerOfflineCallback(() => {
+        setShowOfflineToast(true);
+        setTimeout(() => setShowOfflineToast(false), 5000);
+      });
+    }).catch(err => {
+      console.error('Failed to register PWA callbacks:', err);
+    });
+  }, []);
+
+  const handleUpdate = useCallback(() => {
+    if (pendingUpdate) {
+      pendingUpdate(true);
+    }
+  }, [pendingUpdate]);
+
+  const handleDismissUpdate = useCallback(() => {
+    setShowUpdateToast(false);
+  }, []);
+
+  const handleDismissOffline = useCallback(() => {
+    setShowOfflineToast(false);
+  }, []);
+
+  // Monitor pendingOps changes
+  useEffect(() => {
+    logger.info('Sync', 'Pending operations count changed', {
+      pendingOps,
+      isOnline,
+      isConnected,
+      timestamp: Date.now()
+    });
+  }, [pendingOps]);
+
+  // Monitor connection state changes
+  useEffect(() => {
+    logger.info('Network', 'Connection state changed', {
+      isOnline,
+      isConnected,
+      navigatorOnLine: navigator.onLine,
+      timestamp: Date.now()
+    });
+  }, [isOnline, isConnected]);
+
+  // Handle token refresh when returning to app after inactivity
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      logger.info('App', 'Visibility change detected', {
+        hidden: document.hidden,
+        hasUser: !!user,
+        navigatorOnLine: navigator.onLine
+      });
+
+      // When user returns to the app
+      if (!document.hidden && user) {
+        // Only try to refresh if we're online
+        if (!navigator.onLine) {
+          logger.info('Auth', 'Skipping token refresh (offline)', {
+            navigatorOnLine: navigator.onLine
+          });
+          return;
+        }
+
+        try {
+          // Force token refresh to prevent expiration issues
+          const currentUser = auth.currentUser;
+          if (currentUser) {
+            logger.info('Auth', 'Attempting token refresh on app resume');
+            // Get fresh token (this will refresh if expired/expiring)
+            await currentUser.getIdToken(true); // true = force refresh
+            logger.info('Auth', 'Token refreshed successfully on app resume');
+          } else {
+            logger.warn('Auth', 'No current user for token refresh');
+          }
+        } catch (error) {
+          logger.error('Auth', 'Token refresh failed on app resume', {
+            error: error.message,
+            code: error.code,
+            stack: error.stack
+          });
+          // Don't force logout on network errors - let user work offline
+          if (error.code === 'auth/network-request-failed') {
+            logger.info('Auth', 'Network error during token refresh - continuing in offline mode');
+          }
+        }
+      }
+    };
+
+    const handleOnline = async () => {
+      logger.info('Network', 'Network came back online, attempting token refresh', {
+        hasUser: !!user
+      });
+
+      // When network comes back, try to refresh the token
+      if (user) {
+        try {
+          const currentUser = auth.currentUser;
+          if (currentUser) {
+            await currentUser.getIdToken(true);
+            logger.info('Auth', 'Token refreshed successfully after coming back online');
+          } else {
+            logger.warn('Auth', 'No current user for token refresh after coming online');
+          }
+        } catch (error) {
+          logger.error('Auth', 'Token refresh failed after coming online', {
+            error: error.message,
+            code: error.code
+          });
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [user]);
+
   // Load data from IndexedDB on mount (before Firebase connects)
   useEffect(() => {
     async function loadLocalData() {
+      logger.info('OfflineStorage', 'Loading local data from IndexedDB');
       try {
         await initOfflineDB();
+        logger.debug('OfflineStorage', 'IndexedDB initialized');
 
         const [localList, localHistory, localCommon, localLessCommon, syncTime] = await Promise.all([
           loadShoppingListLocally(),
@@ -385,6 +744,16 @@ export default function App() {
           loadAllLessCommonItemsLocally(),
           getLastSyncTime()
         ]);
+
+        logger.info('OfflineStorage', 'Local data loaded', {
+          hasLocalList: !!localList,
+          listItemCount: localList?.length || 0,
+          hasHistory: !!localHistory,
+          historyCount: localHistory?.length || 0,
+          commonCategoriesCount: Object.keys(localCommon || {}).length,
+          lessCommonCategoriesCount: Object.keys(localLessCommon || {}).length,
+          lastSyncTime: syncTime
+        });
 
         // Only use local data if we have it and Firebase hasn't loaded yet
         if (localList !== null && localList !== undefined) {
@@ -405,8 +774,12 @@ export default function App() {
 
         setLocalDataLoaded(true);
         setLoading(false);
+        logger.info('OfflineStorage', 'Local data load completed successfully');
       } catch (error) {
-        console.error('Failed to load local data:', error);
+        logger.error('OfflineStorage', 'Failed to load local data', {
+          error: error.message,
+          stack: error.stack
+        });
         setLocalDataLoaded(true);
       }
     }
@@ -415,42 +788,97 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      logger.debug('Firebase', 'Skipping Firebase listeners (no user)');
+      return;
+    }
+
+    logger.info('Firebase', 'Setting up Firebase listeners', { userId: user.uid });
 
     // Monitor Firebase connection status
     const connectedRef = ref(database, '.info/connected');
     const unsubConnected = onValue(connectedRef, (snapshot) => {
-      setIsConnected(snapshot.val() === true);
+      const connected = snapshot.val() === true;
+      logger.info('Firebase', 'Firebase connection state changed', {
+        connected,
+        navigatorOnLine: navigator.onLine,
+        timestamp: Date.now()
+      });
+      setIsConnected(connected);
     });
 
     // Monitor browser online/offline status
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    
+    const handleOnline = () => {
+      logger.info('Network', 'Browser online event handler', {
+        navigatorOnLine: navigator.onLine,
+        firebaseConnected: isConnected,
+        timestamp: Date.now()
+      });
+      setIsOnline(true);
+    };
+
+    const handleOffline = () => {
+      logger.warn('Network', 'Browser offline event handler', {
+        navigatorOnLine: navigator.onLine,
+        firebaseConnected: isConnected,
+        timestamp: Date.now()
+      });
+      setIsOnline(false);
+    };
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    
+
     // Set initial online status
-    setIsOnline(navigator.onLine);
+    const initialOnline = navigator.onLine;
+    setIsOnline(initialOnline);
+    logger.info('Network', 'Initial network status', {
+      navigatorOnLine: initialOnline,
+      timestamp: Date.now()
+    });
 
     const listRef = ref(database, 'shopping-list');
     const historyRef = ref(database, 'shopping-history');
     const commonRef = ref(database, 'common-items');
     const lessCommonRef = ref(database, 'less-common-items');
 
+    logger.debug('Firebase', 'Setting up data listeners');
+
     const unsubList = onValue(listRef, (snapshot) => {
       const data = snapshot.val() || [];
+      logger.info('Firebase', 'Shopping list data received', {
+        itemCount: data.length,
+        timestamp: Date.now()
+      });
       setList(data);
       // Save to IndexedDB for offline access
-      saveShoppingListLocally(data);
+      saveShoppingListLocally(data).then(() => {
+        logger.debug('OfflineStorage', 'Shopping list saved to IndexedDB');
+      });
       setLastSyncTime(Date.now());
+    }, (error) => {
+      logger.error('Firebase', 'Shopping list listener error', {
+        error: error.message,
+        code: error.code
+      });
     });
 
     const unsubHistory = onValue(historyRef, (snapshot) => {
       const data = snapshot.val() || [];
+      logger.info('Firebase', 'Shopping history data received', {
+        itemCount: data.length,
+        timestamp: Date.now()
+      });
       setHistory(new Set(data));
       // Save to IndexedDB for offline access
-      saveShoppingHistoryLocally(data);
+      saveShoppingHistoryLocally(data).then(() => {
+        logger.debug('OfflineStorage', 'Shopping history saved to IndexedDB');
+      });
+    }, (error) => {
+      logger.error('Firebase', 'Shopping history listener error', {
+        error: error.message,
+        code: error.code
+      });
     });
 
     const unsubCommon = onValue(commonRef, (snapshot) => {
@@ -468,10 +896,20 @@ export default function App() {
       } else {
         processedData = migrateItems(DEFAULT_ITEMS);
       }
+      logger.info('Firebase', 'Common items data received', {
+        categoriesCount: Object.keys(processedData).length,
+        timestamp: Date.now()
+      });
       setCommonItems(processedData);
       // Save to IndexedDB for offline access
       Object.keys(processedData).forEach(cat => {
         saveCommonItemsLocally(cat, processedData[cat]);
+      });
+      logger.debug('OfflineStorage', 'Common items saved to IndexedDB');
+    }, (error) => {
+      logger.error('Firebase', 'Common items listener error', {
+        error: error.message,
+        code: error.code
       });
     });
 
@@ -490,10 +928,20 @@ export default function App() {
       } else {
         processedData = {};
       }
+      logger.info('Firebase', 'Less common items data received', {
+        categoriesCount: Object.keys(processedData).length,
+        timestamp: Date.now()
+      });
       setLessCommonItems(processedData);
       // Save to IndexedDB for offline access
       Object.keys(processedData).forEach(cat => {
         saveLessCommonItemsLocally(cat, processedData[cat]);
+      });
+      logger.debug('OfflineStorage', 'Less common items saved to IndexedDB');
+    }, (error) => {
+      logger.error('Firebase', 'Less common items listener error', {
+        error: error.message,
+        code: error.code
       });
     });
 
@@ -511,9 +959,50 @@ export default function App() {
   }, [user]);
 
   const save = async (key, value) => {
-    setPendingOps(p => p + 1);
-    await set(ref(database, key), value);
-    setPendingOps(p => p - 1);
+    const opId = Date.now();
+    logger.info('Firebase', 'Starting Firebase save operation', {
+      opId,
+      key,
+      dataType: Array.isArray(value) ? 'array' : typeof value,
+      itemCount: Array.isArray(value) ? value.length : undefined
+    });
+
+    setPendingOps(p => {
+      const newCount = p + 1;
+      logger.debug('Sync', 'Pending operations increased', {
+        opId,
+        pendingOps: newCount
+      });
+      return newCount;
+    });
+
+    try {
+      await set(ref(database, key), value);
+      logger.info('Firebase', 'Firebase save completed', {
+        opId,
+        key,
+        success: true
+      });
+    } catch (error) {
+      logger.error('Firebase', 'Firebase save failed', {
+        opId,
+        key,
+        error: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+      // Don't throw - let Firebase handle offline queueing
+      // The error is logged, and Firebase will retry when back online
+    } finally {
+      setPendingOps(p => {
+        const newCount = p - 1;
+        logger.debug('Sync', 'Pending operations decreased', {
+          opId,
+          pendingOps: newCount
+        });
+        return newCount;
+      });
+    }
   };
 
   const saveCommonItems = async (items) => {
@@ -536,29 +1025,35 @@ export default function App() {
 
   const addItem = (name, category) => {
     const newList = [...list, { id: Date.now(), name, category, quantity: '1', done: false }];
+    setList(newList); // Optimistic update
     save('shopping-list', newList);
     const newHistory = new Set(history);
     newHistory.add(name.toLowerCase());
+    setHistory(newHistory); // Optimistic update
     save('shopping-history', [...newHistory]);
   };
 
   const toggleDone = (id) => {
     const newList = list.map(item => item.id === id ? { ...item, done: !item.done } : item);
+    setList(newList); // Optimistic update
     save('shopping-list', newList);
   };
 
   const updateQuantity = (id, qty) => {
     const newList = list.map(item => item.id === id ? { ...item, quantity: qty } : item);
+    setList(newList); // Optimistic update
     save('shopping-list', newList);
   };
 
   const clearDone = () => {
     const newList = list.filter(item => !item.done);
+    setList(newList); // Optimistic update
     save('shopping-list', newList);
   };
 
   const removeItem = (id) => {
     const newList = list.filter(item => item.id !== id);
+    setList(newList); // Optimistic update
     save('shopping-list', newList);
   };
 
@@ -569,12 +1064,16 @@ export default function App() {
     if (inCommon) {
       const newC = { ...commonItems, [cat]: commonCat.filter(i => i.id !== itemId) };
       const newL = { ...lessCommonItems, [cat]: [...lessCat, inCommon].sort((a, b) => a.name.localeCompare(b.name)) };
+      setCommonItems(newC); // Optimistic update
+      setLessCommonItems(newL); // Optimistic update
       saveCommonItems(newC);
       saveLessCommonItems(newL);
     } else {
       const inLess = lessCat.find(i => i.id === itemId);
       const newL = { ...lessCommonItems, [cat]: lessCat.filter(i => i.id !== itemId) };
       const newC = { ...commonItems, [cat]: [...commonCat, inLess].sort((a, b) => a.name.localeCompare(b.name)) };
+      setCommonItems(newC); // Optimistic update
+      setLessCommonItems(newL); // Optimistic update
       saveCommonItems(newC);
       saveLessCommonItems(newL);
     }
@@ -585,9 +1084,11 @@ export default function App() {
     const lessCat = lessCommonItems[cat] || [];
     if (commonCat.find(i => i.id === itemId)) {
       const newC = { ...commonItems, [cat]: commonCat.filter(i => i.id !== itemId) };
+      setCommonItems(newC); // Optimistic update
       saveCommonItems(newC);
     } else {
       const newL = { ...lessCommonItems, [cat]: lessCat.filter(i => i.id !== itemId) };
+      setLessCommonItems(newL); // Optimistic update
       saveLessCommonItems(newL);
     }
   };
@@ -602,9 +1103,11 @@ export default function App() {
     const lessCat = lessCommonItems[cat] || [];
     if (commonCat.find(i => i.id === itemId)) {
       const newC = { ...commonItems, [cat]: commonCat.map(i => i.id === itemId ? { ...i, name: editingItemName } : i).sort((a, b) => a.name.localeCompare(b.name)) };
+      setCommonItems(newC); // Optimistic update
       saveCommonItems(newC);
     } else {
       const newL = { ...lessCommonItems, [cat]: lessCat.map(i => i.id === itemId ? { ...i, name: editingItemName } : i).sort((a, b) => a.name.localeCompare(b.name)) };
+      setLessCommonItems(newL); // Optimistic update
       saveLessCommonItems(newL);
     }
     setEditingItemId(null);
@@ -615,6 +1118,7 @@ export default function App() {
     const name = newItemInputs[cat]?.trim();
     if (!name) return;
     const newC = { ...commonItems, [cat]: [...(commonItems[cat] || []), { id: generateId(), name }].sort((a, b) => a.name.localeCompare(b.name)) };
+    setCommonItems(newC); // Optimistic update
     saveCommonItems(newC);
     setNewItemInputs(prev => ({ ...prev, [cat]: '' }));
   };
@@ -744,17 +1248,33 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
+    logger.info('Auth', 'Sign out initiated');
     try {
       await firebaseSignOut(auth);
+      await clearCachedUser(); // Clear cached user on explicit logout
+      logger.info('Auth', 'Sign out successful, cached user cleared');
       setShowMenu(false);
     } catch (error) {
-      console.error('Error signing out:', error);
+      logger.error('Auth', 'Sign out failed', {
+        error: error.message,
+        code: error.code
+      });
     }
   };
 
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
-  if (!user) return <Login onLoginSuccess={() => {}} />;
-  if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
+  // Offline-first loading: show cached data immediately if available
+  // Only block if: no cached data AND (still auth loading OR not logged in)
+  const hasCachedData = localDataLoaded && (list.length > 0 || Object.keys(commonItems).length > 0);
+
+  // If we have cached data, show the app regardless of auth state
+  if (hasCachedData) {
+    // Auth can happen in background, we already have data to show
+  } else {
+    // No cached data, need to check auth
+    if (authLoading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
+    if (!user) return <Login onLoginSuccess={() => {}} />;
+    if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
+  }
 
   return (
     <>
@@ -1072,7 +1592,31 @@ export default function App() {
           )}
         </div>
       </div>
-      {showAdmin && isAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
+      {showAdmin && isAdmin && <AdminPanel currentUser={user} onClose={() => setShowAdmin(false)} />}
+      {showUpdateToast && (
+        <UpdateToast
+          onUpdate={handleUpdate}
+          onDismiss={handleDismissUpdate}
+        />
+      )}
+      {showOfflineToast && (
+        <OfflineReadyToast
+          onDismiss={handleDismissOffline}
+        />
+      )}
+      {showDebugPanel && (
+        <DebugPanel onClose={() => setShowDebugPanel(false)} />
+      )}
+      {/* Floating debug button (only for admins) */}
+      {isAdmin && (
+        <button
+          onClick={() => setShowDebugPanel(true)}
+          className="fixed bottom-4 left-4 p-3 bg-gray-800 text-white rounded-full shadow-lg hover:bg-gray-700 transition-colors z-40"
+          title="Open Debug Panel (Ctrl+Shift+D)"
+        >
+          <Bug size={20} />
+        </button>
+      )}
     </>
   );
 }

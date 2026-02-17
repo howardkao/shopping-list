@@ -35,6 +35,14 @@
     "less-common-items": {
       ".read": "auth != null",
       ".write": "auth != null"
+    },
+
+    "logs": {
+      ".read": "root.child('users').child(auth.uid).child('isFirstUser').val() === true",
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
     }
   }
 }
