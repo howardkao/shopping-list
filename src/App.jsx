@@ -106,6 +106,7 @@ function Login({ onLoginSuccess }) {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       logger.info('Auth', 'Sign in successful', { email });
+      if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
       logger.error('Auth', 'Sign in failed', {
         email,
@@ -200,6 +201,7 @@ function Login({ onLoginSuccess }) {
       }
 
       logger.info('Auth', 'Sign up completed successfully');
+      if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
       logger.error('Auth', 'Sign up failed', {
         email,
@@ -471,7 +473,7 @@ export default function App() {
   const [pendingOps, setPendingOps] = useState(0);
   const [expandedCategories, setExpandedCategories] = useState({});
   const [isOnline, setIsOnline] = useState(true);
-  const [isConnected, setIsConnected] = useState(true);
+  const [isConnected, setIsConnected] = useState(false);
   const [localDataLoaded, setLocalDataLoaded] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
   const [showHeader, setShowHeader] = useState(true);
@@ -487,6 +489,8 @@ export default function App() {
   const [showOfflineToast, setShowOfflineToast] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [showLoginExplicitly, setShowLoginExplicitly] = useState(false);
+  const authResolvedRef = useRef(false);
 
   // Check for debug mode in URL
   useEffect(() => {
@@ -513,7 +517,7 @@ export default function App() {
 
     // Load cached user immediately (offline-first)
     loadCachedUser().then(cachedUser => {
-      if (cachedUser && !user) {
+      if (cachedUser && !authResolvedRef.current) {
         logger.info('Auth', 'Loaded cached user', {
           uid: cachedUser.uid,
           email: cachedUser.email,
@@ -535,6 +539,7 @@ export default function App() {
     });
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      authResolvedRef.current = true;
       logger.info('Auth', 'onAuthStateChanged fired', {
         hasUser: !!firebaseUser,
         uid: firebaseUser?.uid,
@@ -543,6 +548,7 @@ export default function App() {
 
       if (firebaseUser) {
         setUser(firebaseUser);
+        setShowLoginExplicitly(false);
         logger.setUserId(firebaseUser.uid);
 
         let isAdminUser = false;
@@ -550,10 +556,15 @@ export default function App() {
           const adminDoc = await getDoc(doc(firestore, 'admins', firebaseUser.uid));
           isAdminUser = adminDoc.exists();
         } catch (err) {
-          logger.error('Auth', 'Failed to check admin status (network error?), using cached value', {
-            error: err.message,
-            code: err.code
-          });
+          // If it's a permission error, it just means they aren't an admin (expected for most users)
+          if (err.code === 'permission-denied') {
+            logger.debug('Auth', 'User is not an admin (permission denied to admin doc)');
+          } else {
+            logger.error('Auth', 'Failed to check admin status (network error?), using cached value', {
+              error: err.message,
+              code: err.code
+            });
+          }
           // Fall back to cached admin status so the UI stays correct on tab resume
           const cachedUser = await loadCachedUser().catch(() => null);
           isAdminUser = cachedUser?.isAdmin || false;
@@ -579,18 +590,21 @@ export default function App() {
       } else {
         logger.warn('Auth', 'Firebase auth returned null user');
 
-        // Only clear user if we don't have cached data
-        // This prevents logout when offline
+        // Be more lenient: if we have a cached user, keep using it even if online
+        // only clear if we have no cached user at all
         const cachedUser = await loadCachedUser().catch(() => null);
         if (!cachedUser) {
-          logger.info('Auth', 'No cached user, clearing auth state');
+          logger.info('Auth', 'No cached user and Firebase auth is null - clearing auth state');
           setUser(null);
           setIsAdmin(false);
         } else {
-          logger.info('Auth', 'Using cached user while offline', {
+          logger.info('Auth', 'Firebase auth is null but keeping cached user', {
             uid: cachedUser.uid,
-            email: cachedUser.email
+            email: cachedUser.email,
+            online: navigator.onLine
           });
+          // We keep the 'user' state as the cached user (set during init)
+          // This prevents aggressive logouts when token refresh fails
         }
       }
       setAuthLoading(false);
@@ -672,15 +686,15 @@ export default function App() {
         }
 
         try {
-          // Force token refresh to prevent expiration issues
+          // Get fresh token (this will refresh if expired/expiring)
           const currentUser = auth.currentUser;
           if (currentUser) {
             logger.info('Auth', 'Attempting token refresh on app resume');
-            // Get fresh token (this will refresh if expired/expiring)
-            await currentUser.getIdToken(true); // true = force refresh
+            // Get token (refreshes only if necessary)
+            await currentUser.getIdToken();
             logger.info('Auth', 'Token refreshed successfully on app resume');
           } else {
-            logger.warn('Auth', 'No current user for token refresh');
+            logger.info('Auth', 'No current user for token refresh on resume - waiting for onAuthStateChanged');
           }
         } catch (error) {
           logger.error('Auth', 'Token refresh failed on app resume', {
@@ -706,10 +720,10 @@ export default function App() {
         try {
           const currentUser = auth.currentUser;
           if (currentUser) {
-            await currentUser.getIdToken(true);
+            await currentUser.getIdToken();
             logger.info('Auth', 'Token refreshed successfully after coming back online');
           } else {
-            logger.warn('Auth', 'No current user for token refresh after coming online');
+            logger.info('Auth', 'No current user for token refresh yet after coming online - waiting for onAuthStateChanged');
           }
         } catch (error) {
           logger.error('Auth', 'Token refresh failed after coming online', {
@@ -949,6 +963,7 @@ export default function App() {
 
     return () => {
       unsubConnected();
+      setIsConnected(false);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       unsubList();
@@ -956,7 +971,7 @@ export default function App() {
       unsubCommon();
       unsubLessCommon();
     };
-  }, [user]);
+  }, [user?.uid]);
 
   const save = async (key, value) => {
     const opId = Date.now();
@@ -1265,14 +1280,26 @@ export default function App() {
   // Offline-first loading: show cached data immediately if available
   // Only block if: no cached data AND (still auth loading OR not logged in)
   const hasCachedData = localDataLoaded && (list.length > 0 || Object.keys(commonItems).length > 0);
+  
+  // We need re-auth if we are online but have no user, and we've finished checking auth
+  const needsReauth = hasCachedData && !user && !authLoading && navigator.onLine;
 
-  // If we have cached data, show the app regardless of auth state
+  // Show login screen if:
+  // 1. Explicitly requested
+  // 2. No cached data AND (finished auth loading OR not logged in)
+  const showLogin = showLoginExplicitly || (!hasCachedData && !authLoading && !user);
+
+  if (showLogin) {
+    return <Login onLoginSuccess={() => setShowLoginExplicitly(false)} />;
+  }
+
+  // If we have cached data, show the app regardless of auth state (unless explicitly signing in)
   if (hasCachedData) {
     // Auth can happen in background, we already have data to show
   } else {
     // No cached data, need to check auth
     if (authLoading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
-    if (!user) return <Login onLoginSuccess={() => {}} />;
+    if (!user) return <Login onLoginSuccess={() => setShowLoginExplicitly(false)} />;
     if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
   }
 
@@ -1616,6 +1643,21 @@ export default function App() {
         >
           <Bug size={20} />
         </button>
+      )}
+      {needsReauth && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full text-center">
+            <div className="text-4xl mb-3">🔒</div>
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Session Expired</h2>
+            <p className="text-sm text-gray-600 mb-5">Your session has ended. Please sign in again to continue.</p>
+            <button
+              onClick={() => setShowLoginExplicitly(true)}
+              className="w-full py-3 px-4 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors"
+            >
+              Sign In
+            </button>
+          </div>
+        </div>
       )}
     </>
   );

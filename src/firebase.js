@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, setPersistence, browserLocalPersistence, indexedDBLocalPersistence } from 'firebase/auth';
+import { initializeAuth, indexedDBLocalPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
 import { getFirestore } from 'firebase/firestore';
 
@@ -18,16 +18,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 // Initialize Firebase services
-export const auth = getAuth(app);
+// Use initializeAuth to set persistence from the start (IndexedDB preferred for mobile, fallback to localStorage)
+export const auth = initializeAuth(app, {
+  persistence: [indexedDBLocalPersistence, browserLocalPersistence]
+});
 export const database = getDatabase(app);
 export const firestore = getFirestore(app);
 export default app;
-
-// Set auth persistence to IndexedDB (more reliable than localStorage on mobile)
-// Try IndexedDB first, fallback to localStorage
-setPersistence(auth, indexedDBLocalPersistence).catch((error) => {
-  console.warn('IndexedDB persistence failed, trying localStorage:', error);
-  return setPersistence(auth, browserLocalPersistence).catch((err) => {
-    console.error('All persistence methods failed:', err);
-  });
-});

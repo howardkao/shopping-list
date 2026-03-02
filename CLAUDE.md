@@ -2,6 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Requirements-First Workflow
+
+**PRD.md** (Product Requirements Document) and **TDD.md** (Technical Design Document) are the source of truth for product intent and technical decisions. They live in the project root but are git-ignored (local only).
+
+**Before any code change:**
+
+1. Read `PRD.md` and `TDD.md` to understand current requirements and architecture
+2. Check whether the proposed change conflicts with or extends existing requirements
+3. If requirements need to change, discuss with the user and get agreement **before** writing code
+4. If the change introduces a new pattern or deviates from an existing decision documented in TDD.md, flag it explicitly
+
+**After code changes:**
+
+5. Update `PRD.md` if product behavior changed (new features, modified flows, removed capabilities)
+6. Update `TDD.md` if technical decisions changed (new dependencies, architecture shifts, data model changes)
+
+This workflow ensures the docs stay in sync with the code and prevents drift between intent and implementation.
+
 ## Commands
 
 ### Development

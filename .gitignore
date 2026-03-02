@@ -51,3 +51,7 @@ firebase-debug.*.log
 # Temporary files
 *.tmp
 *.temp
+
+# Local requirements docs (not committed; see CLAUDE.md for workflow)
+PRD.md
+TDD.md
