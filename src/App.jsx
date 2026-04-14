@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Activity } from 'lucide-react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Settings, History, UserCircle } from 'lucide-react';
 import { auth, database, firestore } from './firebase';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   onAuthStateChanged,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  deleteUser,
+  reauthenticateWithCredential,
+  EmailAuthProvider
 } from 'firebase/auth';
-import { ref, set, get, remove, onValue } from 'firebase/database';
+import { ref, set, get, remove, onValue, push } from 'firebase/database';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import {
   initOfflineDB,
@@ -20,6 +23,10 @@ import {
   loadAllCommonItemsLocally,
   saveLessCommonItemsLocally,
   loadAllLessCommonItemsLocally,
+  saveCategoriesToLocally,
+  loadCategoriesLocally,
+  saveQuantityDefaultsLocally,
+  loadQuantityDefaultsLocally,
   getLastSyncTime,
   saveCachedUser,
   loadCachedUser,
@@ -27,10 +34,17 @@ import {
 } from './offlineStorage';
 import { logger } from './logger';
 import DebugPanel from './DebugPanel';
-import AdminLogViewer from './AdminLogViewer';
-import LogAnalytics from './LogAnalytics';
+import {
+  buildItemStats,
+  topPurchased,
+  dormantQuickAddCandidates,
+  promotionCandidates,
+  userContributions,
+  eventSummary,
+} from './itemAnalytics';
 
-const CATEGORIES = ['VEGGIES', 'FRUIT', 'MEAT & FISH', 'DELI, DAIRY, EGGS', 'FROZEN', 'DRY GOODS', 'BAKING, SPICES & OILS', 'PREPARED FOODS', 'PHARMACY / OTC', 'TARGET / AMAZON / COSTCO', 'COSTCO BULK FOODS', 'RANCH 99 / WEEE / BERKELEY BOWL'];
+// Edit these to match the sections and stores you shop at.
+const CATEGORIES = ['PRODUCE', 'MEAT & FISH', 'DELI, DAIRY & EGGS', 'FROZEN', 'DRY GOODS', 'BAKING, SPICES & OILS', 'PREPARED FOODS', 'HOUSEHOLD & PHARMACY', 'OTHER'];
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const formatRelativeTime = (timestamp) => {
@@ -47,19 +61,46 @@ const formatRelativeTime = (timestamp) => {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 };
 
+/** Local calendar + local clock; "today at 1:30pm", "yesterday at 2:30pm", or "4/7 at 11:30am". */
+const formatLocalDateTimePhrase = (ms) => {
+  if (ms == null || Number.isNaN(ms)) return '';
+  try {
+    const d = new Date(ms);
+    const now = new Date();
+    const sameLocalDay = (a, b) =>
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    let timePart = d.toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+    timePart = timePart.replace(/\s*([AP]M)/i, (_, ap) => ap.toLowerCase());
+
+    if (sameLocalDay(d, now)) return `today at ${timePart}`;
+    if (sameLocalDay(d, yesterday)) return `yesterday at ${timePart}`;
+    return `${d.getMonth() + 1}/${d.getDate()} at ${timePart}`;
+  } catch {
+    return '';
+  }
+};
+
+// Edit these to seed your suggestion library with items you buy regularly.
+// Keys must match the CATEGORIES list above.
 const DEFAULT_ITEMS = {
-  'VEGGIES': ['asparagus', 'broccoli', 'carrots', 'green beans', 'onion, yellow'],
-  'FRUIT': ['berries', 'bananas', 'grapes'],
-  'DELI, DAIRY, EGGS': ['cheese, cheddar', 'eggs', 'milk, 2%'],
-  'MEAT & FISH': ['chicken, drumsticks', 'fish, salmon'],
-  'FROZEN': ['corn', 'meatballs'],
-  'PREPARED FOODS': ['rotisserie chicken', 'tortillas'],
-  'BAKING, SPICES & OILS': ['garlic salt', 'oil, olive'],
-  'DRY GOODS': ['bread, sandwich', 'pasta'],
-  'RANCH 99 / WEEE / BERKELEY BOWL': ['soy sauce', 'white rice'],
-  'PHARMACY / OTC': ['vitamin D'],
-  'TARGET / AMAZON / COSTCO': ['toilet paper'],
-  'COSTCO BULK FOODS': ['butter, salted & unsalted']
+  'PRODUCE': ['broccoli', 'carrots', 'onions', 'bananas', 'apples'],
+  'MEAT & FISH': ['chicken breast', 'ground beef', 'salmon'],
+  'DELI, DAIRY & EGGS': ['eggs', 'milk', 'butter', 'cheddar cheese'],
+  'FROZEN': ['peas', 'corn'],
+  'DRY GOODS': ['pasta', 'rice', 'bread'],
+  'BAKING, SPICES & OILS': ['olive oil', 'garlic powder', 'salt'],
+  'PREPARED FOODS': ['rotisserie chicken'],
+  'HOUSEHOLD & PHARMACY': ['dish soap', 'toilet paper', 'paper towels'],
+  'OTHER': []
 };
 
 // Encode category names for Firebase (replace invalid characters)
@@ -91,8 +132,10 @@ const migrateItems = (items) => {
 
 function Login({ onLoginSuccess }) {
   const [mode, setMode] = useState('signin');
+  const [signupType, setSignupType] = useState('create'); // 'create' | 'join'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -108,21 +151,14 @@ function Login({ onLoginSuccess }) {
       logger.info('Auth', 'Sign in successful', { email });
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
-      logger.error('Auth', 'Sign in failed', {
-        email,
-        error: err.message,
-        code: err.code
-      });
+      logger.error('Auth', 'Sign in failed', { email, error: err.message, code: err.code });
       setError(err.message);
     }
     setLoading(false);
   };
 
   const handleResetPassword = async () => {
-    if (!email) {
-      setError('Please enter your email address');
-      return;
-    }
+    if (!email) { setError('Please enter your email address'); return; }
     setLoading(true);
     setError('');
     setSuccess('');
@@ -139,75 +175,90 @@ function Login({ onLoginSuccess }) {
     setLoading(true);
     setError('');
     setSuccess('');
-    logger.info('Auth', 'Sign up attempt', { email });
-    try {
-      const usersSnapshot = await get(ref(database, 'users'));
-      const isFirstUser = !usersSnapshot.exists();
-      logger.info('Auth', 'Sign up - user check', { isFirstUser });
+    logger.info('Auth', 'Sign up attempt', { email, signupType });
 
-      if (!isFirstUser && !inviteCode) {
-        logger.warn('Auth', 'Sign up failed - invitation code required');
-        setError('Invitation code required');
+    try {
+      const trimmedName = displayName.trim();
+      if (!trimmedName) {
+        setError('Please enter your name');
         setLoading(false);
         return;
       }
 
-      if (!isFirstUser) {
-        const codesSnapshot = await get(ref(database, 'inviteCodes'));
-        const codes = codesSnapshot.val() || {};
-        const validCode = Object.entries(codes).find(
-          ([id, code]) => code.code === inviteCode.toUpperCase() && !code.used
-        );
+      let householdId;
 
-        if (!validCode) {
-          logger.warn('Auth', 'Sign up failed - invalid invitation code', {
-            providedCode: inviteCode
-          });
-          setError('Invalid or already used invitation code');
+      if (signupType === 'join') {
+        if (!inviteCode) {
+          setError('Please enter your invitation code');
           setLoading(false);
           return;
         }
+        const code = inviteCode.trim().toUpperCase();
+        const codeSnapshot = await get(ref(database, `inviteCodes/${code}`));
+        const codeData = codeSnapshot.val();
+        if (!codeData || codeData.used || Date.now() > new Date(codeData.expiresAt).getTime()) {
+          logger.warn('Auth', 'Sign up failed - invalid/expired invite code');
+          setError('Invalid or expired invitation code');
+          setLoading(false);
+          return;
+        }
+        householdId = codeData.householdId;
+        logger.info('Auth', 'Valid invite code', { householdId });
 
-        logger.info('Auth', 'Valid invitation code found', {
-          codeId: validCode[0]
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const newUser = userCredential.user;
+
+        // Mark code used in both global index and household copy
+        const now = Date.now();
+        await set(ref(database, `inviteCodes/${code}/used`), true);
+        await set(ref(database, `inviteCodes/${code}/usedBy`), email);
+        await set(ref(database, `inviteCodes/${code}/usedAt`), now);
+        await set(ref(database, `households/${householdId}/inviteCodes/${code}/used`), true);
+        await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedBy`), email);
+        await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedAt`), now);
+
+        await set(ref(database, `users/${newUser.uid}`), {
+          email: newUser.email,
+          displayName: trimmedName,
+          createdAt: now,
+          householdId
+        });
+        await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
+          displayName: trimmedName,
+          email: newUser.email
+        });
+      } else {
+        // Create a new household
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const newUser = userCredential.user;
+
+        const newHouseholdRef = push(ref(database, 'households'));
+        householdId = newHouseholdRef.key;
+
+        const now = Date.now();
+        await set(newHouseholdRef, {
+          adminUid: newUser.uid,
+          createdAt: now
         });
 
-        await set(ref(database, `inviteCodes/${validCode[0]}/used`), true);
-        await set(ref(database, `inviteCodes/${validCode[0]}/usedBy`), email);
-        await set(ref(database, `inviteCodes/${validCode[0]}/usedAt`), Date.now());
-      }
-
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-
-      logger.info('Auth', 'User created successfully', {
-        uid: user.uid,
-        email: user.email,
-        isFirstUser
-      });
-
-      await set(ref(database, `users/${user.uid}`), {
-        email: user.email,
-        createdAt: Date.now(),
-        isFirstUser
-      });
-
-      if (isFirstUser) {
-        await setDoc(doc(firestore, 'admins', user.uid), {
-          email: user.email,
-          createdAt: Date.now()
+        await set(ref(database, `users/${newUser.uid}`), {
+          email: newUser.email,
+          displayName: trimmedName,
+          createdAt: now,
+          householdId
         });
-        logger.info('Auth', 'First user - admin privileges granted');
+        await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
+          displayName: trimmedName,
+          email: newUser.email
+        });
+
+        logger.info('Auth', 'New household created', { householdId, adminUid: newUser.uid });
       }
 
       logger.info('Auth', 'Sign up completed successfully');
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
-      logger.error('Auth', 'Sign up failed', {
-        email,
-        error: err.message,
-        code: err.code
-      });
+      logger.error('Auth', 'Sign up failed', { email, error: err.message, code: err.code });
       setError(err.message);
     }
     setLoading(false);
@@ -224,6 +275,18 @@ function Login({ onLoginSuccess }) {
           <p className="text-gray-600 font-medium">{mode === 'signin' ? 'Sign in to your account' : 'Create your account'}</p>
         </div>
         <div className="space-y-4">
+          {mode === 'signup' && (
+            <div className="flex rounded-xl overflow-hidden border-2 border-gray-200">
+              <button onClick={() => { setSignupType('create'); setError(''); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'create' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'create' ? { backgroundColor: '#FF7A7A' } : {}}>New household</button>
+              <button onClick={() => { setSignupType('join'); setError(''); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'join' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'join' ? { backgroundColor: '#FF7A7A' } : {}}>Join with code</button>
+            </div>
+          )}
+          {mode === 'signup' && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Your name</label>
+              <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Jane" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors" />
+            </div>
+          )}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">Email</label>
             <div className="relative">
@@ -235,25 +298,19 @@ function Login({ onLoginSuccess }) {
             <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
             <div className="relative">
               <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors" />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors" onKeyDown={(e) => e.key === 'Enter' && (mode === 'signin' ? handleSignIn() : handleSignUp())} />
             </div>
           </div>
-          {mode === 'signup' && (
+          {mode === 'signup' && signupType === 'join' && (
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Invitation Code</label>
-              <input
-                type="text"
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                placeholder="Enter code (if not first user)"
-                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
-              />
+              <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} placeholder="16-character code" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider" />
             </div>
           )}
           {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
           {success && <div className="bg-green-50 text-green-600 px-4 py-3 rounded-xl text-sm font-medium border border-green-200">{success}</div>}
           <button onClick={mode === 'signin' ? handleSignIn : handleSignUp} disabled={loading} className="w-full text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90" style={{ backgroundColor: loading ? undefined : '#FF7A7A' }}>
-            {loading ? 'Loading...' : mode === 'signin' ? 'Sign In' : 'Sign Up'}
+            {loading ? 'Loading...' : mode === 'signin' ? 'Sign In' : signupType === 'create' ? 'Create Household' : 'Join Household'}
           </button>
           {mode === 'signin' && (
             <button onClick={handleResetPassword} disabled={loading} className="w-full text-sm font-semibold hover:underline text-gray-600 transition-colors">
@@ -334,22 +391,158 @@ function OfflineReadyToast({ onDismiss }) {
   );
 }
 
-function AdminPanel({ onClose, currentUser }) {
+function InsightsModal({ householdId, onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [commonByCat, setCommonByCat] = useState({});
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [evSnap, commonSnap] = await Promise.all([
+          get(ref(database, `households/${householdId}/item-events`)),
+          get(ref(database, `households/${householdId}/common-items`)),
+        ]);
+        if (cancelled) return;
+        const evRaw = evSnap.val() || {};
+        const evList = Object.values(evRaw).filter(e => e && typeof e.ts === 'number');
+        evList.sort((a, b) => a.ts - b.ts);
+        const cRaw = commonSnap.val() || {};
+        const cByCat = {};
+        Object.entries(cRaw).forEach(([encodedCat, items]) => {
+          cByCat[decodeCategory(encodedCat)] = items || [];
+        });
+        setEvents(evList);
+        setCommonByCat(cByCat);
+        setLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err.message);
+        setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [householdId]);
+
+  const summary = events.length ? eventSummary(events) : null;
+  const top = events.length ? topPurchased(events, { limit: 15 }) : [];
+  const promote = events.length ? promotionCandidates(events, commonByCat, { minAdds: 3, withinDays: 42 }) : [];
+  const dormant = Object.keys(commonByCat).length ? dormantQuickAddCandidates(events, commonByCat, { dormantDays: 56 }) : [];
+  const users = events.length ? userContributions(events) : [];
+
+  const fmtDate = (ts) => ts ? new Date(ts).toLocaleDateString() : '—';
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-3xl shadow-xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col border border-gray-200">
+        <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800">Household Insights</h2>
+            <p className="text-gray-600 font-medium text-sm">Tier 1 — frequency aggregates from item events</p>
+          </div>
+          <button onClick={onClose} className="p-2 text-gray-500 hover:text-gray-800"><X size={22} /></button>
+        </div>
+        <div className="p-6 flex-1 overflow-y-auto space-y-6 text-sm">
+          {loading && <div className="text-gray-500">Loading…</div>}
+          {error && <div className="text-red-600">Error: {error}</div>}
+          {!loading && !error && !events.length && (
+            <div className="text-gray-500">No item events recorded yet. Add and check off items to start collecting data.</div>
+          )}
+          {!loading && !error && events.length > 0 && (
+            <>
+              <section>
+                <h3 className="font-bold text-gray-800 mb-2">Summary</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Total events</div><div className="text-xl font-bold">{summary.total}</div></div>
+                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Added</div><div className="text-xl font-bold">{summary.added || 0}</div></div>
+                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Checked</div><div className="text-xl font-bold">{summary.checked || 0}</div></div>
+                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Removed</div><div className="text-xl font-bold">{summary.removed || 0}</div></div>
+                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Typed adds</div><div className="text-xl font-bold">{summary.typed || 0}</div></div>
+                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Quick-add</div><div className="text-xl font-bold">{summary.quickAdd || 0}</div></div>
+                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">First event</div><div className="text-sm font-bold">{fmtDate(summary.firstTs)}</div></div>
+                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Last event</div><div className="text-sm font-bold">{fmtDate(summary.lastTs)}</div></div>
+                </div>
+              </section>
+
+              <section>
+                <h3 className="font-bold text-gray-800 mb-2">Top purchased (all-time)</h3>
+                {top.length === 0 ? <div className="text-gray-500">No checkoff events yet.</div> : (
+                  <div className="space-y-1">
+                    {top.map(s => (
+                      <div key={s.key} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
+                        <div><span className="font-semibold">{s.name}</span> <span className="text-gray-500 text-xs">· {s.category}</span></div>
+                        <div className="text-gray-600">×{s.checked}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 className="font-bold text-gray-800 mb-2">Promotion candidates <span className="text-xs font-normal text-gray-500">(typed ≥3× in 42 days, not in quick-add)</span></h3>
+                {promote.length === 0 ? <div className="text-gray-500">None.</div> : (
+                  <div className="space-y-1">
+                    {promote.map(c => (
+                      <div key={`${c.category}::${c.name}`} className="flex justify-between items-center bg-amber-50 rounded-lg px-3 py-2">
+                        <div><span className="font-semibold">{c.name}</span> <span className="text-gray-500 text-xs">· {c.category}</span></div>
+                        <div className="text-gray-600">typed ×{c.count}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 className="font-bold text-gray-800 mb-2">Dormant quick-add items <span className="text-xs font-normal text-gray-500">(no use in 56+ days)</span></h3>
+                {dormant.length === 0 ? <div className="text-gray-500">None.</div> : (
+                  <div className="space-y-1">
+                    {dormant.slice(0, 30).map(d => (
+                      <div key={`${d.category}::${d.name}`} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
+                        <div><span className="font-semibold">{d.name}</span> <span className="text-gray-500 text-xs">· {d.category}</span></div>
+                        <div className="text-gray-600">{d.daysSinceLastUse == null ? 'never used' : `${d.daysSinceLastUse}d ago`}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 className="font-bold text-gray-800 mb-2">Per-user activity</h3>
+                <div className="space-y-1">
+                  {users.map(u => (
+                    <div key={u.uid} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
+                      <div className="font-mono text-xs text-gray-700">{u.uid.slice(0, 12)}…</div>
+                      <div className="text-gray-600 text-xs">added {u.added} · checked {u.checked} · removed {u.removed}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminPanel({ onClose, householdId }) {
   const [invitations, setInvitations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [copiedCode, setCopiedCode] = useState(null);
-  const [showLogs, setShowLogs] = useState(false);
-  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showInsights, setShowInsights] = useState(false);
 
   useEffect(() => {
-    const codesRef = ref(database, 'inviteCodes');
+    if (!householdId) return;
+    const codesRef = ref(database, `households/${householdId}/inviteCodes`);
     const unsubscribe = onValue(codesRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
         const codesArray = Object.entries(data)
-          .map(([id, code]) => ({ id, ...code }))
-          .filter(c => !c.used && new Date() <= new Date(c.expiresAt));
+          .map(([code, val]) => ({ id: code, code, ...val }))
+          .filter(c => !c.used && Date.now() <= new Date(c.expiresAt).getTime());
         setInvitations(codesArray);
       } else {
         setInvitations([]);
@@ -357,26 +550,33 @@ function AdminPanel({ onClose, currentUser }) {
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [householdId]);
+
+  const generateCode = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code = '';
+    for (let i = 0; i < 16; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    return code;
+  };
 
   const createInvitation = async () => {
+    if (!householdId) return;
     setCreating(true);
-    const code = Math.random().toString(36).substr(2, 8).toUpperCase();
+    const code = generateCode();
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
-    
-    const codeRef = ref(database, `inviteCodes/${code}`);
-    await set(codeRef, {
-      code,
-      expiresAt: expiresAt.toISOString(),
-      used: false,
-      createdAt: Date.now()
-    });
+    const codeData = { code, expiresAt: expiresAt.toISOString(), used: false, createdAt: Date.now(), householdId };
+
+    // Write to household (for admin panel display)
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}`), codeData);
+    // Write to global lookup index (for signup validation without auth)
+    await set(ref(database, `inviteCodes/${code}`), { householdId, expiresAt: expiresAt.toISOString(), used: false, createdAt: Date.now() });
     setCreating(false);
   };
 
-  const deleteInvitation = async (id) => {
-    await remove(ref(database, `inviteCodes/${id}`));
+  const deleteInvitation = async (code) => {
+    await remove(ref(database, `households/${householdId}/inviteCodes/${code}`));
+    await remove(ref(database, `inviteCodes/${code}`));
   };
 
   const copy = (code) => {
@@ -391,26 +591,16 @@ function AdminPanel({ onClose, currentUser }) {
         <div className="bg-white rounded-3xl shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col border border-gray-200">
           <div className="p-6 border-b border-gray-200">
             <h2 className="text-2xl font-bold text-gray-800">Admin Panel</h2>
-            <p className="text-gray-600 font-medium">Manage invitation codes and view logs</p>
+            <p className="text-gray-600 font-medium">Manage invitation codes</p>
           </div>
         <div className="p-6 flex-1 overflow-y-auto">
-          <div className="space-y-3 mb-6">
-            <button
-              onClick={() => setShowAnalytics(true)}
-              className="w-full bg-purple-600 text-white py-3.5 rounded-xl font-bold hover:opacity-90 flex items-center justify-center gap-2 transition-opacity"
-            >
-              <Activity size={20} strokeWidth={2.5} />Log Analytics (All Users)
-            </button>
-            <button
-              onClick={() => setShowLogs(true)}
-              className="w-full bg-blue-600 text-white py-3.5 rounded-xl font-bold hover:opacity-90 flex items-center justify-center gap-2 transition-opacity"
-            >
-              <Search size={20} strokeWidth={2.5} />My Logs (Real-time)
-            </button>
-          </div>
-          <button onClick={createInvitation} disabled={creating} className="w-full text-white py-3.5 rounded-xl font-bold hover:opacity-90 disabled:bg-gray-300 flex items-center justify-center gap-2 mb-6 transition-opacity" style={{ backgroundColor: creating ? undefined : '#10B981' }}>
+          <button onClick={createInvitation} disabled={creating} className="w-full text-white py-3.5 rounded-xl font-bold hover:opacity-90 disabled:bg-gray-300 flex items-center justify-center gap-2 mb-3 transition-opacity" style={{ backgroundColor: creating ? undefined : '#10B981' }}>
             <Plus size={20} strokeWidth={2.5} />{creating ? 'Creating...' : 'Create New Code'}
           </button>
+          <button onClick={() => setShowInsights(true)} className="w-full bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 mb-6 transition-colors">
+            View Household Insights
+          </button>
+          {showInsights && <InsightsModal householdId={householdId} onClose={() => setShowInsights(false)} />}
           {loading ? (
             <div className="text-center py-8 text-gray-500 font-medium">Loading...</div>
           ) : invitations.length === 0 ? (
@@ -441,25 +631,444 @@ function AdminPanel({ onClose, currentUser }) {
         </div>
       </div>
     </div>
-    {showLogs && currentUser && (
-      <AdminLogViewer userId={currentUser.uid} onClose={() => setShowLogs(false)} />
-    )}
-    {showAnalytics && (
-      <LogAnalytics onClose={() => setShowAnalytics(false)} />
-    )}
-    </>
+</>
+  );
+}
+
+function DisplayNamePrompt({ user, householdId, onSaved }) {
+  const [name, setName] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) { setError('Please enter your name'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      await set(ref(database, `users/${user.uid}/displayName`), trimmed);
+      if (householdId) {
+        await set(ref(database, `households/${householdId}/members/${user.uid}`), {
+          displayName: trimmed,
+          email: user.email
+        });
+      }
+      onSaved(trimmed);
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-3xl shadow-xl max-w-md w-full border border-gray-200">
+        <div className="p-6 border-b border-gray-200">
+          <h2 className="text-2xl font-bold text-gray-800">What's your name?</h2>
+          <p className="text-gray-600 font-medium mt-1">This helps your household know who added items</p>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Your name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Jane"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
+              onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+              autoFocus
+            />
+          </div>
+          {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
+        </div>
+        <div className="p-6 border-t border-gray-200">
+          <button
+            onClick={handleSave}
+            disabled={loading || !name.trim()}
+            className="w-full text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
+            style={{ backgroundColor: loading || !name.trim() ? undefined : '#FF7A7A' }}
+          >
+            {loading ? 'Saving...' : 'Continue'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ItemBottomSheet({ item, members, lastPurchasedTs, onClose }) {
+  const [nameDraft, setNameDraft] = useState(item.name || '');
+  const [quantityDraft, setQuantityDraft] = useState(item.quantity || '');
+
+  useEffect(() => {
+    setNameDraft(item.name || '');
+  }, [item.id, item.name]);
+
+  useEffect(() => {
+    setQuantityDraft(item.quantity || '');
+  }, [item]);
+
+  const commitName = async () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setNameDraft(item.name || '');
+      return;
+    }
+    if (trimmed === (item.name || '').trim()) return;
+    if (item.onNameChange) {
+      await item.onNameChange(item.itemKey, trimmed);
+    }
+  };
+
+  const commitQuantity = async (nextValue) => {
+    const trimmed = nextValue.trim();
+    const current = (item.quantity || '').trim();
+    if (trimmed === current) return;
+    if (item.onQuantityChange) {
+      await item.onQuantityChange(item.itemKey, trimmed);
+    }
+  };
+
+  const nudgeQuantity = async (delta) => {
+    const current = quantityDraft.trim();
+    const match = current.match(/^(\d+)(\s+.*)?$/);
+    const currentNumber = match ? Number(match[1]) : 0;
+    const remainder = match?.[2] || (current && !match ? ` ${current}` : '');
+    const nextNumber = Math.max(1, currentNumber + delta);
+    const nextValue = `${nextNumber}${remainder}`.trim();
+    setQuantityDraft(nextValue);
+    await commitQuantity(nextValue);
+  };
+
+  const handleClose = async () => {
+    await commitName();
+    await commitQuantity(quantityDraft);
+    onClose();
+  };
+
+  const addedByName = item.addedBy && members[item.addedBy]
+    ? members[item.addedBy].displayName
+    : null;
+  const addedAtFormatted = item.addedAt ? formatLocalDateTimePhrase(item.addedAt) : null;
+
+  const lastPurchasedFormatted = lastPurchasedTs
+    ? formatRelativeTime(lastPurchasedTs)
+    : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center md:items-center md:p-4"
+      onClick={handleClose}
+    >
+      <div className="absolute inset-0 bg-black/40 transition-opacity md:bg-black/50" />
+      <div
+        className="relative w-full max-w-lg bg-white rounded-t-3xl shadow-xl animate-slide-up md:max-h-[85vh] md:max-w-md md:overflow-hidden md:rounded-3xl md:border md:border-gray-200 md:animate-none md:shadow-xl md:flex md:flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-center pt-3 pb-1 md:hidden">
+          <div className="w-10 h-1 rounded-full bg-gray-300" />
+        </div>
+        <div className="px-6 pb-6 pt-2 md:flex-1 md:flex md:flex-col md:min-h-0 md:overflow-y-auto md:pt-6 md:pb-6">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div className="min-w-0 flex-1 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Name</p>
+              <input
+                type="text"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onBlur={() => commitName()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="w-full text-lg font-bold text-gray-800 md:text-xl bg-transparent border border-transparent rounded-xl px-0 py-1 -mx-0 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30 focus:border-[#FF7A7A]/40"
+                aria-label="Item name"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="hidden md:flex flex-shrink-0 p-2 -mr-2 -mt-1 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100"
+              aria-label="Close"
+            >
+              <X size={22} />
+            </button>
+          </div>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Quantity</p>
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    inputMode="text"
+                    value={quantityDraft}
+                    onChange={(e) => setQuantityDraft(e.target.value)}
+                    onBlur={() => commitQuantity(quantityDraft)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    placeholder="Optional"
+                    className="flex-1 bg-transparent text-sm font-medium text-gray-700 placeholder:text-gray-400 focus:outline-none min-w-0"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => nudgeQuantity(-1)}
+                    className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-600 font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center"
+                    aria-label="Decrease quantity"
+                  >
+                    -
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => nudgeQuantity(1)}
+                    className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-600 font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center"
+                    aria-label="Increase quantity"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            </div>
+            {(addedByName || addedAtFormatted) && (
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#FFF0F0' }}>
+                  <Plus size={16} style={{ color: '#FF7A7A' }} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-700">
+                    {addedByName
+                      ? `Added by ${addedByName}`
+                      : 'Added'}
+                  </p>
+                  {addedAtFormatted && (
+                    <p className="text-sm text-gray-500">{addedAtFormatted}</p>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#FFF0F0' }}>
+                <History size={16} style={{ color: '#FF7A7A' }} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-700">Last purchased</p>
+                <p className="text-sm text-gray-500">
+                  {lastPurchasedFormatted || 'Never purchased'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) {
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleDelete = async () => {
+    if (!password) return;
+    setLoading(true);
+    setError('');
+    logger.info('Auth', 'Account deletion initiated', { uid: user.uid, isAdmin });
+    try {
+      const credential = EmailAuthProvider.credential(user.email, password);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+
+      if (isAdmin && householdId) {
+        // Delete global invite code index entries first (while user record still exists for auth)
+        const inviteCodesSnap = await get(ref(database, `households/${householdId}/inviteCodes`));
+        const inviteCodes = inviteCodesSnap.val();
+        if (inviteCodes) {
+          await Promise.all(Object.keys(inviteCodes).map(code =>
+            remove(ref(database, `inviteCodes/${code}`))
+          ));
+        }
+        // Delete household
+        await remove(ref(database, `households/${householdId}`));
+      }
+
+      // Delete user record (must happen before deleteUser so auth is still valid)
+      await remove(ref(database, `users/${user.uid}`));
+
+      // Clear local cache before deleting auth account
+      await clearCachedUser();
+
+      // Delete Firebase Auth account (signs user out automatically)
+      await deleteUser(auth.currentUser);
+
+      logger.info('Auth', 'Account deleted successfully', { uid: user.uid });
+      onDeleted();
+    } catch (err) {
+      logger.error('Auth', 'Account deletion failed', { uid: user.uid, error: err.message, code: err.code });
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setError('Incorrect password. Please try again.');
+      } else {
+        setError(err.message);
+      }
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-3xl shadow-xl max-w-md w-full border border-gray-200">
+        <div className="p-6 border-b border-gray-200">
+          <h2 className="text-2xl font-bold text-gray-800">Delete Account</h2>
+          <p className="text-gray-600 font-medium mt-1">This action cannot be undone</p>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 font-medium">
+            {isAdmin
+              ? 'Your account and all household data will be permanently deleted — including the shopping list, history, and all suggestions. Other household members will lose access.'
+              : 'Your account will be removed. The household and its data will remain accessible to other members.'}
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Enter your password to confirm</label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full pl-10 pr-4 py-3 border-2 border-red-200 rounded-xl focus:border-red-400 focus:outline-none transition-colors"
+                onKeyDown={(e) => e.key === 'Enter' && handleDelete()}
+                autoFocus
+              />
+            </div>
+          </div>
+          {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
+        </div>
+        <div className="p-6 border-t border-gray-200 flex gap-3">
+          <button onClick={onClose} disabled={loading} className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-300 transition-colors disabled:opacity-50">Cancel</button>
+          <button
+            onClick={handleDelete}
+            disabled={loading || !password}
+            className="flex-1 text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
+            style={{ backgroundColor: loading || !password ? undefined : '#EF4444' }}
+          >
+            {loading ? 'Deleting...' : 'Delete Account'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PurchaseHistory({ householdId }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [dayGroups, setDayGroups] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await get(ref(database, `households/${householdId}/item-events`));
+        if (cancelled) return;
+        const raw = snap.val() || {};
+        const events = Object.values(raw).filter(e => e && typeof e.ts === 'number' && (e.action === 'checked' || e.action === 'unchecked'));
+
+        // Net out checked/unchecked per item per local date
+        const dayMap = new Map(); // dateStr -> Map(itemKey -> { name, category, qty, count })
+        for (const e of events) {
+          const dateStr = new Date(e.ts).toLocaleDateString('en-CA'); // YYYY-MM-DD in local tz
+          if (!dayMap.has(dateStr)) dayMap.set(dateStr, new Map());
+          const items = dayMap.get(dateStr);
+          const key = `${(e.category || '').toLowerCase()}::${(e.name || '').toLowerCase()}`;
+          if (!items.has(key)) {
+            items.set(key, { name: e.name, category: e.category, qty: e.qty || 1, count: 0 });
+          }
+          const item = items.get(key);
+          if (e.action === 'checked') item.count++;
+          else if (e.action === 'unchecked') item.count--;
+          if (e.qty) item.qty = e.qty;
+        }
+
+        // Build sorted groups (newest first), filter out items with count <= 0
+        const groups = [];
+        for (const [dateStr, items] of dayMap) {
+          const purchased = Array.from(items.values()).filter(i => i.count > 0);
+          if (purchased.length > 0) {
+            purchased.sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name));
+            groups.push({ dateStr, items: purchased });
+          }
+        }
+        groups.sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+
+        setDayGroups(groups);
+        setLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err.message);
+        setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [householdId]);
+
+  const formatDate = (dateStr) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (date.toDateString() === today.toDateString()) return 'Today';
+    if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+  };
+
+  if (loading) return <div className="max-w-2xl mx-auto px-4"><div className="text-center py-12 text-gray-400">Loading purchase history...</div></div>;
+  if (error) return <div className="max-w-2xl mx-auto px-4"><div className="text-center py-12 text-red-500">Error: {error}</div></div>;
+  if (dayGroups.length === 0) return <div className="max-w-2xl mx-auto px-4"><div className="text-center py-12 text-gray-400 text-sm">No purchases yet. Check off items on your shopping list to start tracking.</div></div>;
+
+  return (
+    <div className="max-w-2xl mx-auto px-4">
+      <div className="space-y-4">
+        {dayGroups.map(group => (
+          <div key={group.dateStr} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+            <div className="bg-gray-50 px-4 py-3 border-b border-gray-100">
+              <h3 className="font-bold text-gray-700 text-sm">{formatDate(group.dateStr)}</h3>
+              <span className="text-xs text-gray-400">{group.items.length} item{group.items.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {group.items.map((item, i) => (
+                <div key={i} className="flex items-center gap-3 px-4 py-3">
+                  <Check size={16} className="text-gray-300 flex-shrink-0" />
+                  <span className="flex-1 text-sm font-medium text-gray-700">{item.name}</span>
+                  {item.qty > 1 && <span className="text-xs text-gray-400 font-medium">x{item.qty}</span>}
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">{item.category}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [householdId, setHouseholdId] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [currentPage, setCurrentPage] = useState('list');
   const [showMenu, setShowMenu] = useState(false);
   const [list, setList] = useState([]);
   const [history, setHistory] = useState(new Set());
+  const [categories, setCategories] = useState(CATEGORIES);
   const [commonItems, setCommonItems] = useState({});
   const [lessCommonItems, setLessCommonItems] = useState({});
   const [quickAddMode, setQuickAddMode] = useState(false);
@@ -467,8 +1076,6 @@ export default function App() {
   const [newItemInputs, setNewItemInputs] = useState({});
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingItemName, setEditingItemName] = useState('');
-  const [editingId, setEditingId] = useState(null);
-  const [editingQty, setEditingQty] = useState('');
   const [loading, setLoading] = useState(true);
   const [pendingOps, setPendingOps] = useState(0);
   const [expandedCategories, setExpandedCategories] = useState({});
@@ -490,7 +1097,14 @@ export default function App() {
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showLoginExplicitly, setShowLoginExplicitly] = useState(false);
+  const [needsDisplayName, setNeedsDisplayName] = useState(false);
+  const [displayNameInput, setDisplayNameInput] = useState('');
+  const [members, setMembers] = useState({});
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedItemLastPurchased, setSelectedItemLastPurchased] = useState(null);
+  const [quantityDefaults, setQuantityDefaults] = useState({});
   const authResolvedRef = useRef(false);
+  const getStableItemKey = (item) => item?.itemKey || String(item?.id || '');
 
   // Check for debug mode in URL
   useEffect(() => {
@@ -527,9 +1141,10 @@ export default function App() {
         setUser({
           uid: cachedUser.uid,
           email: cachedUser.email,
-          cached: true // flag to indicate this is from cache
+          cached: true
         });
         setIsAdmin(cachedUser.isAdmin || false);
+        setHouseholdId(cachedUser.householdId || null);
         logger.setUserId(cachedUser.uid);
       } else {
         logger.debug('Auth', 'No cached user found or user already set');
@@ -551,29 +1166,46 @@ export default function App() {
         setShowLoginExplicitly(false);
         logger.setUserId(firebaseUser.uid);
 
+        // Load household membership and derive admin status from household record.
+        // Retry a few times: onAuthStateChanged fires immediately after createUserWithEmailAndPassword,
+        // before the signup handler has finished writing the user record to the DB.
         let isAdminUser = false;
+        let userHouseholdId = null;
         try {
-          const adminDoc = await getDoc(doc(firestore, 'admins', firebaseUser.uid));
-          isAdminUser = adminDoc.exists();
-        } catch (err) {
-          // If it's a permission error, it just means they aren't an admin (expected for most users)
-          if (err.code === 'permission-denied') {
-            logger.debug('Auth', 'User is not an admin (permission denied to admin doc)');
-          } else {
-            logger.error('Auth', 'Failed to check admin status (network error?), using cached value', {
-              error: err.message,
-              code: err.code
-            });
+          let userRecord = await get(ref(database, `users/${firebaseUser.uid}`));
+          let retries = 0;
+          while (!userRecord.val() && retries < 4) {
+            await new Promise(r => setTimeout(r, 400));
+            userRecord = await get(ref(database, `users/${firebaseUser.uid}`));
+            retries++;
+            if (!userRecord.val()) {
+              logger.debug('Auth', 'User record not yet written, retrying', { retries });
+            }
           }
-          // Fall back to cached admin status so the UI stays correct on tab resume
+          userHouseholdId = userRecord.val()?.householdId || null;
+          if (!userRecord.val()?.displayName) {
+            setNeedsDisplayName(true);
+          }
+          if (userHouseholdId) {
+            const household = await get(ref(database, `households/${userHouseholdId}`));
+            isAdminUser = household.val()?.adminUid === firebaseUser.uid;
+          }
+        } catch (err) {
+          logger.error('Auth', 'Failed to load household/admin status, using cached value', {
+            error: err.message,
+            code: err.code
+          });
           const cachedUser = await loadCachedUser().catch(() => null);
           isAdminUser = cachedUser?.isAdmin || false;
+          userHouseholdId = cachedUser?.householdId || null;
         }
         setIsAdmin(isAdminUser);
+        setHouseholdId(userHouseholdId);
 
         logger.info('Auth', 'User authenticated', {
           uid: firebaseUser.uid,
           email: firebaseUser.email,
+          householdId: userHouseholdId,
           isAdmin: isAdminUser
         });
 
@@ -581,7 +1213,8 @@ export default function App() {
         await saveCachedUser({
           uid: firebaseUser.uid,
           email: firebaseUser.email,
-          isAdmin: isAdminUser
+          isAdmin: isAdminUser,
+          householdId: userHouseholdId
         }).then(() => {
           logger.debug('Auth', 'Cached user saved to IndexedDB');
         }).catch(err => {
@@ -597,6 +1230,7 @@ export default function App() {
           logger.info('Auth', 'No cached user and Firebase auth is null - clearing auth state');
           setUser(null);
           setIsAdmin(false);
+          setHouseholdId(null);
         } else {
           logger.info('Auth', 'Firebase auth is null but keeping cached user', {
             uid: cachedUser.uid,
@@ -751,11 +1385,13 @@ export default function App() {
         await initOfflineDB();
         logger.debug('OfflineStorage', 'IndexedDB initialized');
 
-        const [localList, localHistory, localCommon, localLessCommon, syncTime] = await Promise.all([
+        const [localList, localHistory, localCommon, localLessCommon, localCategories, localQuantityDefaults, syncTime] = await Promise.all([
           loadShoppingListLocally(),
           loadShoppingHistoryLocally(),
           loadAllCommonItemsLocally(),
           loadAllLessCommonItemsLocally(),
+          loadCategoriesLocally(),
+          loadQuantityDefaultsLocally(),
           getLastSyncTime()
         ]);
 
@@ -771,10 +1407,13 @@ export default function App() {
 
         // Only use local data if we have it and Firebase hasn't loaded yet
         if (localList !== null && localList !== undefined) {
-          setList(localList);
+          setList(localList.map(item => ({ ...item, itemKey: item.itemKey || String(item.id || generateId()) })));
         }
         if (localHistory !== null && localHistory !== undefined) {
           setHistory(new Set(localHistory));
+        }
+        if (localCategories && Array.isArray(localCategories) && localCategories.length > 0) {
+          setCategories(localCategories);
         }
         if (localCommon && Object.keys(localCommon).length > 0) {
           setCommonItems(localCommon);
@@ -784,6 +1423,9 @@ export default function App() {
         }
         if (syncTime) {
           setLastSyncTime(syncTime);
+        }
+        if (localQuantityDefaults && typeof localQuantityDefaults === 'object') {
+          setQuantityDefaults(localQuantityDefaults);
         }
 
         setLocalDataLoaded(true);
@@ -802,12 +1444,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) {
-      logger.debug('Firebase', 'Skipping Firebase listeners (no user)');
+    if (!user || !householdId) {
+      logger.debug('Firebase', 'Skipping Firebase listeners (no user or household)');
       return;
     }
 
-    logger.info('Firebase', 'Setting up Firebase listeners', { userId: user.uid });
+    logger.info('Firebase', 'Setting up Firebase listeners', { userId: user.uid, householdId });
 
     // Monitor Firebase connection status
     const connectedRef = ref(database, '.info/connected');
@@ -851,15 +1493,33 @@ export default function App() {
       timestamp: Date.now()
     });
 
-    const listRef = ref(database, 'shopping-list');
-    const historyRef = ref(database, 'shopping-history');
-    const commonRef = ref(database, 'common-items');
-    const lessCommonRef = ref(database, 'less-common-items');
+    const hPath = `households/${householdId}`;
+    const categoriesRef = ref(database, `${hPath}/categories`);
+    const listRef = ref(database, `${hPath}/shopping-list`);
+    const historyRef = ref(database, `${hPath}/shopping-history`);
+    const commonRef = ref(database, `${hPath}/common-items`);
+    const lessCommonRef = ref(database, `${hPath}/less-common-items`);
+    const quantityDefaultsRef = ref(database, `${hPath}/quantity-defaults`);
 
     logger.debug('Firebase', 'Setting up data listeners');
 
+    const unsubCategories = onValue(categoriesRef, async (snapshot) => {
+      const data = snapshot.val();
+      if (data && Array.isArray(data) && data.length > 0) {
+        setCategories(data);
+        saveCategoriesToLocally(data);
+      } else {
+        // First setup: seed from code constant and persist to Firebase
+        await set(categoriesRef, CATEGORIES);
+        setCategories(CATEGORIES);
+        saveCategoriesToLocally(CATEGORIES);
+      }
+    }, (error) => {
+      logger.error('Firebase', 'Categories listener error', { error: error.message, code: error.code });
+    });
+
     const unsubList = onValue(listRef, (snapshot) => {
-      const data = snapshot.val() || [];
+      const data = (snapshot.val() || []).map(item => ({ ...item, itemKey: item.itemKey || String(item.id || generateId()) }));
       logger.info('Firebase', 'Shopping list data received', {
         itemCount: data.length,
         timestamp: Date.now()
@@ -908,7 +1568,15 @@ export default function App() {
         const first = Object.keys(decoded)[0];
         processedData = first && Array.isArray(decoded[first]) && typeof decoded[first][0] === 'string' ? migrateItems(decoded) : decoded;
       } else {
+        // First setup: seed from code constant and persist to Firebase
         processedData = migrateItems(DEFAULT_ITEMS);
+        const encoded = {};
+        Object.keys(processedData).forEach(cat => {
+          encoded[encodeCategory(cat)] = processedData[cat];
+        });
+        set(commonRef, encoded).catch(err =>
+          logger.warn('Firebase', 'Failed to seed default items', { error: err.message })
+        );
       }
       logger.info('Firebase', 'Common items data received', {
         categoriesCount: Object.keys(processedData).length,
@@ -959,6 +1627,21 @@ export default function App() {
       });
     });
 
+    const membersRef = ref(database, `households/${householdId}/members`);
+    const unsubMembers = onValue(membersRef, (snapshot) => {
+      setMembers(snapshot.val() || {});
+    }, (error) => {
+      logger.error('Firebase', 'Members listener error', { error: error.message, code: error.code });
+    });
+
+    const unsubQuantityDefaults = onValue(quantityDefaultsRef, (snapshot) => {
+      const data = snapshot.val() || {};
+      setQuantityDefaults(data);
+      saveQuantityDefaultsLocally(data);
+    }, (error) => {
+      logger.error('Firebase', 'Quantity defaults listener error', { error: error.message, code: error.code });
+    });
+
     setLoading(false);
 
     return () => {
@@ -966,18 +1649,22 @@ export default function App() {
       setIsConnected(false);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      unsubCategories();
       unsubList();
       unsubHistory();
       unsubCommon();
       unsubLessCommon();
+      unsubMembers();
+      unsubQuantityDefaults();
     };
-  }, [user?.uid]);
+  }, [user?.uid, householdId]);
 
   const save = async (key, value) => {
+    const fullKey = householdId ? `households/${householdId}/${key}` : key;
     const opId = Date.now();
     logger.info('Firebase', 'Starting Firebase save operation', {
       opId,
-      key,
+      key: fullKey,
       dataType: Array.isArray(value) ? 'array' : typeof value,
       itemCount: Array.isArray(value) ? value.length : undefined
     });
@@ -992,7 +1679,7 @@ export default function App() {
     });
 
     try {
-      await set(ref(database, key), value);
+      await set(ref(database, fullKey), value);
       logger.info('Firebase', 'Firebase save completed', {
         opId,
         key,
@@ -1038,26 +1725,188 @@ export default function App() {
     await save('less-common-items', encoded);
   };
 
-  const addItem = (name, category) => {
-    const newList = [...list, { id: Date.now(), name, category, quantity: '1', done: false }];
+  const persistQuantityDefaults = async (nextDefaults) => {
+    setQuantityDefaults(nextDefaults);
+    await save('quantity-defaults', nextDefaults);
+    await saveQuantityDefaultsLocally(nextDefaults);
+  };
+
+  const getDefaultQuantityForItem = (itemKey, name) => {
+    const key = String(itemKey || '');
+    const legacyKey = (name || '').trim().toLowerCase();
+    return quantityDefaults[key] || quantityDefaults[legacyKey] || '';
+  };
+
+  const logItemEvent = (event) => {
+    if (!householdId) return;
+    const payload = {
+      ts: Date.now(),
+      uid: user?.uid || 'unknown',
+      name: (event.name || '').toLowerCase(),
+      category: event.category || '',
+      action: event.action,
+    };
+    if (event.source) payload.source = event.source;
+    if (event.qty != null) payload.qty = Number(event.qty);
+    try {
+      push(ref(database, `households/${householdId}/item-events`), payload)
+        .catch(err => logger.warn('App', 'item-event write failed', { error: err.message, action: payload.action }));
+    } catch (err) {
+      logger.warn('App', 'item-event push threw', { error: err.message });
+    }
+  };
+
+  const addItem = (name, category, source = 'quickAdd', itemKey = generateId()) => {
+    const defaultQuantity = getDefaultQuantityForItem(itemKey, name);
+    const newList = [...list, { id: Date.now(), itemKey, name, category, quantity: defaultQuantity, done: false, addedBy: user?.uid || null, addedAt: Date.now() }];
     setList(newList); // Optimistic update
     save('shopping-list', newList);
     const newHistory = new Set(history);
     newHistory.add(name.toLowerCase());
     setHistory(newHistory); // Optimistic update
     save('shopping-history', [...newHistory]);
+    logItemEvent({ name, category, action: 'added', source, qty: Number(defaultQuantity) || 1 });
   };
 
   const toggleDone = (id) => {
+    const target = list.find(item => item.id === id);
     const newList = list.map(item => item.id === id ? { ...item, done: !item.done } : item);
     setList(newList); // Optimistic update
     save('shopping-list', newList);
+    if (target) {
+      logItemEvent({
+        name: target.name,
+        category: target.category,
+        action: target.done ? 'unchecked' : 'checked',
+        qty: Number(target.quantity) || 1,
+      });
+    }
   };
 
-  const updateQuantity = (id, qty) => {
-    const newList = list.map(item => item.id === id ? { ...item, quantity: qty } : item);
-    setList(newList); // Optimistic update
-    save('shopping-list', newList);
+  const updateQuantity = (itemKey, qty) => {
+    setList((prevList) => {
+      const nextList = prevList.map(item =>
+        getStableItemKey(item) === itemKey
+          ? { ...item, itemKey: getStableItemKey(item), quantity: qty }
+          : item
+      );
+      save('shopping-list', nextList);
+
+      const target = prevList.find(item => getStableItemKey(item) === itemKey);
+      if (target) {
+        const nextDefaults = { ...quantityDefaults };
+        if (qty && qty.trim()) nextDefaults[itemKey] = qty.trim();
+        else delete nextDefaults[itemKey];
+        persistQuantityDefaults(nextDefaults);
+      }
+
+      return nextList;
+    });
+  };
+
+  const loadLastPurchasedForItemName = async (name) => {
+    if (!householdId) {
+      setSelectedItemLastPurchased(null);
+      return;
+    }
+    try {
+      const eventsSnap = await get(ref(database, `households/${householdId}/item-events`));
+      const events = eventsSnap.val();
+      if (!events) {
+        setSelectedItemLastPurchased(null);
+        return;
+      }
+      const itemNameLower = name.toLowerCase();
+      let latestTs = null;
+      Object.values(events).forEach(ev => {
+        if (ev.action === 'checked' && ev.name === itemNameLower) {
+          if (!latestTs || ev.ts > latestTs) latestTs = ev.ts;
+        }
+      });
+      setSelectedItemLastPurchased(latestTs);
+    } catch (err) {
+      logger.warn('App', 'Failed to fetch last purchased for item', { error: err.message });
+    }
+  };
+
+  const updateItemName = async (itemKey, nextName) => {
+    const trimmed = (nextName || '').trim();
+    setList((prevList) => {
+      const target = prevList.find(item => getStableItemKey(item) === itemKey);
+      if (!target || !trimmed || trimmed === target.name) return prevList;
+
+      const oldNameLower = target.name.trim().toLowerCase();
+      const targetStableKey = getStableItemKey(target);
+      const renamedTarget = { ...target, itemKey: targetStableKey, name: trimmed };
+      const nextList = [];
+      for (const item of prevList) {
+        const sameLogicalRow = getStableItemKey(item) === itemKey;
+        const orphanWithOldName = !sameLogicalRow
+          && item.category === target.category
+          && item.name.trim().toLowerCase() === oldNameLower;
+        if (orphanWithOldName) continue;
+        nextList.push(sameLogicalRow ? renamedTarget : item);
+      }
+      save('shopping-list', nextList);
+
+      const newHistory = new Set(history);
+      newHistory.delete(target.name.toLowerCase());
+      newHistory.add(trimmed.toLowerCase());
+      setHistory(newHistory);
+      save('shopping-history', [...newHistory]);
+
+      const renameSuggestionArray = (items = []) => {
+        const renamed = items.map((suggestion) =>
+          suggestion.name.trim().toLowerCase() === oldNameLower
+            ? { ...suggestion, name: trimmed }
+            : suggestion
+        );
+        const deduped = [];
+        const seen = new Set();
+        for (const suggestion of renamed.sort((a, b) => a.name.localeCompare(b.name))) {
+          const key = suggestion.name.trim().toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          deduped.push(suggestion);
+        }
+        return deduped;
+      };
+      const nextCommonItems = {};
+      Object.keys(commonItems).forEach((cat) => {
+        nextCommonItems[cat] = renameSuggestionArray(commonItems[cat]);
+      });
+      const nextLessCommonItems = {};
+      Object.keys(lessCommonItems).forEach((cat) => {
+        nextLessCommonItems[cat] = renameSuggestionArray(lessCommonItems[cat]);
+      });
+      setCommonItems(nextCommonItems);
+      setLessCommonItems(nextLessCommonItems);
+      saveCommonItems(nextCommonItems);
+      saveLessCommonItems(nextLessCommonItems);
+
+      setSelectedItem(si => (si && getStableItemKey(si) === itemKey ? { ...si, name: trimmed } : si));
+      void loadLastPurchasedForItemName(trimmed);
+
+      return nextList;
+    });
+  };
+
+  const openItemSheet = async (item) => {
+    const itemKey = getStableItemKey(item);
+    setSelectedItem({ ...item, itemKey, onQuantityChange: updateQuantity, onNameChange: updateItemName });
+    setSelectedItemLastPurchased(null);
+    await loadLastPurchasedForItemName(item.name);
+  };
+
+  const openSuggestionSheet = async (cat, suggestion) => {
+    const item = {
+      ...suggestion,
+      category: cat,
+      itemKey: suggestion.id,
+    };
+    setSelectedItem(item);
+    setSelectedItemLastPurchased(null);
+    await loadLastPurchasedForItemName(suggestion.name);
   };
 
   const clearDone = () => {
@@ -1067,9 +1916,22 @@ export default function App() {
   };
 
   const removeItem = (id) => {
+    const target = list.find(item => item.id === id);
     const newList = list.filter(item => item.id !== id);
     setList(newList); // Optimistic update
     save('shopping-list', newList);
+    if (target && !target.done) {
+      if (target.quantity && target.quantity.trim()) {
+        const nextDefaults = { ...quantityDefaults, [getStableItemKey(target)]: target.quantity.trim() };
+        persistQuantityDefaults(nextDefaults);
+      }
+      logItemEvent({
+        name: target.name,
+        category: target.category,
+        action: 'removed',
+        qty: Number(target.quantity) || 1,
+      });
+    }
   };
 
   const toggleQuickAdd = (cat, itemId) => {
@@ -1138,12 +2000,6 @@ export default function App() {
     setNewItemInputs(prev => ({ ...prev, [cat]: '' }));
   };
 
-  const finishEditQty = () => {
-    if (editingId && editingQty.trim()) updateQuantity(editingId, editingQty);
-    setEditingId(null);
-    setEditingQty('');
-  };
-
   const getAvailable = (cat) => {
     const listNames = new Set(list.map(i => i.name.toLowerCase()));
     return (commonItems[cat] || []).filter(i => !listNames.has(i.name.toLowerCase()));
@@ -1165,12 +2021,23 @@ export default function App() {
     return Array.from(suggestions).slice(0, 10);
   };
 
+  /** Verbatim query first when it is not already an exact (case-insensitive) match in suggestions — easier one-tap add for new strings. */
+  const getQuickAddDropdownItems = (cat) => {
+    const raw = (categorySearches[cat] || '').trim();
+    if (!raw) return [];
+    const base = getSuggestions(cat);
+    const rawLc = raw.toLowerCase();
+    const hasExact = base.some((s) => s.toLowerCase() === rawLc);
+    const items = hasExact ? base : [raw, ...base];
+    return items.slice(0, 10);
+  };
+
   const addFromSearch = (cat, name) => {
-    addItem(name, cat);
+    addItem(name, cat, 'typed', generateId());
     setCategorySearches(prev => ({ ...prev, [cat]: '' }));
   };
 
-  const organized = CATEGORIES.map(cat => {
+  const organized = categories.map(cat => {
     const catItems = list.filter(i => i.category === cat);
     const quickItems = quickAddMode ? getAvailable(cat) : [];
     const all = [...catItems.map(i => ({ type: 'list', data: i, key: i.name.toLowerCase() })), ...quickItems.map(i => ({ type: 'quick', data: i, key: i.name.toLowerCase() }))].sort((a, b) => a.key.localeCompare(b.key));
@@ -1189,7 +2056,7 @@ export default function App() {
     }
 
     const initial = {};
-    CATEGORIES.forEach(cat => {
+    categories.forEach(cat => {
       if (quickAddMode) {
         // In Adding Mode, expand all categories
         initial[cat] = true;
@@ -1349,7 +2216,9 @@ export default function App() {
           <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-4">
             <div className="flex items-center gap-3">
               {currentPage === 'list' && <div className="flex-1 font-bold text-xl" style={{ color: '#FF6B6B' }}>Shopping List</div>}
-              {currentPage === 'edit' && <div className="flex-1 font-bold text-xl text-gray-800">Edit Suggestions</div>}
+              {currentPage === 'settings' && <div className="flex-1 font-bold text-xl text-gray-800">Settings</div>}
+              {currentPage === 'history' && <div className="flex-1 font-bold text-xl text-gray-800">Purchase History</div>}
+              {currentPage === 'account' && <div className="flex-1 font-bold text-xl text-gray-800">Account</div>}
               <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-colors ${
                 !isOnline || !isConnected
                   ? 'bg-red-100'
@@ -1381,9 +2250,9 @@ export default function App() {
             <div className="absolute top-full left-0 right-0 bg-white shadow-lg border-t border-gray-200">
               <div className="max-w-2xl lg:max-w-6xl mx-auto">
                 <button onClick={() => { setCurrentPage('list'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 ${currentPage === 'list' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'list' ? '#FF7A7A' : '#374151' }}>Shopping List</button>
-                <button onClick={() => { setCurrentPage('edit'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 ${currentPage === 'edit' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'edit' ? '#FF7A7A' : '#374151' }}>Edit Suggestions</button>
-                {isAdmin && <button onClick={() => { setShowAdmin(true); setShowMenu(false); }} className="w-full text-left px-6 py-4 border-b border-gray-100 flex items-center gap-2 font-semibold text-gray-700 hover:bg-gray-50 transition-colors"><Shield size={20} />Admin Panel</button>}
-                <button onClick={handleSignOut} className="w-full text-left px-6 py-4 text-red-500 font-semibold flex items-center gap-2 hover:bg-red-50 transition-colors"><LogOut size={20} />Sign Out</button>
+                <button onClick={() => { setCurrentPage('history'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'history' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'history' ? '#FF7A7A' : '#374151' }}><History size={20} />Purchase History</button>
+                <button onClick={() => { setCurrentPage('settings'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'settings' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'settings' ? '#FF7A7A' : '#374151' }}><Settings size={20} />Settings</button>
+                <button onClick={() => { setCurrentPage('account'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'account' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'account' ? '#FF7A7A' : '#374151' }}><UserCircle size={20} />Account</button>
               </div>
             </div>
           )}
@@ -1396,7 +2265,23 @@ export default function App() {
         )}
 
         <div className="pt-20 pb-6">
-          {currentPage === 'list' ? (
+          {currentPage === 'account' ? (
+            <div className="max-w-2xl mx-auto px-4">
+              <div className="space-y-3">
+                {isAdmin && (
+                  <button onClick={() => setShowAdmin(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
+                    <Shield size={20} />Admin Panel
+                  </button>
+                )}
+                <button onClick={handleSignOut} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-red-500 hover:bg-red-50 transition-colors">
+                  <LogOut size={20} />Sign Out
+                </button>
+                <button onClick={() => setShowDeleteAccount(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-red-400 hover:bg-red-50 transition-colors text-sm">
+                  <Trash2 size={18} />Delete Account
+                </button>
+              </div>
+            </div>
+          ) : currentPage === 'list' ? (
             <div className="max-w-2xl lg:max-w-6xl mx-auto px-4">
               {/* Sticky toolbar when scrolling */}
               {showStickyToolbar && (
@@ -1432,7 +2317,7 @@ export default function App() {
                         </div>
                       </div>
                       <div className={`rounded-2xl p-1.5 border-2 transition-colors scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''} ${list.filter(i => i.done).length === 0 ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
-                        <button onClick={clearDone} disabled={list.filter(i => i.done).length === 0} className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all h-full ${list.filter(i => i.done).length === 0 ? 'text-gray-400' : 'text-white'}`} style={{ backgroundColor: list.filter(i => i.done).length === 0 ? 'transparent' : '#FF7A7A' }}>
+                        <button onClick={clearDone} disabled={list.filter(i => i.done).length === 0} className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all h-full ${list.filter(i => i.done).length === 0 ? 'text-gray-400' : 'text-white'}`} style={{ backgroundColor: list.filter(i => i.done).length === 0 ? 'transparent' : (quickAddMode ? '#6B7280' : '#FF7A7A') }}>
                           <Check size={18} strokeWidth={2.5} />
                           <span>Clear</span>
                         </button>
@@ -1473,16 +2358,16 @@ export default function App() {
                   </div>
                 </div>
                 <div className={`rounded-2xl p-1.5 border-2 transition-colors scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''} ${list.filter(i => i.done).length === 0 ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
-                  <button onClick={clearDone} disabled={list.filter(i => i.done).length === 0} className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all h-full ${list.filter(i => i.done).length === 0 ? 'text-gray-400' : 'text-white'}`} style={{ backgroundColor: list.filter(i => i.done).length === 0 ? 'transparent' : '#FF7A7A' }}>
+                  <button onClick={clearDone} disabled={list.filter(i => i.done).length === 0} className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all h-full ${list.filter(i => i.done).length === 0 ? 'text-gray-400' : 'text-white'}`} style={{ backgroundColor: list.filter(i => i.done).length === 0 ? 'transparent' : (quickAddMode ? '#6B7280' : '#FF7A7A') }}>
                     <Check size={18} strokeWidth={2.5} />
                     <span>Clear</span>
                   </button>
                 </div>
               </div>
-              <div className="space-y-3 md:grid md:grid-cols-2 md:gap-4 md:space-y-0 lg:grid-cols-3 lg:gap-6">
+              <div className="space-y-3">
                 {organized.map(g => {
                   const search = categorySearches[g.category] || '';
-                  const sugg = getSuggestions(g.category);
+                  const quickAddDropdown = getQuickAddDropdownItems(g.category);
                   const uncheckedCount = list.filter(i => i.category === g.category && !i.done).length;
                   const isExpanded = expandedCategories[g.category];
 
@@ -1512,7 +2397,7 @@ export default function App() {
                           </span>
                         )}
                       </button>
-                      
+
                       {isExpanded && (
                         <>
                           {quickAddMode && (
@@ -1520,44 +2405,96 @@ export default function App() {
                               <div className="relative">
                                 <Search className="absolute left-3 top-3 text-gray-400" size={18} />
                                 <input type="text" value={search} onChange={(e) => setCategorySearches(prev => ({ ...prev, [g.category]: e.target.value }))} placeholder={`Add to ${g.category}...`} className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors" />
-                                {search && (
+                                {search.trim() && (
                                   <div className="absolute w-full bg-white border-2 border-gray-200 rounded-xl mt-2 shadow-lg z-10 max-h-60 overflow-y-auto">
-                                    {sugg.length > 0 ? sugg.map((s, i) => <button key={i} onClick={() => addFromSearch(g.category, s)} className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b last:border-b-0 text-sm font-medium">{s}</button>) : (
-                                      <button onClick={() => addFromSearch(g.category, search)} className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm flex items-center gap-2 font-medium"><Plus size={18} style={{ color: '#FF7A7A' }} /><span>Add "<span className="font-semibold">{search}</span>"</span></button>
-                                    )}
+                                    {quickAddDropdown.map((s, i) => (
+                                      <button key={`${i}-${s}`} type="button" onClick={() => addFromSearch(g.category, s)} className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b last:border-b-0 text-sm font-medium">
+                                        {s}
+                                      </button>
+                                    ))}
                                   </div>
                                 )}
                               </div>
                             </div>
                           )}
                           {g.items.length > 0 ? (
-                            <div className="pb-3">
+                            <div className="pb-3 md:columns-2 lg:columns-3 md:gap-0">
                               {g.items.map((item, idx) => {
                                 if (item.type === 'list') {
                                   const li = item.data;
                                   return (
-                                    <div key={li.id} className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
-                                      <button onClick={() => toggleDone(li.id)} className={`flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'border-transparent' : 'border-gray-300 bg-white'}`} style={{ backgroundColor: li.done ? '#FF7A7A' : undefined }}>
-                                        {li.done && <Check size={16} className="text-white" strokeWidth={3} />}
-                                      </button>
-                                      <span className={`flex-1 font-semibold text-sm ${li.done ? 'line-through text-gray-400' : ''}`} style={{ color: li.done ? undefined : '#FF7A7A' }}>{li.name}</span>
-                                      {editingId === li.id ? (
-                                        <input type="text" value={editingQty} onChange={(e) => setEditingQty(e.target.value)} onBlur={finishEditQty} onKeyPress={(e) => e.key === 'Enter' && finishEditQty()} className={`min-w-[60px] max-w-[120px] px-3 py-1.5 border-2 border-gray-300 rounded-lg text-right font-medium text-sm focus:outline-none focus:border-gray-400 transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`} autoFocus />
+                                    <div key={li.id} className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 break-inside-avoid scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                                      {quickAddMode ? (
+                                        li.done ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => toggleDone(li.id)}
+                                            className={`flex-shrink-0 w-6 h-6 rounded-md border-2 border-transparent flex items-center justify-center transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                            style={{ backgroundColor: '#6B7280' }}
+                                            aria-label={`Mark ${li.name} as not done`}
+                                          >
+                                            <Check size={16} className="text-white" strokeWidth={3} />
+                                          </button>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={() => removeItem(li.id)}
+                                            className={`flex-shrink-0 w-6 h-6 rounded-md border-2 border-gray-200 bg-white flex items-center justify-center text-gray-400 hover:text-gray-600 hover:border-gray-300 transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                            aria-label={`Remove ${li.name} from list`}
+                                          >
+                                            <X size={16} strokeWidth={2.5} />
+                                          </button>
+                                        )
                                       ) : (
-                                        <button onClick={() => { setEditingId(li.id); setEditingQty(li.quantity); }} className={`px-2 py-1 rounded-md font-medium text-sm transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'text-gray-400 bg-transparent' : 'text-gray-600 bg-gray-100 hover:bg-gray-200'} ${li.quantity.length <= 2 ? 'min-w-[32px] text-center' : 'min-w-[48px] text-right'}`}>
-                                          {li.quantity}
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleDone(li.id)}
+                                          className={`flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'border-transparent' : 'border-gray-300 bg-white'}`}
+                                          style={{ backgroundColor: li.done ? '#FF7A7A' : undefined }}
+                                        >
+                                          {li.done && <Check size={16} className="text-white" strokeWidth={3} />}
                                         </button>
                                       )}
-                                      <button onClick={() => removeItem(li.id)} className={`text-gray-400 hover:text-gray-600 transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}><X size={20} /></button>
+                                      <button onClick={() => openItemSheet(li)} className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : ''}`} style={{ color: li.done ? undefined : '#FF7A7A' }}>
+                                        {li.name}
+                                        {li.quantity && li.quantity.trim() && (
+                                          <span className="ml-1 text-gray-400 font-medium">
+                                            {li.quantity}
+                                          </span>
+                                        )}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => openItemSheet(li)}
+                                        className={`p-2 rounded-full transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'text-gray-300 hover:text-gray-400' : 'text-gray-300 hover:text-gray-500'}`}
+                                        aria-label={`Edit quantity for ${li.name}`}
+                                      >
+                                        <Edit2 size={14} strokeWidth={1.8} />
+                                      </button>
                                     </div>
                                   );
                                 } else {
                                   const qi = item.data;
                                   return (
-                                    <button key={`qa-${idx}`} onClick={() => addItem(qi.name, g.category)} className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-gray-50 transition-colors border-t border-gray-100 scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
-                                      <div className={`w-6 h-6 rounded-md flex items-center justify-center scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: '#FF7A7A' }}><Plus size={16} className="text-white" strokeWidth={2.5} /></div>
-                                      <span className="flex-1 text-left font-semibold text-sm" style={{ color: '#FF7A7A' }}>{qi.name}</span>
-                                    </button>
+                                    <div key={`qa-${idx}`} className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-gray-50 transition-colors border-t border-gray-100 break-inside-avoid scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                                      <button
+                                        type="button"
+                                        onClick={() => addItem(qi.name, g.category, 'quickAdd', qi.id)}
+                                        className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                        style={{ backgroundColor: '#FF7A7A' }}
+                                        aria-label={`Add ${qi.name} to list`}
+                                      >
+                                        <Plus size={16} className="text-white" strokeWidth={2.5} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => openSuggestionSheet(g.category, qi)}
+                                        className="flex-1 text-left font-semibold text-sm"
+                                        style={{ color: '#FF7A7A' }}
+                                      >
+                                        {qi.name}
+                                      </button>
+                                    </div>
                                   );
                                 }
                               })}
@@ -1572,10 +2509,12 @@ export default function App() {
                 })}
               </div>
             </div>
+          ) : currentPage === 'history' ? (
+            <PurchaseHistory householdId={householdId} />
           ) : (
             <div className="max-w-2xl lg:max-w-6xl mx-auto px-4">
-              <div className="space-y-3 md:grid md:grid-cols-2 md:gap-4 md:space-y-0 lg:grid-cols-3 lg:gap-6">
-                {CATEGORIES.map(cat => {
+              <div className="space-y-3">
+                {categories.map(cat => {
                   const all = [...(commonItems[cat] || []).map(i => ({ ...i, isQuick: true })), ...(lessCommonItems[cat] || []).map(i => ({ ...i, isQuick: false }))].sort((a, b) => a.name.localeCompare(b.name));
                   return (
                     <div key={cat} className="bg-white rounded-2xl border-2 border-gray-200 overflow-hidden">
@@ -1587,9 +2526,9 @@ export default function App() {
                         </div>
                       </div>
                       {all.length > 0 ? (
-                        <div className="px-4 pb-4 space-y-2">
+                        <div className="px-4 pb-4 space-y-2 md:columns-2 lg:columns-3 md:gap-4">
                           {all.map(i => (
-                            <div key={i.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                            <div key={i.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200 break-inside-avoid">
                               {editingItemId === i.id ? (
                                 <input type="text" value={editingItemName} onChange={(e) => setEditingItemName(e.target.value)} onBlur={() => finishEditName(cat, i.id)} onKeyPress={(e) => e.key === 'Enter' && finishEditName(cat, i.id)} className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg text-sm font-medium" autoFocus />
                               ) : (
@@ -1619,7 +2558,31 @@ export default function App() {
           )}
         </div>
       </div>
-      {showAdmin && isAdmin && <AdminPanel currentUser={user} onClose={() => setShowAdmin(false)} />}
+      {showAdmin && isAdmin && <AdminPanel householdId={householdId} onClose={() => setShowAdmin(false)} />}
+      {showDeleteAccount && user && (
+        <DeleteAccountModal
+          user={user}
+          householdId={householdId}
+          isAdmin={isAdmin}
+          onClose={() => setShowDeleteAccount(false)}
+          onDeleted={() => setShowDeleteAccount(false)}
+        />
+      )}
+      {needsDisplayName && user && (
+        <DisplayNamePrompt
+          user={user}
+          householdId={householdId}
+          onSaved={() => setNeedsDisplayName(false)}
+        />
+      )}
+      {selectedItem && (
+        <ItemBottomSheet
+          item={selectedItem}
+          members={members}
+          lastPurchasedTs={selectedItemLastPurchased}
+          onClose={() => setSelectedItem(null)}
+        />
+      )}
       {showUpdateToast && (
         <UpdateToast
           onUpdate={handleUpdate}
