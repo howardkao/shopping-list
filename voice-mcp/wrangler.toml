@@ -1,0 +1,7 @@
+name = "shopping-list-voice-mcp"
+main = "src/index.js"
+compatibility_date = "2026-03-27"
+
+[observability]
+enabled = true
+

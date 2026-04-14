@@ -6,41 +6,91 @@
     "users": {
       "$uid": {
         ".read": "auth != null && auth.uid == $uid",
-        ".write": "auth != null && (!data.exists() || auth.uid == $uid)"
+        ".write": "auth != null && (!data.exists() || auth.uid == $uid)",
+        "email":       { ".validate": "newData.isString() && newData.val().length <= 200" },
+        "displayName": { ".validate": "newData.isString() && newData.val().length <= 100" },
+        "householdId": { ".validate": "newData.isString() && newData.val().length <= 50" },
+        "createdAt":   { ".validate": "newData.isNumber()" },
+        "$other":      { ".validate": false }
+      }
+    },
+
+    "households": {
+      "$householdId": {
+        ".read":  "auth != null && root.child('users').child(auth.uid).child('householdId').val() == $householdId",
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('householdId').val() == $householdId || !root.child('users').child(auth.uid).child('householdId').exists())",
+
+        "adminUid":  { ".validate": "newData.isString() && newData.val().length <= 50" },
+        "createdAt": { ".validate": "newData.isNumber()" },
+
+        "categories": {
+          ".validate": "newData.hasChildren()"
+        },
+
+        "shopping-list":    { ".validate": "newData.val() == null || newData.isString() || newData.hasChildren()" },
+        "shopping-history": { ".validate": "newData.val() == null || newData.isString() || newData.hasChildren()" },
+
+        "common-items":      { ".validate": "newData.val() == null || newData.hasChildren()" },
+        "less-common-items": { ".validate": "newData.val() == null || newData.hasChildren()" },
+
+        "item-events": {
+          "$eventId": {
+            "ts":       { ".validate": "newData.isNumber()" },
+            "uid":      { ".validate": "newData.isString() && newData.val().length <= 50" },
+            "name":     { ".validate": "newData.isString() && newData.val().length <= 200" },
+            "category": { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "action":   { ".validate": "newData.isString() && newData.val().matches(/^(added|checked|unchecked|removed)$/)" },
+            "source":   { ".validate": "newData.isString() && newData.val().length <= 30" },
+            "qty":      { ".validate": "newData.isNumber()" },
+            "$other":   { ".validate": false }
+          }
+        },
+
+        "inviteCodes": {
+          "$code": {
+            ".validate": "$code.matches(/^[A-Z0-9]{16}$/)",
+            "code":        { ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{16}$/)" },
+            "householdId": { ".validate": "newData.isString() && newData.val().length <= 50" },
+            "expiresAt":   { ".validate": "newData.isString() && newData.val().length <= 50" },
+            "used":        { ".validate": "newData.isBoolean()" },
+            "usedBy":      { ".validate": "newData.isString() && newData.val().length <= 200" },
+            "usedAt":      { ".validate": "newData.isNumber()" },
+            "createdAt":   { ".validate": "newData.isNumber()" },
+            "$other":      { ".validate": false }
+          }
+        },
+
+        "members": {
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid",
+            "displayName": { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "email":       { ".validate": "newData.isString() && newData.val().length <= 200" },
+            "$other":      { ".validate": false }
+          }
+        },
+
+        "$other": { ".validate": false }
       }
     },
 
     "inviteCodes": {
-      ".read": "auth != null",
-      "$codeId": {
-        ".write": "auth != null && (!data.exists() || data.child('used').val() == false)"
+      ".read": true,
+      "$code": {
+        ".validate": "$code.matches(/^[A-Z0-9]{16}$/)",
+        ".write": "auth != null && (newData.exists() ? root.child('users').child(auth.uid).child('householdId').val() == newData.child('householdId').val() : root.child('users').child(auth.uid).child('householdId').val() == data.child('householdId').val())",
+        "householdId": { ".validate": "newData.isString() && newData.val().length <= 50" },
+        "expiresAt":   { ".validate": "newData.isString() && newData.val().length <= 50" },
+        "used":        { ".validate": "newData.isBoolean()" },
+        "usedBy":      { ".validate": "newData.isString() && newData.val().length <= 200" },
+        "usedAt":      { ".validate": "newData.isNumber()" },
+        "createdAt":   { ".validate": "newData.isNumber()" },
+        "$other":      { ".validate": false }
       }
     },
 
-    "shopping-list": {
-      ".read": "auth != null",
-      ".write": "auth != null"
-    },
-
-    "shopping-history": {
-      ".read": "auth != null",
-      ".write": "auth != null"
-    },
-
-    "common-items": {
-      ".read": "auth != null",
-      ".write": "auth != null"
-    },
-
-    "less-common-items": {
-      ".read": "auth != null",
-      ".write": "auth != null"
-    },
-
     "logs": {
-      ".read": "root.child('users').child(auth.uid).child('isFirstUser').val() === true",
       "$uid": {
-        ".read": "auth != null && auth.uid == $uid",
+        ".read":  "auth != null && auth.uid == $uid",
         ".write": "auth != null && auth.uid == $uid"
       }
     }

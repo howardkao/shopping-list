@@ -245,6 +245,29 @@ export async function getLastSyncTime() {
 }
 
 /**
+ * Save the last used quantity per item name so re-added items can reuse it.
+ */
+export async function saveQuantityDefaultsLocally(quantityDefaults) {
+  try {
+    await saveToStore(STORES.META, 'quantityDefaults', quantityDefaults);
+  } catch (error) {
+    console.error('Failed to save quantity defaults locally:', error);
+  }
+}
+
+/**
+ * Load the last used quantity per item name.
+ */
+export async function loadQuantityDefaultsLocally() {
+  try {
+    return await getFromStore(STORES.META, 'quantityDefaults');
+  } catch (error) {
+    console.error('Failed to load quantity defaults locally:', error);
+    return null;
+  }
+}
+
+/**
  * Queue an operation for sync when back online
  */
 export async function queueSyncOperation(operation) {
@@ -361,6 +384,29 @@ export async function loadCachedUser() {
     });
   } catch (error) {
     console.error('Failed to load cached user:', error);
+    return null;
+  }
+}
+
+/**
+ * Save categories list to local storage
+ */
+export async function saveCategoriesToLocally(categories) {
+  try {
+    await saveToStore(STORES.META, 'categories', categories);
+  } catch (error) {
+    console.error('Failed to save categories locally:', error);
+  }
+}
+
+/**
+ * Load categories list from local storage
+ */
+export async function loadCategoriesLocally() {
+  try {
+    return await getFromStore(STORES.META, 'categories');
+  } catch (error) {
+    console.error('Failed to load categories locally:', error);
     return null;
   }
 }

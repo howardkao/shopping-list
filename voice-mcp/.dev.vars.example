@@ -1,0 +1,12 @@
+# Cloudflare Worker local/dev variables
+FIREBASE_DATABASE_URL=https://your_project_id-default-rtdb.firebaseio.com
+FIREBASE_PROJECT_ID=your_project_id
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your_project_id.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+# Required for multi-household RTDB (same value as users/{uid}/householdId in Firebase)
+FIREBASE_HOUSEHOLD_ID=your_household_push_id
+
+OAUTH_CLIENT_ID=your_claude_connector_client_id
+OAUTH_CLIENT_SECRET=your_claude_connector_client_secret
+OAUTH_SIGNING_SECRET=replace_with_a_long_random_string
+OAUTH_ALLOWED_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
