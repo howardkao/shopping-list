@@ -28,7 +28,6 @@ A self-hosted collaborative shopping list app for a single household. Built with
 2. Enable these services:
    - **Authentication** → Sign-in method → Email/Password
    - **Realtime Database** → Create database → Start in **locked mode**
-   - **Firestore Database** → Create database → Start in **production mode**
    - **Hosting** (optional — only needed if you want to use Firebase Hosting)
 
 ### 2. Get your Firebase config
@@ -58,30 +57,10 @@ VITE_FIREBASE_APP_ID=...
 ```bash
 firebase login
 firebase use --add   # select your project
-firebase deploy --only database,firestore
+firebase deploy --only database
 ```
 
-### 5. Customize for your household
-
-Before your first deploy, edit two constants in `src/App.jsx`:
-
-**Categories** (line ~33) — replace with the stores and sections that match how you shop:
-```js
-const CATEGORIES = ['PRODUCE', 'MEAT & FISH', 'DAIRY & EGGS', 'FROZEN', 'DRY GOODS', ...];
-```
-
-**Default suggestions** (line ~85) — seed items you buy regularly in each category:
-```js
-const DEFAULT_ITEMS = {
-  'PRODUCE': ['broccoli', 'carrots', 'onions'],
-  'DAIRY & EGGS': ['eggs', 'milk', 'butter'],
-  ...
-};
-```
-
-You can also edit these from within the app after setup, but starting with sensible defaults saves time.
-
-### 6. Run locally or deploy
+### 5. Run locally or deploy
 
 **Local dev:**
 ```bash
@@ -97,24 +76,22 @@ firebase deploy --only hosting
 
 ---
 
-## First use and admin setup
+## First use and household setup
 
-1. Open the app and register the **first account** — this account automatically becomes the admin. Use a real email you control.
-2. As admin, open the **Admin Panel** (shield icon) to generate invite codes for other household members.
-3. Share each invite code privately. Each code is single-use and expires after 7 days.
-4. Other household members register using their invite code — they're then in your shared list.
-
-> **There's no separate admin-creation step.** Whoever registers first is the admin. If you're setting this up for your household, register yourself first before sharing the URL.
+1. Open the app and register the **first account** — choose "New household" to create one. The creator becomes the household admin. Use a real email you control.
+2. A first-run onboarding flow walks you through the seeded aisles, categories, and suggested items so you can reorder, rename, hide, or add whatever matches how you shop.
+3. Admins can open **Invite Household Members** to generate 16-character invite codes. Each code is single-use and expires after 7 days. Share each code privately.
+4. Other household members register with an invite code and land in the same shared list.
 
 ---
 
 ## How the app works
 
-**Shopping list** — add items with a category, check them off as you shop. Checked items move to the bottom; clear them all at once when you're done.
+**Shopping list** — add items, check them off as you shop. Items are grouped by aisle so they appear in the order you walk the store.
 
-**Add mode vs Shop mode** — toggle between browsing your suggestion library (Add mode) and checking off the active list (Shop mode).
+**Add mode vs Shop mode** — toggle between browsing suggestion tiles (Add mode) and checking off the active list (Shop mode).
 
-**Suggestion library** — items are organized as "common" (shown by default) and "less common" (shown on demand). Edit the library from the Edit Suggestions page.
+**Suggestions** — every household is seeded with aisles, categories, and items. Items in each category are either **visible** (shown as quick-add tiles) or in the **library** (searchable via autocomplete). Edit the taxonomy from Settings → Suggestions.
 
 **Offline support** — the app caches data locally and works without a connection. Changes sync automatically when you're back online.
 
@@ -129,7 +106,6 @@ firebase deploy --only hosting
 | Styling | Tailwind CSS |
 | Auth | Firebase Auth (email/password) |
 | Shopping data | Firebase Realtime Database |
-| Admin data | Firestore |
 | Hosting | Firebase Hosting |
 | Offline | Service Worker + IndexedDB |
 

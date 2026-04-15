@@ -23,15 +23,52 @@
         "adminUid":  { ".validate": "newData.isString() && newData.val().length <= 50" },
         "createdAt": { ".validate": "newData.isNumber()" },
 
-        "categories": {
-          ".validate": "newData.hasChildren()"
+        "taxonomy": {
+          "migrated":     { ".validate": "newData.isBoolean()" },
+          "migrated_at":  { ".validate": "newData.isNumber()" },
+          "onboarding_completed": { ".validate": "newData.isBoolean()" },
+
+          "aisles": {
+            "$aisleId": {
+              "name":    { ".validate": "newData.isString() && newData.val().length <= 100" },
+              "order":   { ".validate": "newData.isNumber()" },
+              "updatedAt": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "updatedBy": { ".validate": "newData.val() == null || (newData.isString() && newData.val().length <= 50)" },
+              "$other":  { ".validate": false }
+            }
+          },
+
+          "categories": {
+            "$categoryId": {
+              ".validate": "newData.val() == null || newData.hasChildren(['name'])",
+              "name":    { ".validate": "newData.isString() && newData.val().length <= 100" },
+              "aisleId": { ".validate": "newData.val() == null || (newData.isString() && newData.val().length <= 50)" },
+              "hidden":  { ".validate": "newData.isBoolean()" },
+              "legacy":  { ".validate": "newData.isBoolean()" },
+              "updatedAt": { ".validate": "newData.val() == null || newData.isNumber()" },
+              "updatedBy": { ".validate": "newData.val() == null || (newData.isString() && newData.val().length <= 50)" },
+              "$other":  { ".validate": false }
+            }
+          },
+
+          "visible-items": {
+            "$categoryId": { ".validate": "newData.val() == null || newData.hasChildren()" }
+          },
+
+          "library": {
+            "$categoryId": { ".validate": "newData.val() == null || newData.hasChildren()" }
+          },
+
+          "$other": { ".validate": false }
         },
 
         "shopping-list":    { ".validate": "newData.val() == null || newData.isString() || newData.hasChildren()" },
-        "shopping-history": { ".validate": "newData.val() == null || newData.isString() || newData.hasChildren()" },
 
-        "common-items":      { ".validate": "newData.val() == null || newData.hasChildren()" },
-        "less-common-items": { ".validate": "newData.val() == null || newData.hasChildren()" },
+        "quantity-defaults": {
+          "$key": {
+            ".validate": "newData.isString() && newData.val().length <= 100"
+          }
+        },
 
         "item-events": {
           "$eventId": {
@@ -42,6 +79,7 @@
             "action":   { ".validate": "newData.isString() && newData.val().matches(/^(added|checked|unchecked|removed)$/)" },
             "source":   { ".validate": "newData.isString() && newData.val().length <= 30" },
             "qty":      { ".validate": "newData.isNumber()" },
+            "quantityLabel": { ".validate": "newData.isString() && newData.val().length <= 100" },
             "$other":   { ".validate": false }
           }
         },

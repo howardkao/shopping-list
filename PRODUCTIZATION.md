@@ -77,7 +77,12 @@ This document tracks the ongoing effort to productize this app for public, multi
 - [x] **Stronger invite code security** — codes extended to 16 characters; stored in household path + global lookup index — 2026-04-10
 - [ ] **Firebase `.validate` rules for data size** — prevent malicious users from writing arbitrarily large payloads
 - [ ] **Capacitor native apps (iOS + Android)** — see `NATIVE_APP_PLAN.md` for full plan
-- [ ] **Generic onboarding flow** — guide new household through setting up categories and initial suggestions
+- [x] **Generic onboarding flow** — guide new household through setting up aisles/categories and reviewing initial suggestions — 2026-04-14 (welcome + wizard-mode SuggestionsEditor, gated on `taxonomy/onboarding_completed`)
+- [ ] **Taxonomy redesign (aisles + user-editable categories + library)** — see PRD §4–§6 and TDD §3 for the new model. Includes:
+  - Seed catalog (9 aisles, 52 categories, ~300 items with ★ designations)
+  - New Firebase paths (`aisles`, `categories`, `visible-items`, `library`) keyed by category id
+  - Settings → Suggestions editor (replaces current Edit Suggestions page)
+  - Migration script: `common-items` + `less-common-items` + `shopping-history` → `library` + `visible-items`
 
 ### Nice-to-Have / Post-Launch
 
@@ -120,6 +125,78 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ---
 
 ## Session Log
+
+### 2026-04-15 — Edit suggestions from the Add-view bottom sheet + legacy Firestore cleanup
+- **Feature:** `ItemBottomSheet` (`src/App.jsx`) gained an advanced-config panel for suggestion items. When the sheet is opened via `openSuggestionSheet`, a muted `AISLE › Category` breadcrumb row with a pencil icon appears below the metadata block. Tapping expands an inline panel with aisle + category dropdowns and a two-step "Remove from suggestions" destructive action. The panel has its own explicit **Save** / **Cancel** buttons; advanced edits do not save on blur, backdrop tap discards silently. List-item sheets are untouched.
+- New handlers in `App.jsx`: `moveSuggestionToCategory(suggestionId, fromCatId, toCatId)` does a single multi-path RTDB `update()` across `taxonomy/visible-items/*` and `taxonomy/library/*`, preserving the item's visible-vs-library bucket and dedupe-deleting if the destination already has a same-named entry. `removeSuggestionEverywhere(suggestionId, catId)` deletes from both paths under the current category.
+- Removed the trailing Save button from `ItemBottomSheet` — name/quantity already commit on blur and on close via existing handlers.
+- **Legacy Firestore cleanup:** `firestore` / `doc` / `setDoc` / `getDoc` imports were unused since the 2026-04-10 admins-in-RTDB refactor. Removed from `src/firebase.js` and `src/App.jsx`. Deleted `firestore.rules` and the `firestore` block in `firebase.json`.
+- **README rewrite:** dropped Firestore setup step, flat `CATEGORIES`/`DEFAULT_ITEMS` customization instructions, and "Admin data | Firestore" row; replaced the "first use" section with new-household signup + v2 taxonomy onboarding.
+- **CLAUDE.md full rewrite** to current v2 state (aisle→category→item model, household-scoped paths, current components, known voice-mcp gap). The old doc still described flat `CATEGORIES`, `encodeCategory`, `common-items`/`less-common-items`, Firestore admins, and the retired "Edit Suggestions page."
+- Voice MCP worker untouched (known gap — still reads legacy `common-items`/`less-common-items`/`shopping-history` for context summary).
+- Deployed hosting + database rules. Build clean. PRD §3 (Item Detail Bottom Sheet) and TDD §Add Mode Interaction updated.
+
+### 2026-04-14 — Strip legacy taxonomy (code + data)
+- Reseeded the single existing household (`-OptMtfCe4g2mjg2iZYw`) with the full v2 catalog, preserving legacy names as `"<NAME> (legacy)"` categories in mapped aisles (`scripts/reseed-with-legacy.cjs`, new). User reorganized aisles in the editor, then ran `scripts/merge-legacy-into-seed.cjs` (new) which merged items into seed categories via exact + fuzzy substring match; 22 exact/fuzzy moves, ~90 items parked in auto-created per-aisle "Other" categories, 14 legacy categories deleted after emptying. Shopping-list items remapped accordingly.
+- With only one household and it now fully v2-native, stripped all legacy-taxonomy code paths from `src/App.jsx`: removed `CATEGORIES`, `DEFAULT_ITEMS`, `encodeCategory`/`decodeCategory`, `migrateItems`; removed state for `categories`, `commonItems`, `lessCommonItems`, `history`, `taxonomyMigrated` and the orphaned Edit-page state; removed Firebase listeners for the four legacy paths and the `taxonomy/migrated` flag; removed the `hasV2Taxonomy` gate, `displayCategories`, and `legacySettingsTaxonomy`; deleted orphaned handlers (`toggleQuickAdd`, `deleteSuggestion`, `finishEditName`, `addNewSuggestion`, `getAvailable`, `getSuggestions`, `getQuickAddDropdownItems`, `addFromSearch`, `saveCommonItems`, `saveLessCommonItems`); simplified `organized`, `getAisleSuggestions`, `addFromAisleSearch`, and `addItem`; rewrote rename-propagation in `updateItemName` to mutate v2 `visible-items` + `library` instead of the legacy maps.
+- `InsightsModal` now reads v2 `visible-items` + `categories` (category-name keys built from `categoryRaw[catId].name`) instead of `common-items` + encoded keys.
+- `src/offlineStorage.js`: bumped `DB_VERSION` 1 → 2; new version deletes the `shoppingHistory`, `commonItems`, `lessCommonItems` IDB object stores via `deleteObjectStore`. Removed the corresponding save/load exports.
+- `database.rules.json`: dropped `categories`, `common-items`, `less-common-items`, `shopping-history` rule blocks under `households/{hid}/`.
+- Deleted the legacy Firebase nodes on the one migrated household.
+- Deployed: DB rules + hosting. Build clean.
+- Left in place as historical artifacts: the migration / reseed / merge scripts under `scripts/`.
+
+### 2026-04-14 — Onboarding wrapper + aisle-level Shop/Add rendering
+- **Shop / Add mode now groups by aisle, not category.** `organized` in `App.jsx` rebuilt to produce one entry per aisle, with list items + visible-item tiles from every category in that aisle flattened and alphabetized together. Category names are no longer visible in Shop/Add; the aisle header is the only label. Per-aisle autocomplete searches the union of visible + library across all categories in the aisle; novel typed adds route to the aisle's first category (quick-add tiles and library matches carry their specific `catId` through `addItem`). `addItem` gained an optional `categoryIdOverride` to avoid name-based inference when the caller already knows the target category.
+- Legacy (pre-v2) households still render — each legacy category becomes a pseudo-aisle so the new render path stays unified. No visible change for them.
+- **Onboarding wrapper built.** New `src/Onboarding.jsx`: welcome panel → `SuggestionsEditor` in `onboarding={true}` mode (reorder-on, framing copy) → "Looks good →" CTA. Gated on a new `households/{hid}/taxonomy/onboarding_completed` flag (validated in `database.rules.json`). `householdBootstrap.js` seeds the flag as `false`; `scripts/migrate-to-taxonomy-v2.cjs` seeds it as `true` for existing households so they don't get bounced through onboarding on next login. Completion writes the flag via `set()`. The onboarding screen replaces the entire app shell (no header/toolbar) while active.
+- Verified `npm run build` clean. Not wired: a dev-only "replay onboarding" shortcut; deferred until we see how real new-household traffic behaves.
+
+### 2026-04-14 — Review response (pass 1 follow-up)
+- **Fixed #1 (rule rejects hide):** relaxed `taxonomy/categories/$categoryId/aisleId` validator to accept null in addition to strings. Hide writes set `aisleId: null` to make hidden-category state explicit rather than relying on implicit removal semantics.
+- **Fixed #4 (orphan shopping-list items on delete):** `SuggestionsEditor` now accepts `getCategoryListItemCount`; the delete-confirm modal shows a "Can't delete yet" state when active shopping-list items still reference the category, and hides the destructive action. The App.jsx handler also defensively re-checks before issuing the delete (guards against stale-UI races).
+- **Declined #2 (library filter on promote):** the current disjoint model (visible ∪ library, never both) matches the PRD §4 prose: "A visible item gets demoted to library by being deleted from the visible list — it doesn't disappear from autocomplete." Autocomplete is powered by `library`; a visible item doesn't need to be there because it's already a quick-add tile. Flagging here in case the user wants to re-open the model design — it's a one-line implementation swap either way.
+- **#3 (Shop/Add still read legacy) stays open** — genuinely the remaining gap. Tracked as its own follow-up below. Requires a meaningful rewrite of the shopping-list rendering (group by aisle → v2 category; Add mode tiles from `visible-items`; autocomplete against `library`; and a bridge for shopping-list items that still carry legacy category name strings).
+
+### 2026-04-14 — Taxonomy redesign: implementation pass 1
+- Added `src/seedCatalog.js` (9 aisles, 52 categories, 273 items, 54 starred) — matches PRD §6 + §6a.
+- Added `src/householdBootstrap.js` — seeds new households atomically via a single multi-path `update()`; gated on the `taxonomy/migrated` flag.
+- Added `scripts/migrate-to-taxonomy-v2.cjs` — per-household migration from legacy `common-items` + `less-common-items` + `shopping-history` into the new shape. Supports `<hid>`, `--all`, `--dry-run`. Legacy paths left in place as a rollback safety net.
+- Added `src/SuggestionsEditor.jsx` — self-contained component used by both Settings and (future) onboarding. Pure data props + callback API. Implements the PRD §5 interaction spec: aisle list with collapse/expand, inline rename, reorder mode (up/down arrows instead of drag — honest tradeoff vs. a new dependency), hide-then-delete for categories, Move-to-aisle sheet, global hidden-categories section, destructive-delete confirmation with item + library counts, visible-items chip editor with autocomplete against the library.
+- Updated `database.rules.json` — new taxonomy paths under `households/{hid}/taxonomy/` with validation on aisle/category fields; legacy `categories` / `common-items` / `less-common-items` rules untouched.
+- Wired into `src/App.jsx`: new Firebase listeners for all v2 paths (running alongside legacy listeners), 11 callback handlers for the editor, bootstrap call in the "New household" signup branch, Settings page swapped to render `SuggestionsEditor`.
+- **Important namespace decision:** everything v2 lives under `households/{hid}/taxonomy/` rather than sibling top-level keys, to avoid any collision with the legacy `categories` / `common-items` paths during rollout. TDD §3 updated to match.
+- Intentional simplification: reorder uses up/down arrow buttons, not long-press drag. Onboarding framing copy should say "use the arrows to reorder" when onboarding wrapper is built.
+- **Not yet done (scoped to future sessions):**
+  - Wire Shop / Add modes to read from `visibleItemsV2` + `libraryItemsV2` instead of `commonItems` + `lessCommonItems`. The editor writes v2; the shopping UI still reads legacy. Until wired, editor changes don't affect what tiles appear in Add mode.
+  - Onboarding wrapper around `SuggestionsEditor` with welcome step + "Looks good →" landing in Shop mode.
+  - Legacy cleanup script (delete `common-items` / `less-common-items` / legacy `categories` after successful migration window).
+  - Run `migrate-to-taxonomy-v2.cjs --all --dry-run` against prod to validate mapping assumptions before any real writes.
+- Build verified clean (`npm run build`); rules JSON validates.
+
+### 2026-04-14 — Taxonomy redesign + onboarding (design only; no code yet)
+- Decided on a 3-tier aisle → category → item taxonomy. Aisles and categories are both seeded but fully user-editable; items live under exactly one category.
+- Replaced the two-tier *common / less-common* suggestion model with a single-tier **visible items** + a per-category **library** (autocomplete-only). The legacy `shopping-history` set merges into the library.
+- Aisles are deletable outright (no hidden state), and reorderable — order represents the path the user walks the store. Reorder is gated behind a "Reorder aisles" mode (off by default in Settings, on by default during onboarding, with framing copy).
+- Categories use a hide-then-delete model. Hidden categories live in a global page-bottom section, unattached to any aisle. Unhiding requires picking an aisle. Permanent deletion is destructive (loses visible items and library entries for that category) and surfaces an explicit confirmation.
+- Onboarding becomes single-pass: welcome → editor (same component as Settings, with wizard chrome and reorder mode on by default) → land in Shop mode. No store selection step. Skip path always available.
+- Seed catalog defined: 9 aisles, 52 categories, ~300 items with ~50 ★starred (visible-by-default); the rest seed into the library.
+- PRD updated: §3 (item structure), §4 (single-tier visible + library), §5 (new Settings → Suggestions editor spec), §6 (3-tier taxonomy + behaviors), new §6a (onboarding flow).
+- TDD updated: §3 (new Firebase schema with `aisles`, `categories`, `visible-items`, `library` keyed by category id), §4 (encoding now optional — categories keyed by stable ids), §6 (state variables), §7 (IndexedDB stores), §10 (security paths), §12 (migration plan from legacy paths).
+- Implementation work items added under Should-Have. No code changes this session.
+
+### 2026-04-15 — List view: aisle headers and expand/collapse defaults
+- Removed the per-aisle badge count from Shop and Add list headers.
+- Shop: aisles default collapsed; default expansion (aisles with at least one list item) applies when entering Shop, on first taxonomy load, and when the aisle set changes — not on every list edit, so manual expand/collapse persists while shopping.
+- Add: entering Add still expands all aisles.
+
+### 2026-04-15 — Shop: collapse aisle when it no longer has list items
+- **Gap:** Default expansion was only recomputed on Shop entry / taxonomy changes. Clearing or moving the last item out of an aisle left `expandedCategories` stuck `true`, so empty aisles stayed open.
+- **Change:** `src/App.jsx` — track `prevShopAisleHadItemsRef`; on list-only updates in Shop mode, set any aisle that went from “had items” to “no items” to collapsed (`false`). User can still tap to expand an empty aisle; switching to Add mode clears the snapshot as before.
+
+### 2026-04-15 — Add mode: suggestion sheet name/quantity persist
+- **Problem:** `ItemBottomSheet` only persisted name/quantity when `onNameChange` / `onQuantityChange` were attached; list rows got those from `openItemSheet`, but Add-mode suggestions used `openSuggestionSheet` without handlers — edits appeared possible but did not save.
+- **Change:** `src/App.jsx` — `renameTaxonomySuggestionById` updates the suggestion’s display name in `taxonomy/visible-items` and/or `taxonomy/library` by stable item `id` (with same name dedupe as list renames); `updateSuggestionQuantity` writes household `quantity-defaults` keyed by suggestion id (same key `addItem` uses when adding from a tile). `openSuggestionSheet` wires both callbacks, resolves `categoryId` from `suggestion.catId` as fallback, and pre-fills quantity from defaults.
 
 ### 2026-04-14 — Add mode tap target consistency
 - Changed add-mode suggestion rows so only the `+` button adds an item immediately
@@ -210,6 +287,51 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ### 2026-04-11 — Voice MCP: household-scoped RTDB paths
 - Root cause: after multi-household migration, the web app listens on `households/{householdId}/fridge-notes` (and other keys under that prefix), but the Cloudflare MCP worker still used root paths via the REST API, so `set_fridge_notes` succeeded while the UI showed stale household data.
 - Fix: `voice-mcp/src/firebaseRealtime.js` prefixes all RTDB reads/writes with `households/{FIREBASE_HOUSEHOLD_ID}/` when that env var is set; documented in README and `.dev.vars.example`. Operators must set `FIREBASE_HOUSEHOLD_ID` (Wrangler secret in prod) to the household’s ID.
+
+### 2026-04-14 — IndexedDB failure handling (new-user / cleared-site-data testing)
+- **Problem:** When IndexedDB could not open (e.g. `UnknownError: Internal error opening backing store`), the logger retried on every log line and emitted two `console.error` messages each time, flooding the console. Offline storage had the same pattern on repeated saves.
+- **Change:** Session-level circuit breaker in `src/logger.js` and `src/offlineStorage.js`: after the first open or persistent write failure, skip IndexedDB for the rest of the tab session and emit at most one `console.warn` with context. `initOfflineDB()` now resolves to `null` on failure; `App.jsx` logs whether the offline DB initialized.
+
+### 2026-04-14 — Logger: Firebase flush rejected `undefined` in log payloads
+- **Problem:** `save()` logged `itemCount: undefined` for non-array writes; Firebase RTDB `push()` rejects any `undefined` property, so batched remote logging failed with `value argument contains undefined in property '...data.itemCount'`.
+- **Change:** `src/App.jsx` — only include `itemCount` when the saved value is an array (conditional spread).
+
+### 2026-04-15 — Item detail sheet: spacing before metadata
+- `ItemBottomSheet` (`src/App.jsx`): added `mt-14` between the quantity field and the “Added by” / “Last purchased” block so mobile bottom sheet and desktop modal both have a clearer visual break (roughly one field row of space).
+
+### 2026-04-15 — Post-login navigation: Shop mode (not Account)
+- **Problem:** After sign-out from the Account page, signing back in showed Account again because `currentPage` / `quickAddMode` live in `App` state while `<Login />` is only an early return — state was not cleared.
+- **Change:** `src/App.jsx` — `handleLoginSuccess` sets `currentPage` to `list` and `quickAddMode` to false; same reset on `handleSignOut`; both `<Login />` entry points use `handleLoginSuccess`.
+
+### 2026-04-15 — Purchase history: quantity matches list/add styling
+- **Change:** `item-events` optionally stores `quantityLabel` (trimmed quantity string, max 100 chars) alongside numeric `qty`; Firebase rules updated. Purchase history renders quantity inline after the item name (`ml-1 text-gray-400 font-medium`), same pattern as the shopping list add row. Legacy events without a label still show a plain numeric suffix when `qty > 1` (no `x` prefix). `voice-mcp` includes `quantityLabel` on added events when a non-empty quantity string is present.
+
+### 2026-04-15 — Item sheet: name/quantity edits persist reliably
+- **Problem:** `ItemBottomSheet` compared drafts to stale `item` props (`selectedItem` is a snapshot). After one successful save, a second edit could be skipped (e.g. clearing quantity) or mis-detected. `updateItemName` also ran taxonomy updates and `save()` inside a `setList` functional updater (impure in React).
+- **Change:** `src/App.jsx` — last-committed refs for name/quantity in the sheet; `computeRenameOutcome` + side effects after `setList` for renames; `snapshotShoppingListToArray` for RTDB list snapshots; `save()` no-op with log when `householdId` is missing; `normalizeListItem` stable `itemKey` when `id` is `0`. `database.rules.json` — allow `quantity-defaults` (was blocked by `$other: false`, so default quantity writes failed).
+
+### 2026-04-15 — Aisle names: Title Case in data, ALL CAPS in UI
+- **Seed / migration scripts:** `SEED_AISLES` names in `src/seedCatalog.js` (and mirrored `scripts/migrate-to-taxonomy-v2.cjs`, misc aisle in `scripts/reseed-with-legacy.cjs`) are now Title Case; MISC aisle label stored as `Misc`.
+- **Display:** `src/aisleDisplay.js` exports `formatAisleNameForDisplay` (`.toUpperCase()`); list page aisle headers and placeholders use it; `SuggestionsEditor` shows uppercase for aisle labels, move-to-aisle list, and delete confirm, while inline rename still edits the stored string.
+- **Writes:** `taxoRenameAisle` / `taxoAddAisle` trim names before save. Existing households keep prior strings until edited or re-seeded.
+
+### 2026-04-15 — Add mode: library backfill + quick-delete from autocomplete
+- **Library backfill:** When any item is added to the shopping list via `addItem`, if it resolves to a taxonomy `categoryId` and the name is not already in that category’s visible (quick-add) or library set, it is appended to `taxonomy/library/{catId}` (sorted by name). Typed/custom names therefore become autocomplete-only library entries without promoting to suggestions.
+- **Autocomplete UI:** Add-mode aisle search rows that come from the library show an **X** control to remove that entry from the library only; visible (suggestion / quick-add) matches do not show X. The free-text “add as typed” row has no X.
+
+### 2026-04-15 — Seed taxonomy: sentence-case category names
+- `src/seedCatalog.js` — `SEED_CATEGORIES` display names use sentence case (first word and acronyms like OTC capitalized; remaining words lowercase, including after `&`). New households pick this up from bootstrap; existing households are unchanged.
+
+### 2026-04-15 — Settings Shortcuts: single expanded aisle
+- **Change:** `SuggestionsEditor` accepts optional `accordionAisles`; when true, expanding an aisle collapses any other expanded aisle (tapping the open aisle still collapses it). Enabled for Settings only; onboarding wizard keeps independent multi-expand behavior.
+
+### 2026-04-15 — Shop mode: aisle expand defaults match list grouping
+- **Problem:** `hasItemsInAisle` (used when entering Shop / re-applying defaults) fell back to category **name** even when `categoryId` was set but did not belong to that aisle. Duplicate category names across aisles (or id vs string mismatch) could mark many or all aisles as “having items,” so Add→Shop expanded every aisle despite the UI only showing list rows in the correct aisles.
+- **Change:** `src/App.jsx` — align `hasItemsInAisle` with `organized`’s `aisleListItems` filter: if `getItemCategoryId` returns a value, only `categoryIdSet.has(cid)` counts (no name fallback).
+
+### 2026-04-15 — Account: Household Insights + invite wording
+- **Account page:** “Household Insights” is a first-level action (opens the same modal as before) for any signed-in user with a `householdId`; “Admin Panel” row renamed to **Invite Household Members** (admins only).
+- **Modal:** Former admin modal title/subtitle updated to **Invite Household Members** / invitation-code copy; insights entry removed from inside that modal (`src/App.jsx`).
 
 ### 2026-04-10 — Initial productization planning
 - Discussed what's needed to go from single-household personal app to public multi-household product

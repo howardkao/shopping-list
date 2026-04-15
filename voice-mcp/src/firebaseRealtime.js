@@ -150,6 +150,7 @@ const logItemEvents = async (env, items, addedByUid) => {
   if (!items?.length) return;
   const ts = Date.now();
   await Promise.all(items.map((item) => {
+    const qtyStr = item?.quantity != null ? String(item.quantity).trim().slice(0, 100) : '';
     const event = {
       ts,
       uid: addedByUid || 'voice-mcp',
@@ -157,7 +158,8 @@ const logItemEvents = async (env, items, addedByUid) => {
       category: (item?.category || '').slice(0, 100),
       action: 'added',
       source: 'voice',
-      qty: Number(item?.quantity) || 1
+      qty: Number(item?.quantity) || 1,
+      ...(qtyStr ? { quantityLabel: qtyStr } : {})
     };
     return firebaseRequest(env, rtdbPath(env, 'item-events'), {
       method: 'POST',

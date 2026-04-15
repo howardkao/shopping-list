@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Settings, History, UserCircle } from 'lucide-react';
-import { auth, database, firestore } from './firebase';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Settings, History, UserCircle, BarChart3 } from 'lucide-react';
+import { auth, database } from './firebase';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -11,20 +11,13 @@ import {
   reauthenticateWithCredential,
   EmailAuthProvider
 } from 'firebase/auth';
-import { ref, set, get, remove, onValue, push } from 'firebase/database';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { ref, set, get, remove, onValue, push, update } from 'firebase/database';
 import {
   initOfflineDB,
   saveShoppingListLocally,
   loadShoppingListLocally,
-  saveShoppingHistoryLocally,
-  loadShoppingHistoryLocally,
-  saveCommonItemsLocally,
-  loadAllCommonItemsLocally,
-  saveLessCommonItemsLocally,
-  loadAllLessCommonItemsLocally,
-  saveCategoriesToLocally,
-  loadCategoriesLocally,
+  saveTaxonomyV2Locally,
+  loadTaxonomyV2Locally,
   saveQuantityDefaultsLocally,
   loadQuantityDefaultsLocally,
   getLastSyncTime,
@@ -34,18 +27,32 @@ import {
 } from './offlineStorage';
 import { logger } from './logger';
 import DebugPanel from './DebugPanel';
+import SuggestionsEditor from './SuggestionsEditor';
+import Onboarding from './Onboarding';
+import { bootstrapHouseholdTaxonomy } from './householdBootstrap';
+import { formatAisleNameForDisplay } from './aisleDisplay';
 import {
   buildItemStats,
   topPurchased,
   dormantQuickAddCandidates,
   promotionCandidates,
   userContributions,
-  eventSummary,
 } from './itemAnalytics';
 
-// Edit these to match the sections and stores you shop at.
-const CATEGORIES = ['PRODUCE', 'MEAT & FISH', 'DELI, DAIRY & EGGS', 'FROZEN', 'DRY GOODS', 'BAKING, SPICES & OILS', 'PREPARED FOODS', 'HOUSEHOLD & PHARMACY', 'OTHER'];
 const generateId = () => Math.random().toString(36).substr(2, 9);
+
+/** RTDB may return shopping-list as an object with numeric keys instead of a true array. */
+function snapshotShoppingListToArray(val) {
+  if (val == null) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'object') {
+    return Object.keys(val)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((k) => val[k])
+      .filter((row) => row != null);
+  }
+  return [];
+}
 
 const formatRelativeTime = (timestamp) => {
   const now = Date.now();
@@ -87,47 +94,6 @@ const formatLocalDateTimePhrase = (ms) => {
   } catch {
     return '';
   }
-};
-
-// Edit these to seed your suggestion library with items you buy regularly.
-// Keys must match the CATEGORIES list above.
-const DEFAULT_ITEMS = {
-  'PRODUCE': ['broccoli', 'carrots', 'onions', 'bananas', 'apples'],
-  'MEAT & FISH': ['chicken breast', 'ground beef', 'salmon'],
-  'DELI, DAIRY & EGGS': ['eggs', 'milk', 'butter', 'cheddar cheese'],
-  'FROZEN': ['peas', 'corn'],
-  'DRY GOODS': ['pasta', 'rice', 'bread'],
-  'BAKING, SPICES & OILS': ['olive oil', 'garlic powder', 'salt'],
-  'PREPARED FOODS': ['rotisserie chicken'],
-  'HOUSEHOLD & PHARMACY': ['dish soap', 'toilet paper', 'paper towels'],
-  'OTHER': []
-};
-
-// Encode category names for Firebase (replace invalid characters)
-const encodeCategory = (cat) => {
-  return cat.replace(/\//g, '___SLASH___')
-    .replace(/\./g, '___DOT___')
-    .replace(/#/g, '___HASH___')
-    .replace(/\$/g, '___DOLLAR___')
-    .replace(/\[/g, '___LBRACKET___')
-    .replace(/\]/g, '___RBRACKET___');
-};
-
-const decodeCategory = (encoded) => {
-  return encoded.replace(/___SLASH___/g, '/')
-    .replace(/___DOT___/g, '.')
-    .replace(/___HASH___/g, '#')
-    .replace(/___DOLLAR___/g, '$')
-    .replace(/___LBRACKET___/g, '[')
-    .replace(/___RBRACKET___/g, ']');
-};
-
-const migrateItems = (items) => {
-  const migrated = {};
-  Object.keys(items).forEach(cat => {
-    migrated[cat] = items[cat].map(name => ({ id: generateId(), name }));
-  });
-  return migrated;
 };
 
 function Login({ onLoginSuccess }) {
@@ -251,6 +217,13 @@ function Login({ onLoginSuccess }) {
           displayName: trimmedName,
           email: newUser.email
         });
+
+        try {
+          const result = await bootstrapHouseholdTaxonomy(householdId);
+          logger.info('Auth', 'Household taxonomy seeded', { householdId, ...result });
+        } catch (seedErr) {
+          logger.error('Auth', 'Household taxonomy seed failed', { householdId, error: seedErr.message });
+        }
 
         logger.info('Auth', 'New household created', { householdId, adminUid: newUser.uid });
       }
@@ -401,19 +374,24 @@ function InsightsModal({ householdId, onClose }) {
     let cancelled = false;
     (async () => {
       try {
-        const [evSnap, commonSnap] = await Promise.all([
+        const [evSnap, visSnap, catSnap] = await Promise.all([
           get(ref(database, `households/${householdId}/item-events`)),
-          get(ref(database, `households/${householdId}/common-items`)),
+          get(ref(database, `households/${householdId}/taxonomy/visible-items`)),
+          get(ref(database, `households/${householdId}/taxonomy/categories`)),
         ]);
         if (cancelled) return;
         const evRaw = evSnap.val() || {};
         const evList = Object.values(evRaw).filter(e => e && typeof e.ts === 'number');
         evList.sort((a, b) => a.ts - b.ts);
-        const cRaw = commonSnap.val() || {};
+        const visRaw = visSnap.val() || {};
+        const catRaw = catSnap.val() || {};
         const cByCat = {};
-        Object.entries(cRaw).forEach(([encodedCat, items]) => {
-          cByCat[decodeCategory(encodedCat)] = items || [];
-        });
+        for (const [catId, items] of Object.entries(visRaw)) {
+          const name = catRaw[catId]?.name;
+          if (!name) continue;
+          const arr = Array.isArray(items) ? items : Object.values(items || {});
+          cByCat[name] = arr.filter(Boolean);
+        }
         setEvents(evList);
         setCommonByCat(cByCat);
         setLoading(false);
@@ -426,13 +404,10 @@ function InsightsModal({ householdId, onClose }) {
     return () => { cancelled = true; };
   }, [householdId]);
 
-  const summary = events.length ? eventSummary(events) : null;
   const top = events.length ? topPurchased(events, { limit: 15 }) : [];
   const promote = events.length ? promotionCandidates(events, commonByCat, { minAdds: 3, withinDays: 42 }) : [];
   const dormant = Object.keys(commonByCat).length ? dormantQuickAddCandidates(events, commonByCat, { dormantDays: 56 }) : [];
   const users = events.length ? userContributions(events) : [];
-
-  const fmtDate = (ts) => ts ? new Date(ts).toLocaleDateString() : '—';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -452,20 +427,6 @@ function InsightsModal({ householdId, onClose }) {
           )}
           {!loading && !error && events.length > 0 && (
             <>
-              <section>
-                <h3 className="font-bold text-gray-800 mb-2">Summary</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Total events</div><div className="text-xl font-bold">{summary.total}</div></div>
-                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Added</div><div className="text-xl font-bold">{summary.added || 0}</div></div>
-                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Checked</div><div className="text-xl font-bold">{summary.checked || 0}</div></div>
-                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Removed</div><div className="text-xl font-bold">{summary.removed || 0}</div></div>
-                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Typed adds</div><div className="text-xl font-bold">{summary.typed || 0}</div></div>
-                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Quick-add</div><div className="text-xl font-bold">{summary.quickAdd || 0}</div></div>
-                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">First event</div><div className="text-sm font-bold">{fmtDate(summary.firstTs)}</div></div>
-                  <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500">Last event</div><div className="text-sm font-bold">{fmtDate(summary.lastTs)}</div></div>
-                </div>
-              </section>
-
               <section>
                 <h3 className="font-bold text-gray-800 mb-2">Top purchased (all-time)</h3>
                 {top.length === 0 ? <div className="text-gray-500">No checkoff events yet.</div> : (
@@ -532,7 +493,6 @@ function AdminPanel({ onClose, householdId }) {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [copiedCode, setCopiedCode] = useState(null);
-  const [showInsights, setShowInsights] = useState(false);
 
   useEffect(() => {
     if (!householdId) return;
@@ -590,17 +550,13 @@ function AdminPanel({ onClose, householdId }) {
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div className="bg-white rounded-3xl shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col border border-gray-200">
           <div className="p-6 border-b border-gray-200">
-            <h2 className="text-2xl font-bold text-gray-800">Admin Panel</h2>
-            <p className="text-gray-600 font-medium">Manage invitation codes</p>
+            <h2 className="text-2xl font-bold text-gray-800">Invite Household Members</h2>
+            <p className="text-gray-600 font-medium">Create invitation codes for new members</p>
           </div>
         <div className="p-6 flex-1 overflow-y-auto">
-          <button onClick={createInvitation} disabled={creating} className="w-full text-white py-3.5 rounded-xl font-bold hover:opacity-90 disabled:bg-gray-300 flex items-center justify-center gap-2 mb-3 transition-opacity" style={{ backgroundColor: creating ? undefined : '#10B981' }}>
+          <button onClick={createInvitation} disabled={creating} className="w-full text-white py-3.5 rounded-xl font-bold hover:opacity-90 disabled:bg-gray-300 flex items-center justify-center gap-2 mb-6 transition-opacity" style={{ backgroundColor: creating ? undefined : '#10B981' }}>
             <Plus size={20} strokeWidth={2.5} />{creating ? 'Creating...' : 'Create New Code'}
           </button>
-          <button onClick={() => setShowInsights(true)} className="w-full bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 mb-6 transition-colors">
-            View Household Insights
-          </button>
-          {showInsights && <InsightsModal householdId={householdId} onClose={() => setShowInsights(false)} />}
           {loading ? (
             <div className="text-center py-8 text-gray-500 font-medium">Loading...</div>
           ) : invitations.length === 0 ? (
@@ -697,17 +653,55 @@ function DisplayNamePrompt({ user, householdId, onSaved }) {
   );
 }
 
-function ItemBottomSheet({ item, members, lastPurchasedTs, onClose }) {
+function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, onClose }) {
   const [nameDraft, setNameDraft] = useState(item.name || '');
   const [quantityDraft, setQuantityDraft] = useState(item.quantity || '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [configOpen, setConfigOpen] = useState(false);
+  const [configAisleId, setConfigAisleId] = useState(item.suggestionConfig?.aisleId || '');
+  const [configCatId, setConfigCatId] = useState(item.suggestionConfig?.categoryId || '');
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configError, setConfigError] = useState('');
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
+  const suggestionConfig = item.suggestionConfig || null;
+  const aisleMap = aisles || {};
+  const categoryMap = categories || {};
+
+  const orderedAisles = Object.entries(aisleMap)
+    .sort(([, a], [, b]) => (a?.order ?? 0) - (b?.order ?? 0))
+    .map(([id, a]) => ({ id, name: a?.name || '' }));
+
+  const categoriesForAisle = (aisleId) =>
+    Object.entries(categoryMap)
+      .filter(([, c]) => c?.aisleId === aisleId && !c?.hidden)
+      .sort(([, a], [, b]) => (a?.order ?? 0) - (b?.order ?? 0))
+      .map(([id, c]) => ({ id, name: c?.name || '' }));
+
+  const currentAisleName = suggestionConfig
+    ? (aisleMap[suggestionConfig.aisleId]?.name || '')
+    : '';
+  const currentCategoryName = suggestionConfig
+    ? (categoryMap[suggestionConfig.categoryId]?.name || item.category || '')
+    : (item.category || '');
+  /** Props are a snapshot; compare commits to last persisted values, not stale `item`. */
+  const lastCommittedNameRef = useRef(String(item.name ?? ''));
+  const lastCommittedQtyRef = useRef(String(item.quantity ?? ''));
 
   useEffect(() => {
     setNameDraft(item.name || '');
-  }, [item.id, item.name]);
+    setSaveError('');
+  }, [item.itemKey, item.id, item.name]);
 
   useEffect(() => {
     setQuantityDraft(item.quantity || '');
   }, [item]);
+
+  useEffect(() => {
+    lastCommittedNameRef.current = String(item.name ?? '');
+    lastCommittedQtyRef.current = String(item.quantity ?? '');
+  }, [item.itemKey, item.id, item.name, item.quantity]);
 
   const commitName = async () => {
     const trimmed = nameDraft.trim();
@@ -715,18 +709,28 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, onClose }) {
       setNameDraft(item.name || '');
       return;
     }
-    if (trimmed === (item.name || '').trim()) return;
+    if (trimmed === String(item.name ?? '').trim()) return;
     if (item.onNameChange) {
-      await item.onNameChange(item.itemKey, trimmed);
+      setIsSaving(true);
+      setSaveError('');
+      try {
+        await item.onNameChange(item.itemKey, trimmed);
+      } catch (err) {
+        setSaveError(err?.message || 'Failed to save name');
+        throw err;
+      } finally {
+        setIsSaving(false);
+      }
+      lastCommittedNameRef.current = trimmed;
     }
   };
 
   const commitQuantity = async (nextValue) => {
-    const trimmed = nextValue.trim();
-    const current = (item.quantity || '').trim();
-    if (trimmed === current) return;
+    const trimmed = String(nextValue ?? '').trim();
+    if (trimmed === lastCommittedQtyRef.current.trim()) return;
     if (item.onQuantityChange) {
       await item.onQuantityChange(item.itemKey, trimmed);
+      lastCommittedQtyRef.current = trimmed;
     }
   };
 
@@ -742,9 +746,13 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, onClose }) {
   };
 
   const handleClose = async () => {
-    await commitName();
-    await commitQuantity(quantityDraft);
-    onClose();
+    try {
+      await commitName();
+      await commitQuantity(quantityDraft);
+      onClose();
+    } catch {
+      // Keep the sheet open if the save fails so the user can retry.
+    }
   };
 
   const addedByName = item.addedBy && members[item.addedBy]
@@ -786,54 +794,58 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, onClose }) {
                 className="w-full text-lg font-bold text-gray-800 md:text-xl bg-transparent border border-transparent rounded-xl px-0 py-1 -mx-0 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30 focus:border-[#FF7A7A]/40"
                 aria-label="Item name"
               />
+              {saveError && (
+                <p className="text-xs font-medium text-red-600">{saveError}</p>
+              )}
             </div>
             <button
               type="button"
               onClick={handleClose}
+              disabled={isSaving}
               className="hidden md:flex flex-shrink-0 p-2 -mr-2 -mt-1 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100"
               aria-label="Close"
             >
               <X size={22} />
             </button>
           </div>
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Quantity</p>
-              <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    inputMode="text"
-                    value={quantityDraft}
-                    onChange={(e) => setQuantityDraft(e.target.value)}
-                    onBlur={() => commitQuantity(quantityDraft)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.currentTarget.blur();
-                      }
-                    }}
-                    placeholder="Optional"
-                    className="flex-1 bg-transparent text-sm font-medium text-gray-700 placeholder:text-gray-400 focus:outline-none min-w-0"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => nudgeQuantity(-1)}
-                    className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-600 font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center"
-                    aria-label="Decrease quantity"
-                  >
-                    -
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => nudgeQuantity(1)}
-                    className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-600 font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center"
-                    aria-label="Increase quantity"
-                  >
-                    +
-                  </button>
-                </div>
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Quantity</p>
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  inputMode="text"
+                  value={quantityDraft}
+                  onChange={(e) => setQuantityDraft(e.target.value)}
+                  onBlur={() => commitQuantity(quantityDraft)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  placeholder="Optional"
+                  className="flex-1 bg-transparent text-sm font-medium text-gray-700 placeholder:text-gray-400 focus:outline-none min-w-0"
+                />
+                <button
+                  type="button"
+                  onClick={() => nudgeQuantity(-1)}
+                  className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-600 font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center"
+                  aria-label="Decrease quantity"
+                >
+                  -
+                </button>
+                <button
+                  type="button"
+                  onClick={() => nudgeQuantity(1)}
+                  className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-600 font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center"
+                  aria-label="Increase quantity"
+                >
+                  +
+                </button>
               </div>
             </div>
+          </div>
+          <div className="mt-14 space-y-3">
             {(addedByName || addedAtFormatted) && (
               <div className="flex items-start gap-3">
                 <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#FFF0F0' }}>
@@ -863,6 +875,149 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, onClose }) {
               </div>
             </div>
           </div>
+          {suggestionConfig && !configOpen && (
+            <button
+              type="button"
+              onClick={() => {
+                setConfigAisleId(suggestionConfig.aisleId || '');
+                setConfigCatId(suggestionConfig.categoryId || '');
+                setConfigError('');
+                setConfirmRemove(false);
+                setConfigOpen(true);
+              }}
+              className="mt-6 w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl hover:bg-gray-50 text-left"
+            >
+              <span className="text-xs font-medium text-gray-400 truncate">
+                {currentAisleName ? `${formatAisleNameForDisplay(currentAisleName)} › ` : ''}
+                <span className="text-gray-500">{currentCategoryName}</span>
+              </span>
+              <Edit2 size={14} className="text-gray-400 flex-shrink-0" />
+            </button>
+          )}
+          {suggestionConfig && configOpen && (
+            <div className="mt-6 rounded-2xl border-2 border-gray-300 bg-gray-50 p-4 space-y-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">Advanced</p>
+                <p className="text-xs text-gray-500">Change where this shortcut lives, or remove it from your shortcuts entirely.</p>
+              </div>
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold uppercase tracking-wide text-gray-400">Aisle</label>
+                <select
+                  value={configAisleId}
+                  onChange={(e) => {
+                    const nextAisle = e.target.value;
+                    setConfigAisleId(nextAisle);
+                    const opts = categoriesForAisle(nextAisle);
+                    setConfigCatId(opts[0]?.id || '');
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
+                >
+                  {orderedAisles.map(a => (
+                    <option key={a.id} value={a.id}>{formatAisleNameForDisplay(a.name)}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold uppercase tracking-wide text-gray-400">Category</label>
+                <select
+                  value={configCatId}
+                  onChange={(e) => setConfigCatId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
+                >
+                  {categoriesForAisle(configAisleId).map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              {!confirmRemove ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemove(true)}
+                  disabled={configSaving}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-white text-red-600 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  Remove from shortcuts
+                </button>
+              ) : (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-2">
+                  <p className="text-xs font-medium text-red-700">Remove this item from shortcuts entirely?</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmRemove(false)}
+                      disabled={configSaving}
+                      className="flex-1 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:bg-gray-50"
+                    >
+                      Keep
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setConfigError('');
+                        setConfigSaving(true);
+                        try {
+                          await suggestionConfig.onRemove();
+                        } catch (err) {
+                          setConfigError(err?.message || 'Failed to remove');
+                          setConfigSaving(false);
+                        }
+                      }}
+                      disabled={configSaving}
+                      className="flex-1 px-3 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {configSaving ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {configError && (
+                <p className="text-xs font-medium text-red-600">{configError}</p>
+              )}
+              <div className="flex gap-2 pt-2 border-t border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfigOpen(false);
+                    setConfirmRemove(false);
+                    setConfigError('');
+                  }}
+                  disabled={configSaving}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setConfigError('');
+                    const aisleChanged = configAisleId !== suggestionConfig.aisleId;
+                    const catChanged = configCatId !== suggestionConfig.categoryId;
+                    if (!aisleChanged && !catChanged) {
+                      setConfigOpen(false);
+                      return;
+                    }
+                    if (!configCatId) {
+                      setConfigError('Pick a category.');
+                      return;
+                    }
+                    setConfigSaving(true);
+                    try {
+                      await suggestionConfig.onMove(configCatId);
+                    } catch (err) {
+                      setConfigError(err?.message || 'Failed to save');
+                      setConfigSaving(false);
+                    }
+                  }}
+                  disabled={configSaving}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-white font-semibold disabled:opacity-50"
+                  style={{ backgroundColor: '#FF7A7A' }}
+                >
+                  {configSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -928,7 +1083,7 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
         <div className="p-6 space-y-4">
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 font-medium">
             {isAdmin
-              ? 'Your account and all household data will be permanently deleted — including the shopping list, history, and all suggestions. Other household members will lose access.'
+              ? 'Your account and all household data will be permanently deleted — including the shopping list, history, and all shortcuts. Other household members will lose access.'
               : 'Your account will be removed. The household and its data will remain accessible to other members.'}
           </div>
           <div>
@@ -986,12 +1141,21 @@ function PurchaseHistory({ householdId }) {
           const items = dayMap.get(dateStr);
           const key = `${(e.category || '').toLowerCase()}::${(e.name || '').toLowerCase()}`;
           if (!items.has(key)) {
-            items.set(key, { name: e.name, category: e.category, qty: e.qty || 1, count: 0 });
+            items.set(key, {
+              name: e.name,
+              category: e.category,
+              qty: e.qty || 1,
+              quantityLabel: (e.quantityLabel && String(e.quantityLabel).trim()) || '',
+              count: 0,
+            });
           }
           const item = items.get(key);
           if (e.action === 'checked') item.count++;
           else if (e.action === 'unchecked') item.count--;
           if (e.qty) item.qty = e.qty;
+          if (e.quantityLabel && String(e.quantityLabel).trim()) {
+            item.quantityLabel = String(e.quantityLabel).trim();
+          }
         }
 
         // Build sorted groups (newest first), filter out items with count <= 0
@@ -1041,14 +1205,22 @@ function PurchaseHistory({ householdId }) {
               <span className="text-xs text-gray-400">{group.items.length} item{group.items.length !== 1 ? 's' : ''}</span>
             </div>
             <div className="divide-y divide-gray-100">
-              {group.items.map((item, i) => (
-                <div key={i} className="flex items-center gap-3 px-4 py-3">
-                  <Check size={16} className="text-gray-300 flex-shrink-0" />
-                  <span className="flex-1 text-sm font-medium text-gray-700">{item.name}</span>
-                  {item.qty > 1 && <span className="text-xs text-gray-400 font-medium">x{item.qty}</span>}
-                  <span className="text-xs text-gray-400 uppercase tracking-wide">{item.category}</span>
-                </div>
-              ))}
+              {group.items.map((item, i) => {
+                const qtyText = (item.quantityLabel && item.quantityLabel.trim())
+                  || (item.qty > 1 ? String(item.qty) : '');
+                return (
+                  <div key={i} className="flex items-center gap-3 px-4 py-3">
+                    <Check size={16} className="text-gray-300 flex-shrink-0" />
+                    <span className="flex-1 min-w-0 text-sm font-semibold text-gray-700">
+                      {item.name}
+                      {qtyText ? (
+                        <span className="ml-1 text-gray-400 font-medium">{qtyText}</span>
+                      ) : null}
+                    </span>
+                    <span className="text-xs text-gray-400 uppercase tracking-wide flex-shrink-0">{item.category}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -1063,19 +1235,18 @@ export default function App() {
   const [householdId, setHouseholdId] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showHouseholdInsights, setShowHouseholdInsights] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [currentPage, setCurrentPage] = useState('list');
   const [showMenu, setShowMenu] = useState(false);
   const [list, setList] = useState([]);
-  const [history, setHistory] = useState(new Set());
-  const [categories, setCategories] = useState(CATEGORIES);
-  const [commonItems, setCommonItems] = useState({});
-  const [lessCommonItems, setLessCommonItems] = useState({});
+  const [aislesV2, setAislesV2] = useState({});
+  const [categoriesV2, setCategoriesV2] = useState({});
+  const [visibleItemsV2, setVisibleItemsV2] = useState({});
+  const [libraryItemsV2, setLibraryItemsV2] = useState({});
+  const [onboardingCompleted, setOnboardingCompleted] = useState(null);
   const [quickAddMode, setQuickAddMode] = useState(false);
   const [categorySearches, setCategorySearches] = useState({});
-  const [newItemInputs, setNewItemInputs] = useState({});
-  const [editingItemId, setEditingItemId] = useState(null);
-  const [editingItemName, setEditingItemName] = useState('');
   const [loading, setLoading] = useState(true);
   const [pendingOps, setPendingOps] = useState(0);
   const [expandedCategories, setExpandedCategories] = useState({});
@@ -1088,6 +1259,10 @@ export default function App() {
   const [isScrolling, setIsScrolling] = useState(false);
   const scrollTimeoutRef = useRef(null);
   const prevQuickAddMode = useRef(quickAddMode);
+  /** Last aisle-id key we applied shop default expansion for (empty = not yet seeded in shop). */
+  const shopAisleDefaultsKeyRef = useRef('');
+  /** Shop mode: previous snapshot of whether each aisle had any list items (for auto-collapse when emptied). */
+  const prevShopAisleHadItemsRef = useRef({});
   const lastScrollY = useRef(0);
   const lastScrollTime = useRef(Date.now());
   const smoothedVelocity = useRef(0);
@@ -1100,11 +1275,57 @@ export default function App() {
   const [needsDisplayName, setNeedsDisplayName] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState('');
   const [members, setMembers] = useState({});
+
+  const orderedV2AisleIds = Object.keys(aislesV2)
+    .sort((a, b) => (aislesV2[a]?.order ?? 0) - (aislesV2[b]?.order ?? 0));
+  const v2CategoriesByAisle = orderedV2AisleIds.reduce((acc, aisleId) => {
+    acc[aisleId] = [];
+    return acc;
+  }, {});
+  const v2CategoryNameById = {};
+  for (const [catId, cat] of Object.entries(categoriesV2)) {
+    if (!cat) continue;
+    v2CategoryNameById[catId] = cat.name;
+    if (!cat.hidden && cat.aisleId && v2CategoriesByAisle[cat.aisleId]) {
+      v2CategoriesByAisle[cat.aisleId].push(catId);
+    }
+  }
+  const categoryIdByName = Object.entries(categoriesV2).reduce((acc, [catId, cat]) => {
+    if (cat?.name) acc[cat.name] = catId;
+    return acc;
+  }, {});
+  const categoryNameForId = (catId) => categoriesV2[catId]?.name || null;
+  const normalizeListItem = (item) => {
+    const categoryId = item?.categoryId || categoryIdByName[item?.category] || null;
+    const category = item?.category || categoryNameForId(categoryId) || '';
+    return {
+      ...item,
+      categoryId,
+      category,
+      itemKey: item?.itemKey || (item?.id != null && item.id !== '' ? String(item.id) : generateId()),
+    };
+  };
   const [selectedItem, setSelectedItem] = useState(null);
   const [selectedItemLastPurchased, setSelectedItemLastPurchased] = useState(null);
   const [quantityDefaults, setQuantityDefaults] = useState({});
   const authResolvedRef = useRef(false);
   const getStableItemKey = (item) => item?.itemKey || String(item?.id || '');
+  const currentEditor = user?.uid || 'unknown';
+  const stampRecord = (record) => ({
+    ...record,
+    updatedAt: Date.now(),
+    updatedBy: currentEditor,
+  });
+
+  useEffect(() => {
+    if (!Object.keys(aislesV2).length || !Object.keys(categoriesV2).length) return;
+    saveTaxonomyV2Locally({
+      aisles: aislesV2,
+      categories: categoriesV2,
+      visibleItems: visibleItemsV2,
+      library: libraryItemsV2,
+    });
+  }, [aislesV2, categoriesV2, visibleItemsV2, libraryItemsV2]);
 
   // Check for debug mode in URL
   useEffect(() => {
@@ -1221,6 +1442,8 @@ export default function App() {
           logger.error('Auth', 'Failed to save cached user', { error: err.message });
         });
       } else {
+        // No Firebase session — stop RTDB log writes (avoids PERMISSION_DENIED after sign-out or token loss)
+        logger.setUserId(null);
         logger.warn('Auth', 'Firebase auth returned null user');
 
         // Be more lenient: if we have a cached user, keep using it even if online
@@ -1382,15 +1605,15 @@ export default function App() {
     async function loadLocalData() {
       logger.info('OfflineStorage', 'Loading local data from IndexedDB');
       try {
-        await initOfflineDB();
-        logger.debug('OfflineStorage', 'IndexedDB initialized');
+        const offlineDb = await initOfflineDB();
+        logger.debug(
+          'OfflineStorage',
+          offlineDb ? 'IndexedDB initialized' : 'IndexedDB unavailable (offline cache disabled for this session)'
+        );
 
-        const [localList, localHistory, localCommon, localLessCommon, localCategories, localQuantityDefaults, syncTime] = await Promise.all([
+        const [localList, localTaxonomyV2, localQuantityDefaults, syncTime] = await Promise.all([
           loadShoppingListLocally(),
-          loadShoppingHistoryLocally(),
-          loadAllCommonItemsLocally(),
-          loadAllLessCommonItemsLocally(),
-          loadCategoriesLocally(),
+          loadTaxonomyV2Locally(),
           loadQuantityDefaultsLocally(),
           getLastSyncTime()
         ]);
@@ -1398,28 +1621,19 @@ export default function App() {
         logger.info('OfflineStorage', 'Local data loaded', {
           hasLocalList: !!localList,
           listItemCount: localList?.length || 0,
-          hasHistory: !!localHistory,
-          historyCount: localHistory?.length || 0,
-          commonCategoriesCount: Object.keys(localCommon || {}).length,
-          lessCommonCategoriesCount: Object.keys(localLessCommon || {}).length,
+          taxonomyV2AislesCount: Object.keys(localTaxonomyV2?.aisles || {}).length,
+          taxonomyV2CategoriesCount: Object.keys(localTaxonomyV2?.categories || {}).length,
           lastSyncTime: syncTime
         });
 
-        // Only use local data if we have it and Firebase hasn't loaded yet
         if (localList !== null && localList !== undefined) {
-          setList(localList.map(item => ({ ...item, itemKey: item.itemKey || String(item.id || generateId()) })));
+          setList(localList.map(normalizeListItem));
         }
-        if (localHistory !== null && localHistory !== undefined) {
-          setHistory(new Set(localHistory));
-        }
-        if (localCategories && Array.isArray(localCategories) && localCategories.length > 0) {
-          setCategories(localCategories);
-        }
-        if (localCommon && Object.keys(localCommon).length > 0) {
-          setCommonItems(localCommon);
-        }
-        if (localLessCommon && Object.keys(localLessCommon).length > 0) {
-          setLessCommonItems(localLessCommon);
+        if (localTaxonomyV2) {
+          setAislesV2(localTaxonomyV2.aisles || {});
+          setCategoriesV2(localTaxonomyV2.categories || {});
+          setVisibleItemsV2(localTaxonomyV2.visibleItems || {});
+          setLibraryItemsV2(localTaxonomyV2.library || {});
         }
         if (syncTime) {
           setLastSyncTime(syncTime);
@@ -1494,134 +1708,24 @@ export default function App() {
     });
 
     const hPath = `households/${householdId}`;
-    const categoriesRef = ref(database, `${hPath}/categories`);
     const listRef = ref(database, `${hPath}/shopping-list`);
-    const historyRef = ref(database, `${hPath}/shopping-history`);
-    const commonRef = ref(database, `${hPath}/common-items`);
-    const lessCommonRef = ref(database, `${hPath}/less-common-items`);
     const quantityDefaultsRef = ref(database, `${hPath}/quantity-defaults`);
 
     logger.debug('Firebase', 'Setting up data listeners');
 
-    const unsubCategories = onValue(categoriesRef, async (snapshot) => {
-      const data = snapshot.val();
-      if (data && Array.isArray(data) && data.length > 0) {
-        setCategories(data);
-        saveCategoriesToLocally(data);
-      } else {
-        // First setup: seed from code constant and persist to Firebase
-        await set(categoriesRef, CATEGORIES);
-        setCategories(CATEGORIES);
-        saveCategoriesToLocally(CATEGORIES);
-      }
-    }, (error) => {
-      logger.error('Firebase', 'Categories listener error', { error: error.message, code: error.code });
-    });
-
     const unsubList = onValue(listRef, (snapshot) => {
-      const data = (snapshot.val() || []).map(item => ({ ...item, itemKey: item.itemKey || String(item.id || generateId()) }));
+      const data = snapshotShoppingListToArray(snapshot.val()).map(normalizeListItem);
       logger.info('Firebase', 'Shopping list data received', {
         itemCount: data.length,
         timestamp: Date.now()
       });
       setList(data);
-      // Save to IndexedDB for offline access
       saveShoppingListLocally(data).then(() => {
         logger.debug('OfflineStorage', 'Shopping list saved to IndexedDB');
       });
       setLastSyncTime(Date.now());
     }, (error) => {
       logger.error('Firebase', 'Shopping list listener error', {
-        error: error.message,
-        code: error.code
-      });
-    });
-
-    const unsubHistory = onValue(historyRef, (snapshot) => {
-      const data = snapshot.val() || [];
-      logger.info('Firebase', 'Shopping history data received', {
-        itemCount: data.length,
-        timestamp: Date.now()
-      });
-      setHistory(new Set(data));
-      // Save to IndexedDB for offline access
-      saveShoppingHistoryLocally(data).then(() => {
-        logger.debug('OfflineStorage', 'Shopping history saved to IndexedDB');
-      });
-    }, (error) => {
-      logger.error('Firebase', 'Shopping history listener error', {
-        error: error.message,
-        code: error.code
-      });
-    });
-
-    const unsubCommon = onValue(commonRef, (snapshot) => {
-      const data = snapshot.val();
-      let processedData;
-      if (data) {
-        // Decode Firebase keys back to category names
-        const decoded = {};
-        Object.keys(data).forEach(encodedKey => {
-          const actualCat = decodeCategory(encodedKey);
-          decoded[actualCat] = data[encodedKey];
-        });
-        const first = Object.keys(decoded)[0];
-        processedData = first && Array.isArray(decoded[first]) && typeof decoded[first][0] === 'string' ? migrateItems(decoded) : decoded;
-      } else {
-        // First setup: seed from code constant and persist to Firebase
-        processedData = migrateItems(DEFAULT_ITEMS);
-        const encoded = {};
-        Object.keys(processedData).forEach(cat => {
-          encoded[encodeCategory(cat)] = processedData[cat];
-        });
-        set(commonRef, encoded).catch(err =>
-          logger.warn('Firebase', 'Failed to seed default items', { error: err.message })
-        );
-      }
-      logger.info('Firebase', 'Common items data received', {
-        categoriesCount: Object.keys(processedData).length,
-        timestamp: Date.now()
-      });
-      setCommonItems(processedData);
-      // Save to IndexedDB for offline access
-      Object.keys(processedData).forEach(cat => {
-        saveCommonItemsLocally(cat, processedData[cat]);
-      });
-      logger.debug('OfflineStorage', 'Common items saved to IndexedDB');
-    }, (error) => {
-      logger.error('Firebase', 'Common items listener error', {
-        error: error.message,
-        code: error.code
-      });
-    });
-
-    const unsubLessCommon = onValue(lessCommonRef, (snapshot) => {
-      const data = snapshot.val();
-      let processedData;
-      if (data) {
-        // Decode Firebase keys back to category names
-        const decoded = {};
-        Object.keys(data).forEach(encodedKey => {
-          const actualCat = decodeCategory(encodedKey);
-          decoded[actualCat] = data[encodedKey];
-        });
-        const first = Object.keys(decoded)[0];
-        processedData = first && Array.isArray(decoded[first]) && typeof decoded[first][0] === 'string' ? migrateItems(decoded) : decoded;
-      } else {
-        processedData = {};
-      }
-      logger.info('Firebase', 'Less common items data received', {
-        categoriesCount: Object.keys(processedData).length,
-        timestamp: Date.now()
-      });
-      setLessCommonItems(processedData);
-      // Save to IndexedDB for offline access
-      Object.keys(processedData).forEach(cat => {
-        saveLessCommonItemsLocally(cat, processedData[cat]);
-      });
-      logger.debug('OfflineStorage', 'Less common items saved to IndexedDB');
-    }, (error) => {
-      logger.error('Firebase', 'Less common items listener error', {
         error: error.message,
         code: error.code
       });
@@ -1642,6 +1746,54 @@ export default function App() {
       logger.error('Firebase', 'Quantity defaults listener error', { error: error.message, code: error.code });
     });
 
+    const aislesRef       = ref(database, `${hPath}/taxonomy/aisles`);
+    const categoriesV2Ref = ref(database, `${hPath}/taxonomy/categories`);
+    const visibleRef      = ref(database, `${hPath}/taxonomy/visible-items`);
+    const libraryRef      = ref(database, `${hPath}/taxonomy/library`);
+    const onboardingRef   = ref(database, `${hPath}/taxonomy/onboarding_completed`);
+
+    const unsubAisles = onValue(aislesRef, (snap) => {
+      setAislesV2(snap.val() || {});
+    }, (error) => {
+      logger.error('Firebase', 'Aisles listener error', { error: error.message, code: error.code });
+    });
+    const unsubCategoriesV2 = onValue(categoriesV2Ref, (snap) => {
+      setCategoriesV2(snap.val() || {});
+    }, (error) => {
+      logger.error('Firebase', 'Categories v2 listener error', { error: error.message, code: error.code });
+    });
+    const unsubVisible = onValue(visibleRef, (snap) => {
+      const raw = snap.val() || {};
+      // Stored as { catId: Array | { pushId: {id, name} } }. Normalize to arrays.
+      const norm = {};
+      for (const [catId, v] of Object.entries(raw)) {
+        if (Array.isArray(v)) norm[catId] = v.filter(Boolean);
+        else if (v && typeof v === 'object') norm[catId] = Object.values(v);
+        else norm[catId] = [];
+      }
+      setVisibleItemsV2(norm);
+    }, (error) => {
+      logger.error('Firebase', 'Visible items listener error', { error: error.message, code: error.code });
+    });
+    const unsubLibrary = onValue(libraryRef, (snap) => {
+      const raw = snap.val() || {};
+      const norm = {};
+      for (const [catId, v] of Object.entries(raw)) {
+        if (Array.isArray(v)) norm[catId] = v.filter(Boolean);
+        else if (v && typeof v === 'object') norm[catId] = Object.values(v);
+        else norm[catId] = [];
+      }
+      setLibraryItemsV2(norm);
+    }, (error) => {
+      logger.error('Firebase', 'Library items listener error', { error: error.message, code: error.code });
+    });
+    const unsubOnboarding = onValue(onboardingRef, (snap) => {
+      const v = snap.val();
+      setOnboardingCompleted(v === null || v === undefined ? null : v === true);
+    }, (error) => {
+      logger.error('Firebase', 'Onboarding flag listener error', { error: error.message, code: error.code });
+    });
+
     setLoading(false);
 
     return () => {
@@ -1649,24 +1801,29 @@ export default function App() {
       setIsConnected(false);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      unsubCategories();
       unsubList();
-      unsubHistory();
-      unsubCommon();
-      unsubLessCommon();
       unsubMembers();
       unsubQuantityDefaults();
+      unsubAisles();
+      unsubCategoriesV2();
+      unsubVisible();
+      unsubLibrary();
+      unsubOnboarding();
     };
   }, [user?.uid, householdId]);
 
   const save = async (key, value) => {
-    const fullKey = householdId ? `households/${householdId}/${key}` : key;
+    if (!householdId) {
+      logger.warn('Firebase', 'Save skipped: missing householdId', { key });
+      return;
+    }
+    const fullKey = `households/${householdId}/${key}`;
     const opId = Date.now();
     logger.info('Firebase', 'Starting Firebase save operation', {
       opId,
       key: fullKey,
       dataType: Array.isArray(value) ? 'array' : typeof value,
-      itemCount: Array.isArray(value) ? value.length : undefined
+      ...(Array.isArray(value) ? { itemCount: value.length } : {})
     });
 
     setPendingOps(p => {
@@ -1707,24 +1864,6 @@ export default function App() {
     }
   };
 
-  const saveCommonItems = async (items) => {
-    // Encode category names for Firebase
-    const encoded = {};
-    Object.keys(items).forEach(cat => {
-      encoded[encodeCategory(cat)] = items[cat];
-    });
-    await save('common-items', encoded);
-  };
-
-  const saveLessCommonItems = async (items) => {
-    // Encode category names for Firebase
-    const encoded = {};
-    Object.keys(items).forEach(cat => {
-      encoded[encodeCategory(cat)] = items[cat];
-    });
-    await save('less-common-items', encoded);
-  };
-
   const persistQuantityDefaults = async (nextDefaults) => {
     setQuantityDefaults(nextDefaults);
     await save('quantity-defaults', nextDefaults);
@@ -1735,6 +1874,31 @@ export default function App() {
     const key = String(itemKey || '');
     const legacyKey = (name || '').trim().toLowerCase();
     return quantityDefaults[key] || quantityDefaults[legacyKey] || '';
+  };
+
+  /** When a list item has a taxonomy category, ensure its name exists in that category's library (not visible/suggestions). */
+  const ensureListItemNameInLibrary = async (name, categoryId) => {
+    if (!householdId || !categoryId) return;
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    const vis = visibleItemsV2[categoryId] || [];
+    const lib = libraryItemsV2[categoryId] || [];
+    if (vis.some(i => i.name.toLowerCase() === lower)) return;
+    if (lib.some(i => i.name.toLowerCase() === lower)) return;
+    const base = `households/${householdId}/taxonomy`;
+    const itemId = push(ref(database, `${base}/library/${categoryId}`)).key;
+    const nextLib = [...lib, stampRecord({ id: itemId, name: trimmed })].sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+    setLibraryItemsV2(prev => ({ ...prev, [categoryId]: nextLib }));
+    try {
+      await update(ref(database), {
+        [`${base}/library/${categoryId}`]: nextLib,
+      });
+    } catch (err) {
+      logger.warn('App', 'ensureListItemNameInLibrary failed', { error: err.message, categoryId });
+    }
   };
 
   const logItemEvent = (event) => {
@@ -1748,6 +1912,10 @@ export default function App() {
     };
     if (event.source) payload.source = event.source;
     if (event.qty != null) payload.qty = Number(event.qty);
+    const qLabel = (event.quantityLabel != null && String(event.quantityLabel).trim())
+      ? String(event.quantityLabel).trim().slice(0, 100)
+      : '';
+    if (qLabel) payload.quantityLabel = qLabel;
     try {
       push(ref(database, `households/${householdId}/item-events`), payload)
         .catch(err => logger.warn('App', 'item-event write failed', { error: err.message, action: payload.action }));
@@ -1756,29 +1924,53 @@ export default function App() {
     }
   };
 
-  const addItem = (name, category, source = 'quickAdd', itemKey = generateId()) => {
+  const addItem = (name, category, source = 'quickAdd', itemKey = generateId(), categoryIdOverride = null) => {
     const defaultQuantity = getDefaultQuantityForItem(itemKey, name);
-    const newList = [...list, { id: Date.now(), itemKey, name, category, quantity: defaultQuantity, done: false, addedBy: user?.uid || null, addedAt: Date.now() }];
-    setList(newList); // Optimistic update
+    const categoryIdResolved = categoryIdOverride || categoryIdByName[category] || null;
+    const newList = [...list, stampRecord({
+      id: Date.now(),
+      itemKey,
+      name,
+      category,
+      categoryId: categoryIdResolved,
+      quantity: defaultQuantity,
+      done: false,
+      addedBy: user?.uid || null,
+      addedAt: Date.now(),
+    })];
+    setList(newList);
     save('shopping-list', newList);
-    const newHistory = new Set(history);
-    newHistory.add(name.toLowerCase());
-    setHistory(newHistory); // Optimistic update
-    save('shopping-history', [...newHistory]);
-    logItemEvent({ name, category, action: 'added', source, qty: Number(defaultQuantity) || 1 });
+    saveShoppingListLocally(newList);
+    logItemEvent({
+      name,
+      category,
+      action: 'added',
+      source,
+      qty: Number(defaultQuantity) || 1,
+      quantityLabel: (defaultQuantity || '').trim() || undefined,
+    });
+    void ensureListItemNameInLibrary(name, categoryIdResolved);
+  };
+
+  const getItemCategoryId = (item) => item?.categoryId || categoryIdByName[item?.category] || null;
+  const getShoppingCategoryName = (item) => {
+    const catId = getItemCategoryId(item);
+    return (catId && categoryNameForId(catId)) || item?.category || '';
   };
 
   const toggleDone = (id) => {
     const target = list.find(item => item.id === id);
-    const newList = list.map(item => item.id === id ? { ...item, done: !item.done } : item);
+    const newList = list.map(item => item.id === id ? stampRecord({ ...item, done: !item.done }) : item);
     setList(newList); // Optimistic update
     save('shopping-list', newList);
+    saveShoppingListLocally(newList);
     if (target) {
       logItemEvent({
         name: target.name,
-        category: target.category,
+        category: getShoppingCategoryName(target),
         action: target.done ? 'unchecked' : 'checked',
         qty: Number(target.quantity) || 1,
+        quantityLabel: (target.quantity || '').trim() || undefined,
       });
     }
   };
@@ -1787,10 +1979,11 @@ export default function App() {
     setList((prevList) => {
       const nextList = prevList.map(item =>
         getStableItemKey(item) === itemKey
-          ? { ...item, itemKey: getStableItemKey(item), quantity: qty }
+          ? stampRecord({ ...item, itemKey: getStableItemKey(item), quantity: qty })
           : item
       );
       save('shopping-list', nextList);
+      saveShoppingListLocally(nextList);
 
       const target = prevList.find(item => getStableItemKey(item) === itemKey);
       if (target) {
@@ -1829,80 +2022,273 @@ export default function App() {
     }
   };
 
-  const updateItemName = async (itemKey, nextName) => {
-    const trimmed = (nextName || '').trim();
-    setList((prevList) => {
-      const target = prevList.find(item => getStableItemKey(item) === itemKey);
-      if (!target || !trimmed || trimmed === target.name) return prevList;
+  const computeRenameOutcome = (prevList, itemKey, trimmed, vis, lib) => {
+    const target = prevList.find(item => getStableItemKey(item) === itemKey);
+    if (!target || !trimmed) return null;
+    const targetName = String(target.name ?? '').trim();
+    if (trimmed === targetName) return null;
 
-      const oldNameLower = target.name.trim().toLowerCase();
-      const targetStableKey = getStableItemKey(target);
-      const renamedTarget = { ...target, itemKey: targetStableKey, name: trimmed };
-      const nextList = [];
-      for (const item of prevList) {
-        const sameLogicalRow = getStableItemKey(item) === itemKey;
-        const orphanWithOldName = !sameLogicalRow
-          && item.category === target.category
-          && item.name.trim().toLowerCase() === oldNameLower;
-        if (orphanWithOldName) continue;
-        nextList.push(sameLogicalRow ? renamedTarget : item);
-      }
-      save('shopping-list', nextList);
+    const oldNameLower = targetName.toLowerCase();
+    const targetStableKey = getStableItemKey(target);
+    const renamedTarget = stampRecord({ ...target, itemKey: targetStableKey, name: trimmed });
+    const nextList = [];
+    for (const item of prevList) {
+      const sameLogicalRow = getStableItemKey(item) === itemKey;
+      const orphanWithOldName = !sameLogicalRow
+        && (item.categoryId || item.category) === (target.categoryId || target.category)
+        && String(item.name ?? '').trim().toLowerCase() === oldNameLower;
+      if (orphanWithOldName) continue;
+      nextList.push(sameLogicalRow ? renamedTarget : item);
+    }
 
-      const newHistory = new Set(history);
-      newHistory.delete(target.name.toLowerCase());
-      newHistory.add(trimmed.toLowerCase());
-      setHistory(newHistory);
-      save('shopping-history', [...newHistory]);
-
-      const renameSuggestionArray = (items = []) => {
-        const renamed = items.map((suggestion) =>
-          suggestion.name.trim().toLowerCase() === oldNameLower
-            ? { ...suggestion, name: trimmed }
-            : suggestion
+    const renameBucket = (bucketMap) => {
+      const out = {};
+      let changed = false;
+      for (const [catId, items] of Object.entries(bucketMap || {})) {
+        const renamed = (items || []).map((s) =>
+          String(s?.name ?? '').trim().toLowerCase() === oldNameLower ? { ...s, name: trimmed } : s
         );
-        const deduped = [];
+        const hitChange = renamed.some((s, i) => s !== items[i]);
+        if (!hitChange) { out[catId] = items; continue; }
+        changed = true;
         const seen = new Set();
-        for (const suggestion of renamed.sort((a, b) => a.name.localeCompare(b.name))) {
-          const key = suggestion.name.trim().toLowerCase();
+        const deduped = [];
+        for (const s of renamed.sort((a, b) => a.name.localeCompare(b.name))) {
+          const key = String(s.name ?? '').trim().toLowerCase();
           if (seen.has(key)) continue;
           seen.add(key);
-          deduped.push(suggestion);
+          deduped.push(s);
         }
-        return deduped;
-      };
-      const nextCommonItems = {};
-      Object.keys(commonItems).forEach((cat) => {
-        nextCommonItems[cat] = renameSuggestionArray(commonItems[cat]);
-      });
-      const nextLessCommonItems = {};
-      Object.keys(lessCommonItems).forEach((cat) => {
-        nextLessCommonItems[cat] = renameSuggestionArray(lessCommonItems[cat]);
-      });
-      setCommonItems(nextCommonItems);
-      setLessCommonItems(nextLessCommonItems);
-      saveCommonItems(nextCommonItems);
-      saveLessCommonItems(nextLessCommonItems);
+        out[catId] = deduped;
+      }
+      return changed ? out : null;
+    };
+    const nextVisible = renameBucket(vis);
+    const nextLibrary = renameBucket(lib);
+    return { nextList, nextVisible, nextLibrary };
+  };
 
-      setSelectedItem(si => (si && getStableItemKey(si) === itemKey ? { ...si, name: trimmed } : si));
-      void loadLastPurchasedForItemName(trimmed);
-
-      return nextList;
+  const updateItemName = async (itemKey, nextName) => {
+    const trimmed = (nextName || '').trim();
+    let outcome = null;
+    setList((prevList) => {
+      outcome = computeRenameOutcome(prevList, itemKey, trimmed, visibleItemsV2, libraryItemsV2);
+      return outcome ? outcome.nextList : prevList;
     });
+    if (!outcome) return;
+
+    save('shopping-list', outcome.nextList);
+    saveShoppingListLocally(outcome.nextList);
+    if (outcome.nextVisible) {
+      setVisibleItemsV2(outcome.nextVisible);
+      save('taxonomy/visible-items', outcome.nextVisible);
+    }
+    if (outcome.nextLibrary) {
+      setLibraryItemsV2(outcome.nextLibrary);
+      save('taxonomy/library', outcome.nextLibrary);
+    }
+
+    setSelectedItem(si => (si && getStableItemKey(si) === itemKey ? { ...si, name: trimmed } : si));
+    void loadLastPurchasedForItemName(trimmed);
+  };
+
+  const renameTaxonomySuggestionById = (categoryId, suggestionId, trimmed) => {
+    if (!categoryId || !suggestionId) return;
+
+    const renameIdInList = (arr) => {
+      if (!Array.isArray(arr) || !arr.length) return null;
+      const target = arr.find((i) => i.id === suggestionId);
+      if (!target) return null;
+      if (String(target.name ?? '').trim() === trimmed) return null;
+      const renamed = arr.map((i) => (i.id === suggestionId ? { ...i, name: trimmed } : i));
+      const seen = new Set();
+      const deduped = [];
+      for (const s of renamed.sort((a, b) => a.name.localeCompare(b.name))) {
+        const key = String(s.name ?? '').trim().toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(s);
+      }
+      return deduped;
+    };
+
+    const nextVisSlice = renameIdInList(visibleItemsV2[categoryId]);
+    const nextLibSlice = renameIdInList(libraryItemsV2[categoryId]);
+    if (nextVisSlice === null && nextLibSlice === null) return;
+
+    if (nextVisSlice !== null) {
+      const nextVisible = { ...visibleItemsV2, [categoryId]: nextVisSlice };
+      setVisibleItemsV2(nextVisible);
+      save('taxonomy/visible-items', nextVisible);
+    }
+    if (nextLibSlice !== null) {
+      const nextLibrary = { ...libraryItemsV2, [categoryId]: nextLibSlice };
+      setLibraryItemsV2(nextLibrary);
+      save('taxonomy/library', nextLibrary);
+    }
+  };
+
+  const moveSuggestionToCategory = async (suggestionId, fromCatId, toCatId) => {
+    if (!taxonomyBase || !suggestionId || !fromCatId || !toCatId || fromCatId === toCatId) return;
+    const fromVis = visibleItemsV2[fromCatId] || [];
+    const fromLib = libraryItemsV2[fromCatId] || [];
+    const fromVisEntry = fromVis.find(i => i.id === suggestionId);
+    const fromLibEntry = fromLib.find(i => i.id === suggestionId);
+    const moving = fromVisEntry || fromLibEntry;
+    if (!moving) return;
+    const wasVisible = !!fromVisEntry;
+
+    const nameLower = String(moving.name ?? '').trim().toLowerCase();
+    const toVis = visibleItemsV2[toCatId] || [];
+    const toLib = libraryItemsV2[toCatId] || [];
+    const duplicate = toVis.some(i => i.name.toLowerCase() === nameLower)
+      || toLib.some(i => i.name.toLowerCase() === nameLower);
+
+    const nextFromVis = fromVis.filter(i => i.id !== suggestionId);
+    const nextFromLib = fromLib.filter(i => i.id !== suggestionId);
+    const nextTo = duplicate
+      ? null
+      : [...(wasVisible ? toVis : toLib), stampRecord({ id: moving.id, name: moving.name })]
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+    const nextVisibleState = { ...visibleItemsV2, [fromCatId]: nextFromVis };
+    const nextLibraryState = { ...libraryItemsV2, [fromCatId]: nextFromLib };
+    if (nextTo && wasVisible) nextVisibleState[toCatId] = nextTo;
+    if (nextTo && !wasVisible) nextLibraryState[toCatId] = nextTo;
+
+    setVisibleItemsV2(nextVisibleState);
+    setLibraryItemsV2(nextLibraryState);
+
+    const updates = {
+      [`${taxonomyBase}/visible-items/${fromCatId}`]: nextFromVis.length > 0 ? nextFromVis : null,
+      [`${taxonomyBase}/library/${fromCatId}`]: nextFromLib.length > 0 ? nextFromLib : null,
+    };
+    if (nextTo && wasVisible) updates[`${taxonomyBase}/visible-items/${toCatId}`] = nextTo;
+    if (nextTo && !wasVisible) updates[`${taxonomyBase}/library/${toCatId}`] = nextTo;
+    await update(ref(database), updates);
+  };
+
+  const removeSuggestionEverywhere = async (suggestionId, catId) => {
+    if (!taxonomyBase || !suggestionId || !catId) return;
+    const vis = visibleItemsV2[catId] || [];
+    const lib = libraryItemsV2[catId] || [];
+    const nextVis = vis.filter(i => i.id !== suggestionId);
+    const nextLib = lib.filter(i => i.id !== suggestionId);
+    if (nextVis.length === vis.length && nextLib.length === lib.length) return;
+    setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
+    setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
+    await update(ref(database), {
+      [`${taxonomyBase}/visible-items/${catId}`]: nextVis.length > 0 ? nextVis : null,
+      [`${taxonomyBase}/library/${catId}`]: nextLib.length > 0 ? nextLib : null,
+    });
+  };
+
+  const updateSuggestionQuantity = (itemKey, qty) => {
+    const nextDefaults = { ...quantityDefaults };
+    const t = String(qty ?? '').trim();
+    if (t) nextDefaults[itemKey] = t;
+    else delete nextDefaults[itemKey];
+    void persistQuantityDefaults(nextDefaults);
+  };
+
+  const findSuggestionForListItem = (item) => {
+    const nameLower = String(item?.name ?? '').trim().toLowerCase();
+    if (!nameLower) return null;
+    const preferredCatId = getItemCategoryId(item);
+    const searchIn = (catId) => {
+      const vis = (visibleItemsV2[catId] || []).find(s => s.name.toLowerCase() === nameLower);
+      if (vis) return { suggestionId: vis.id, categoryId: catId };
+      const lib = (libraryItemsV2[catId] || []).find(s => s.name.toLowerCase() === nameLower);
+      if (lib) return { suggestionId: lib.id, categoryId: catId };
+      return null;
+    };
+    if (preferredCatId) {
+      const hit = searchIn(preferredCatId);
+      if (hit) return hit;
+    }
+    for (const catId of Object.keys(categoriesV2)) {
+      if (catId === preferredCatId) continue;
+      const hit = searchIn(catId);
+      if (hit) return hit;
+    }
+    return null;
   };
 
   const openItemSheet = async (item) => {
     const itemKey = getStableItemKey(item);
-    setSelectedItem({ ...item, itemKey, onQuantityChange: updateQuantity, onNameChange: updateItemName });
+    const base = { ...item, itemKey, onQuantityChange: updateQuantity, onNameChange: updateItemName };
+    if (quickAddMode) {
+      const match = findSuggestionForListItem(item);
+      if (match) {
+        base.suggestionConfig = {
+          categoryId: match.categoryId,
+          aisleId: categoriesV2[match.categoryId]?.aisleId || null,
+          onMove: async (toCatId) => {
+            await moveSuggestionToCategory(match.suggestionId, match.categoryId, toCatId);
+            const toCategoryName = categoriesV2[toCatId]?.name || '';
+            const targetItemKey = itemKey;
+            setList(prev => {
+              const next = prev.map(li =>
+                getStableItemKey(li) === targetItemKey
+                  ? { ...li, categoryId: toCatId, category: toCategoryName }
+                  : li
+              );
+              save('shopping-list', next);
+              saveShoppingListLocally(next);
+              return next;
+            });
+            setSelectedItem(null);
+          },
+          onRemove: async () => {
+            await removeSuggestionEverywhere(match.suggestionId, match.categoryId);
+            setSelectedItem(null);
+          },
+        };
+      }
+    }
+    setSelectedItem(base);
     setSelectedItemLastPurchased(null);
     await loadLastPurchasedForItemName(item.name);
   };
 
   const openSuggestionSheet = async (cat, suggestion) => {
+    const categoryId = suggestion.catId || categoryIdByName[cat] || null;
+    const suggestionId = suggestion.id;
+    const defaultQty = getDefaultQuantityForItem(suggestionId, suggestion.name);
+    const onNameChange = categoryId
+      ? async (itemKey, nextName) => {
+          const trimmed = (nextName || '').trim();
+          if (!trimmed) return;
+          renameTaxonomySuggestionById(categoryId, itemKey, trimmed);
+          setSelectedItem(si =>
+            si && String(si.itemKey) === String(itemKey) ? { ...si, name: trimmed } : si
+          );
+          void loadLastPurchasedForItemName(trimmed);
+        }
+      : undefined;
+    const suggestionConfig = categoryId
+      ? {
+          categoryId,
+          aisleId: categoriesV2[categoryId]?.aisleId || null,
+          onMove: async (toCatId) => {
+            await moveSuggestionToCategory(suggestionId, categoryId, toCatId);
+            setSelectedItem(null);
+          },
+          onRemove: async () => {
+            await removeSuggestionEverywhere(suggestionId, categoryId);
+            setSelectedItem(null);
+          },
+        }
+      : null;
     const item = {
       ...suggestion,
       category: cat,
-      itemKey: suggestion.id,
+      categoryId,
+      itemKey: suggestionId,
+      quantity: (suggestion.quantity || '').trim() || defaultQty,
+      onQuantityChange: updateSuggestionQuantity,
+      ...(onNameChange ? { onNameChange } : {}),
+      ...(suggestionConfig ? { suggestionConfig } : {}),
     };
     setSelectedItem(item);
     setSelectedItemLastPurchased(null);
@@ -1913,6 +2299,7 @@ export default function App() {
     const newList = list.filter(item => !item.done);
     setList(newList); // Optimistic update
     save('shopping-list', newList);
+    saveShoppingListLocally(newList);
   };
 
   const removeItem = (id) => {
@@ -1920,6 +2307,7 @@ export default function App() {
     const newList = list.filter(item => item.id !== id);
     setList(newList); // Optimistic update
     save('shopping-list', newList);
+    saveShoppingListLocally(newList);
     if (target && !target.done) {
       if (target.quantity && target.quantity.trim()) {
         const nextDefaults = { ...quantityDefaults, [getStableItemKey(target)]: target.quantity.trim() };
@@ -1927,147 +2315,180 @@ export default function App() {
       }
       logItemEvent({
         name: target.name,
-        category: target.category,
+        category: getShoppingCategoryName(target),
         action: 'removed',
         qty: Number(target.quantity) || 1,
+        quantityLabel: (target.quantity || '').trim() || undefined,
       });
     }
   };
 
-  const toggleQuickAdd = (cat, itemId) => {
-    const commonCat = commonItems[cat] || [];
-    const lessCat = lessCommonItems[cat] || [];
-    const inCommon = commonCat.find(i => i.id === itemId);
-    if (inCommon) {
-      const newC = { ...commonItems, [cat]: commonCat.filter(i => i.id !== itemId) };
-      const newL = { ...lessCommonItems, [cat]: [...lessCat, inCommon].sort((a, b) => a.name.localeCompare(b.name)) };
-      setCommonItems(newC); // Optimistic update
-      setLessCommonItems(newL); // Optimistic update
-      saveCommonItems(newC);
-      saveLessCommonItems(newL);
-    } else {
-      const inLess = lessCat.find(i => i.id === itemId);
-      const newL = { ...lessCommonItems, [cat]: lessCat.filter(i => i.id !== itemId) };
-      const newC = { ...commonItems, [cat]: [...commonCat, inLess].sort((a, b) => a.name.localeCompare(b.name)) };
-      setCommonItems(newC); // Optimistic update
-      setLessCommonItems(newL); // Optimistic update
-      saveCommonItems(newC);
-      saveLessCommonItems(newL);
-    }
+  const addFromAisleSearch = (aisleId, suggestion) => {
+    let catId = suggestion.catId;
+    if (!catId) catId = (v2CategoriesByAisle[aisleId] || [])[0] || null;
+    const categoryName = catId ? v2CategoryNameById[catId] : (aislesV2[aisleId]?.name || '');
+    addItem(suggestion.name, categoryName, 'typed', generateId(), catId);
+    setCategorySearches(prev => ({ ...prev, [aisleId]: '' }));
   };
 
-  const deleteSuggestion = (cat, itemId) => {
-    const commonCat = commonItems[cat] || [];
-    const lessCat = lessCommonItems[cat] || [];
-    if (commonCat.find(i => i.id === itemId)) {
-      const newC = { ...commonItems, [cat]: commonCat.filter(i => i.id !== itemId) };
-      setCommonItems(newC); // Optimistic update
-      saveCommonItems(newC);
-    } else {
-      const newL = { ...lessCommonItems, [cat]: lessCat.filter(i => i.id !== itemId) };
-      setLessCommonItems(newL); // Optimistic update
-      saveLessCommonItems(newL);
-    }
-  };
-
-  const finishEditName = (cat, itemId) => {
-    if (!editingItemName.trim()) {
-      setEditingItemId(null);
-      setEditingItemName('');
-      return;
-    }
-    const commonCat = commonItems[cat] || [];
-    const lessCat = lessCommonItems[cat] || [];
-    if (commonCat.find(i => i.id === itemId)) {
-      const newC = { ...commonItems, [cat]: commonCat.map(i => i.id === itemId ? { ...i, name: editingItemName } : i).sort((a, b) => a.name.localeCompare(b.name)) };
-      setCommonItems(newC); // Optimistic update
-      saveCommonItems(newC);
-    } else {
-      const newL = { ...lessCommonItems, [cat]: lessCat.map(i => i.id === itemId ? { ...i, name: editingItemName } : i).sort((a, b) => a.name.localeCompare(b.name)) };
-      setLessCommonItems(newL); // Optimistic update
-      saveLessCommonItems(newL);
-    }
-    setEditingItemId(null);
-    setEditingItemName('');
-  };
-
-  const addNewSuggestion = (cat) => {
-    const name = newItemInputs[cat]?.trim();
-    if (!name) return;
-    const newC = { ...commonItems, [cat]: [...(commonItems[cat] || []), { id: generateId(), name }].sort((a, b) => a.name.localeCompare(b.name)) };
-    setCommonItems(newC); // Optimistic update
-    saveCommonItems(newC);
-    setNewItemInputs(prev => ({ ...prev, [cat]: '' }));
-  };
-
-  const getAvailable = (cat) => {
-    const listNames = new Set(list.map(i => i.name.toLowerCase()));
-    return (commonItems[cat] || []).filter(i => !listNames.has(i.name.toLowerCase()));
-  };
-
-  const getSuggestions = (cat) => {
-    const search = (categorySearches[cat] || '').toLowerCase();
+  const getAisleSuggestions = (aisleId) => {
+    const search = (categorySearches[aisleId] || '').toLowerCase().trim();
     if (!search) return [];
-    const suggestions = new Set();
     const listNames = new Set(list.map(i => i.name.toLowerCase()));
-    history.forEach(item => {
-      if (item.includes(search) && !listNames.has(item)) {
-        const belongs = (commonItems[cat] || []).some(i => i.name.toLowerCase() === item) || (lessCommonItems[cat] || []).some(i => i.name.toLowerCase() === item);
-        if (belongs) suggestions.add(item);
+    const catIds = v2CategoriesByAisle[aisleId] || [];
+    const seen = new Set();
+    const out = [];
+    for (const catId of catIds) {
+      const vis = visibleItemsV2[catId] || [];
+      const lib = libraryItemsV2[catId] || [];
+      for (const item of vis) {
+        const lower = item.name.toLowerCase();
+        if (seen.has(lower) || listNames.has(lower)) continue;
+        if (lower.includes(search)) {
+          seen.add(lower);
+          out.push({ name: item.name, catId, suggestionId: item.id, fromVisible: true });
+          if (out.length >= 10) return out;
+        }
       }
-    });
-    (lessCommonItems[cat] || []).forEach(i => { if (i.name.toLowerCase().includes(search) && !listNames.has(i.name.toLowerCase())) suggestions.add(i.name.toLowerCase()); });
-    (commonItems[cat] || []).forEach(i => { if (i.name.toLowerCase().includes(search) && !listNames.has(i.name.toLowerCase())) suggestions.add(i.name.toLowerCase()); });
-    return Array.from(suggestions).slice(0, 10);
+      for (const item of lib) {
+        const lower = item.name.toLowerCase();
+        if (seen.has(lower) || listNames.has(lower)) continue;
+        if (lower.includes(search)) {
+          seen.add(lower);
+          out.push({ name: item.name, catId, suggestionId: item.id, fromVisible: false });
+          if (out.length >= 10) return out;
+        }
+      }
+    }
+    return out;
   };
 
-  /** Verbatim query first when it is not already an exact (case-insensitive) match in suggestions — easier one-tap add for new strings. */
-  const getQuickAddDropdownItems = (cat) => {
-    const raw = (categorySearches[cat] || '').trim();
+  const getAisleDropdownItems = (aisleId) => {
+    const raw = (categorySearches[aisleId] || '').trim();
     if (!raw) return [];
-    const base = getSuggestions(cat);
+    const base = getAisleSuggestions(aisleId);
     const rawLc = raw.toLowerCase();
-    const hasExact = base.some((s) => s.toLowerCase() === rawLc);
-    const items = hasExact ? base : [raw, ...base];
-    return items.slice(0, 10);
+    const hasExact = base.some(s => s.name.toLowerCase() === rawLc);
+    return hasExact ? base : [{ name: raw, catId: null, suggestionId: null, fromVisible: false }, ...base];
   };
 
-  const addFromSearch = (cat, name) => {
-    addItem(name, cat, 'typed', generateId());
-    setCategorySearches(prev => ({ ...prev, [cat]: '' }));
-  };
-
-  const organized = categories.map(cat => {
-    const catItems = list.filter(i => i.category === cat);
-    const quickItems = quickAddMode ? getAvailable(cat) : [];
-    const all = [...catItems.map(i => ({ type: 'list', data: i, key: i.name.toLowerCase() })), ...quickItems.map(i => ({ type: 'quick', data: i, key: i.name.toLowerCase() }))].sort((a, b) => a.key.localeCompare(b.key));
-    return { category: cat, items: all, has: catItems.length > 0 || quickItems.length > 0 };
+  const organized = orderedV2AisleIds.map((aisleId) => {
+    const catIds = v2CategoriesByAisle[aisleId] || [];
+    const catIdSet = new Set(catIds);
+    const catNames = new Set(catIds.map(id => v2CategoryNameById[id]).filter(Boolean));
+    const aisleListItems = list.filter((i) => {
+      const cid = getItemCategoryId(i);
+      if (cid) return catIdSet.has(cid);
+      return catNames.has(i.category);
+    });
+    const taken = new Set(list.map(i => i.name.toLowerCase()));
+    const quickItems = quickAddMode
+      ? catIds.flatMap(cid => (visibleItemsV2[cid] || [])
+          .filter(v => !taken.has(v.name.toLowerCase()))
+          .map(v => ({ ...v, catId: cid, catName: v2CategoryNameById[cid] })))
+      : [];
+    const all = [
+      ...aisleListItems.map(i => ({ type: 'list', data: i, key: i.name.toLowerCase() })),
+      ...quickItems.map(i => ({ type: 'quick', data: i, key: i.name.toLowerCase() })),
+    ].sort((a, b) => a.key.localeCompare(b.key));
+    const aisleName = aislesV2[aisleId]?.name || '';
+    return {
+      aisleId,
+      aisleName,
+      aisleNameDisplay: formatAisleNameForDisplay(aisleName),
+      items: all,
+      has: all.length > 0,
+      categoryIdSet: catIdSet,
+      categoryNames: catNames,
+    };
   });
 
   useEffect(() => {
     const modeChanged = prevQuickAddMode.current !== quickAddMode;
     prevQuickAddMode.current = quickAddMode;
 
-    // Only recalculate if:
-    // 1. Mode changed, OR
-    // 2. We're in Shopping Mode (so categories update with list changes)
-    if (!modeChanged && quickAddMode) {
-      return; // In Adding Mode and mode didn't change, don't recalculate
+    const aisleIdsKey = Object.keys(aislesV2)
+      .sort((a, b) => (aislesV2[a]?.order ?? 0) - (aislesV2[b]?.order ?? 0))
+      .join('\0');
+    // Must match `organized` list filtering: if we have a category id, only that id's membership
+    // in this aisle counts — do not fall back to name (duplicate names across aisles would
+    // otherwise mark multiple aisles as "having" one item).
+    const hasItemsInAisle = (g) => list.some((item) => {
+      const cid = getItemCategoryId(item);
+      if (cid) return g.categoryIdSet.has(cid);
+      return g.categoryNames.has(item.category);
+    });
+
+    if (quickAddMode) {
+      if (modeChanged) {
+        const initial = {};
+        organized.forEach((g) => {
+          initial[g.aisleId] = true;
+        });
+        setExpandedCategories(initial);
+        shopAisleDefaultsKeyRef.current = '';
+        prevShopAisleHadItemsRef.current = {};
+      }
+      return;
     }
 
-    const initial = {};
-    categories.forEach(cat => {
-      if (quickAddMode) {
-        // In Adding Mode, expand all categories
-        initial[cat] = true;
-      } else {
-        // In Shopping Mode, only expand categories with items
-        const hasItems = list.some(item => item.category === cat);
-        initial[cat] = hasItems;
-      }
+    const nextHadItems = {};
+    organized.forEach((g) => {
+      nextHadItems[g.aisleId] = hasItemsInAisle(g);
     });
-    setExpandedCategories(initial);
-  }, [quickAddMode, list]);
+
+    // Shop: collapsed by default; expand only when applying defaults (enter shop / first aisle load / aisle set change), not on every list update.
+    if (modeChanged) {
+      const initial = {};
+      organized.forEach((g) => {
+        initial[g.aisleId] = hasItemsInAisle(g);
+      });
+      setExpandedCategories(initial);
+      shopAisleDefaultsKeyRef.current = aisleIdsKey;
+      prevShopAisleHadItemsRef.current = nextHadItems;
+      return;
+    }
+
+    if (aisleIdsKey !== shopAisleDefaultsKeyRef.current) {
+      if (shopAisleDefaultsKeyRef.current === '') {
+        const initial = {};
+        organized.forEach((g) => {
+          initial[g.aisleId] = hasItemsInAisle(g);
+        });
+        setExpandedCategories(initial);
+      } else {
+        setExpandedCategories((prev) => {
+          const next = { ...prev };
+          for (const g of organized) {
+            if (!(g.aisleId in next)) next[g.aisleId] = false;
+          }
+          const idSet = new Set(organized.map((g) => g.aisleId));
+          for (const id of Object.keys(next)) {
+            if (!idSet.has(id)) delete next[id];
+          }
+          return next;
+        });
+      }
+      shopAisleDefaultsKeyRef.current = aisleIdsKey;
+    } else {
+      const prevHad = prevShopAisleHadItemsRef.current;
+      const toCollapse = [];
+      for (const g of organized) {
+        if (prevHad[g.aisleId] === true && !nextHadItems[g.aisleId]) {
+          toCollapse.push(g.aisleId);
+        }
+      }
+      if (toCollapse.length > 0) {
+        setExpandedCategories((p) => {
+          const n = { ...p };
+          for (const id of toCollapse) n[id] = false;
+          return n;
+        });
+      }
+    }
+
+    prevShopAisleHadItemsRef.current = nextHadItems;
+  }, [quickAddMode, list, aislesV2, categoriesV2]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -2129,13 +2550,29 @@ export default function App() {
     setExpandedCategories(prev => ({ ...prev, [cat]: !prev[cat] }));
   };
 
+  const handleLoginSuccess = useCallback(() => {
+    setShowLoginExplicitly(false);
+    // Login is an early return in this component; list/Shop state would otherwise persist (e.g. Account page).
+    setCurrentPage('list');
+    setQuickAddMode(false);
+  }, []);
+
   const handleSignOut = async () => {
+    setShowMenu(false);
+    setCurrentPage('list');
+    setQuickAddMode(false);
     logger.info('Auth', 'Sign out initiated');
     try {
+      await logger.flush();
+      logger.setUserId(null);
+      // Clear IndexedDB auth before signOut so onAuthStateChanged never re-adopts a stale cached user
+      await clearCachedUser();
       await firebaseSignOut(auth);
-      await clearCachedUser(); // Clear cached user on explicit logout
+      setUser(null);
+      setIsAdmin(false);
+      setHouseholdId(null);
+      setShowLoginExplicitly(true);
       logger.info('Auth', 'Sign out successful, cached user cleared');
-      setShowMenu(false);
     } catch (error) {
       logger.error('Auth', 'Sign out failed', {
         error: error.message,
@@ -2146,7 +2583,11 @@ export default function App() {
 
   // Offline-first loading: show cached data immediately if available
   // Only block if: no cached data AND (still auth loading OR not logged in)
-  const hasCachedData = localDataLoaded && (list.length > 0 || Object.keys(commonItems).length > 0);
+  const hasCachedData = localDataLoaded && (
+    list.length > 0
+    || Object.keys(aislesV2).length > 0
+    || Object.keys(categoriesV2).length > 0
+  );
   
   // We need re-auth if we are online but have no user, and we've finished checking auth
   const needsReauth = hasCachedData && !user && !authLoading && navigator.onLine;
@@ -2157,7 +2598,7 @@ export default function App() {
   const showLogin = showLoginExplicitly || (!hasCachedData && !authLoading && !user);
 
   if (showLogin) {
-    return <Login onLoginSuccess={() => setShowLoginExplicitly(false)} />;
+    return <Login onLoginSuccess={handleLoginSuccess} />;
   }
 
   // If we have cached data, show the app regardless of auth state (unless explicitly signing in)
@@ -2166,8 +2607,180 @@ export default function App() {
   } else {
     // No cached data, need to check auth
     if (authLoading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
-    if (!user) return <Login onLoginSuccess={() => setShowLoginExplicitly(false)} />;
+    if (!user) return <Login onLoginSuccess={handleLoginSuccess} />;
     if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
+  }
+
+  // --- Taxonomy v2 handlers (wired to SuggestionsEditor) ---------------------
+  const taxonomyBase = householdId ? `households/${householdId}/taxonomy` : null;
+  async function taxoRenameAisle(aisleId, name) {
+    if (!taxonomyBase) return;
+    const trimmed = (name ?? '').trim();
+    const payload = stampRecord({ name: trimmed });
+    setAislesV2(prev => ({
+      ...prev,
+      [aisleId]: stampRecord({ ...(prev[aisleId] || {}), name: trimmed }),
+    }));
+    await update(ref(database, `${taxonomyBase}/aisles/${aisleId}`), payload);
+  }
+  async function taxoAddAisle(name) {
+    if (!taxonomyBase) return;
+    const newRef = push(ref(database, `${taxonomyBase}/aisles`));
+    const order = Object.keys(aislesV2).length;
+    const trimmed = (name ?? '').trim();
+    const payload = stampRecord({ name: trimmed, order });
+    setAislesV2(prev => ({
+      ...prev,
+      [newRef.key]: stampRecord({ name: trimmed, order }),
+    }));
+    await set(newRef, payload);
+  }
+  async function taxoDeleteAisle(aisleId) {
+    if (!taxonomyBase) return;
+    const removedCategories = Object.entries(categoriesV2)
+      .filter(([, cat]) => cat?.aisleId === aisleId && !cat.hidden)
+      .map(([catId]) => catId);
+    const nextAisles = { ...aislesV2 };
+    delete nextAisles[aisleId];
+    const nextCategories = { ...categoriesV2 };
+    removedCategories.forEach((catId) => {
+      if (nextCategories[catId]) {
+        nextCategories[catId] = stampRecord({ ...nextCategories[catId], aisleId: null });
+      }
+    });
+    setAislesV2(nextAisles);
+    setCategoriesV2(nextCategories);
+    await remove(ref(database, `${taxonomyBase}/aisles/${aisleId}`));
+  }
+  async function taxoReorderAisles(orderedIds) {
+    if (!taxonomyBase) return;
+    const updates = {};
+    orderedIds.forEach((id, i) => { updates[`${taxonomyBase}/aisles/${id}`] = stampRecord({ ...(aislesV2[id] || {}), order: i }); });
+    setAislesV2(prev => {
+      const next = { ...prev };
+      orderedIds.forEach((id, i) => {
+        if (next[id]) next[id] = stampRecord({ ...next[id], order: i });
+      });
+      return next;
+    });
+    await update(ref(database), updates);
+  }
+  async function taxoRenameCategory(catId, name) {
+    if (!taxonomyBase) return;
+    const payload = stampRecord({ name });
+    setCategoriesV2(prev => ({
+      ...prev,
+      [catId]: stampRecord({ ...(prev[catId] || {}), name }),
+    }));
+    await update(ref(database, `${taxonomyBase}/categories/${catId}`), payload);
+  }
+  async function taxoAddCategory(aisleId, name) {
+    if (!taxonomyBase) return;
+    const newRef = push(ref(database, `${taxonomyBase}/categories`));
+    const payload = stampRecord({ name, aisleId, hidden: false });
+    setCategoriesV2(prev => ({
+      ...prev,
+      [newRef.key]: stampRecord({ name, aisleId, hidden: false }),
+    }));
+    await set(newRef, payload);
+  }
+  async function taxoMoveCategory(catId, aisleId) {
+    if (!taxonomyBase) return;
+    const payload = stampRecord({ aisleId, hidden: false });
+    setCategoriesV2(prev => ({
+      ...prev,
+      [catId]: stampRecord({ ...(prev[catId] || {}), aisleId, hidden: false }),
+    }));
+    await update(ref(database, `${taxonomyBase}/categories/${catId}`), payload);
+  }
+  async function taxoHideCategory(catId) {
+    if (!taxonomyBase) return;
+    const payload = stampRecord({ hidden: true, aisleId: null });
+    setCategoriesV2(prev => ({
+      ...prev,
+      [catId]: stampRecord({ ...(prev[catId] || {}), hidden: true, aisleId: null }),
+    }));
+    await update(ref(database, `${taxonomyBase}/categories/${catId}`), payload);
+  }
+  async function taxoUnhideCategory(catId, aisleId) {
+    if (!taxonomyBase) return;
+    const payload = stampRecord({ hidden: false, aisleId });
+    setCategoriesV2(prev => ({
+      ...prev,
+      [catId]: stampRecord({ ...(prev[catId] || {}), hidden: false, aisleId }),
+    }));
+    await update(ref(database, `${taxonomyBase}/categories/${catId}`), payload);
+  }
+  async function taxoDeleteCategory(catId) {
+    if (!taxonomyBase) return;
+    setCategoriesV2(prev => {
+      const next = { ...prev };
+      delete next[catId];
+      return next;
+    });
+    setVisibleItemsV2(prev => {
+      const next = { ...prev };
+      delete next[catId];
+      return next;
+    });
+    setLibraryItemsV2(prev => {
+      const next = { ...prev };
+      delete next[catId];
+      return next;
+    });
+    const updates = {
+      [`${taxonomyBase}/categories/${catId}`]: null,
+      [`${taxonomyBase}/visible-items/${catId}`]: null,
+      [`${taxonomyBase}/library/${catId}`]: null,
+    };
+    await update(ref(database), updates);
+  }
+  async function taxoRemoveLibraryItem(catId, itemId) {
+    if (!taxonomyBase || !catId || !itemId) return;
+    const lib = libraryItemsV2[catId] || [];
+    if (!lib.some(i => i.id === itemId)) return;
+    const nextLib = lib.filter(i => i.id !== itemId);
+    setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
+    await update(ref(database), {
+      [`${taxonomyBase}/library/${catId}`]: nextLib.length > 0 ? nextLib : null,
+    });
+  }
+
+  const completeOnboarding = async () => {
+    if (!householdId) return;
+    try {
+      await set(ref(database, `households/${householdId}/taxonomy/onboarding_completed`), true);
+    } catch (err) {
+      logger.error('Firebase', 'Failed to mark onboarding complete', { error: err.message });
+    }
+  };
+
+  const shouldShowOnboarding = Boolean(user) && !needsDisplayName
+    && Object.keys(aislesV2).length > 0
+    && Object.keys(categoriesV2).length > 0
+    && onboardingCompleted === false;
+
+  if (shouldShowOnboarding) {
+    return (
+      <Onboarding
+        displayName={members?.[user.uid]?.displayName}
+        aisles={aislesV2}
+        categories={categoriesV2}
+        visibleItems={visibleItemsV2}
+        libraryItems={libraryItemsV2}
+        onRenameAisle={taxoRenameAisle}
+        onAddAisle={taxoAddAisle}
+        onDeleteAisle={taxoDeleteAisle}
+        onReorderAisles={taxoReorderAisles}
+        onRenameCategory={taxoRenameCategory}
+        onAddCategory={taxoAddCategory}
+        onMoveCategory={taxoMoveCategory}
+        onHideCategory={taxoHideCategory}
+        onUnhideCategory={taxoUnhideCategory}
+        onDeleteCategory={taxoDeleteCategory}
+        onComplete={completeOnboarding}
+      />
+    );
   }
 
   return (
@@ -2268,9 +2881,14 @@ export default function App() {
           {currentPage === 'account' ? (
             <div className="max-w-2xl mx-auto px-4">
               <div className="space-y-3">
+                {householdId && (
+                  <button onClick={() => setShowHouseholdInsights(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
+                    <BarChart3 size={20} />Household Insights
+                  </button>
+                )}
                 {isAdmin && (
                   <button onClick={() => setShowAdmin(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
-                    <Shield size={20} />Admin Panel
+                    <Shield size={20} />Invite Household Members
                   </button>
                 )}
                 <button onClick={handleSignOut} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-red-500 hover:bg-red-50 transition-colors">
@@ -2366,15 +2984,14 @@ export default function App() {
               </div>
               <div className="space-y-3">
                 {organized.map(g => {
-                  const search = categorySearches[g.category] || '';
-                  const quickAddDropdown = getQuickAddDropdownItems(g.category);
-                  const uncheckedCount = list.filter(i => i.category === g.category && !i.done).length;
-                  const isExpanded = expandedCategories[g.category];
+                  const search = categorySearches[g.aisleId] || '';
+                  const quickAddDropdown = getAisleDropdownItems(g.aisleId);
+                  const isExpanded = expandedCategories[g.aisleId];
 
                   return (
-                    <div key={g.category} className={`space-y-2 bg-white border border-gray-200 rounded-2xl overflow-hidden scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                    <div key={g.aisleId} className={`space-y-2 bg-white border border-gray-200 rounded-2xl overflow-hidden scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
                       <button
-                        onClick={() => toggleCategory(g.category)}
+                        onClick={() => toggleCategory(g.aisleId)}
                         className={`w-full py-4 px-4 flex items-center gap-3 transition-colors ${
                           quickAddMode
                             ? "bg-gray-100 hover:bg-gray-200"
@@ -2390,12 +3007,7 @@ export default function App() {
                           quickAddMode
                             ? "font-bold text-gray-700 text-base"
                             : "font-semibold text-gray-500 text-sm"
-                        }`}>{g.category}</h3>
-                        {uncheckedCount > 0 && (
-                          <span className={`bg-gray-200 text-gray-700 text-xs font-bold px-2.5 py-1 rounded-full min-w-[24px] text-center scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
-                            {uncheckedCount}
-                          </span>
-                        )}
+                        }`}>{g.aisleNameDisplay}</h3>
                       </button>
 
                       {isExpanded && (
@@ -2404,14 +3016,44 @@ export default function App() {
                             <div className={`px-4 pb-3 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
                               <div className="relative">
                                 <Search className="absolute left-3 top-3 text-gray-400" size={18} />
-                                <input type="text" value={search} onChange={(e) => setCategorySearches(prev => ({ ...prev, [g.category]: e.target.value }))} placeholder={`Add to ${g.category}...`} className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors" />
+                                <input type="text" value={search} onChange={(e) => setCategorySearches(prev => ({ ...prev, [g.aisleId]: e.target.value }))} placeholder={`Add to ${g.aisleNameDisplay}...`} className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors" />
                                 {search.trim() && (
                                   <div className="absolute w-full bg-white border-2 border-gray-200 rounded-xl mt-2 shadow-lg z-10 max-h-60 overflow-y-auto">
-                                    {quickAddDropdown.map((s, i) => (
-                                      <button key={`${i}-${s}`} type="button" onClick={() => addFromSearch(g.category, s)} className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b last:border-b-0 text-sm font-medium">
-                                        {s}
-                                      </button>
-                                    ))}
+                                    {quickAddDropdown.map((s, i) => {
+                                      const showLibraryRemove = Boolean(
+                                        s.catId && s.suggestionId && s.fromVisible === false
+                                      );
+                                      const rowKey = s.suggestionId && s.catId
+                                        ? `${s.catId}-${s.suggestionId}`
+                                        : `${i}-${s.name}`;
+                                      return (
+                                        <div
+                                          key={rowKey}
+                                          className="flex items-stretch w-full border-b last:border-b-0"
+                                        >
+                                          <button
+                                            type="button"
+                                            onClick={() => addFromAisleSearch(g.aisleId, s)}
+                                            className="flex-1 min-w-0 text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium"
+                                          >
+                                            {s.name}
+                                          </button>
+                                          {showLibraryRemove ? (
+                                            <button
+                                              type="button"
+                                              className="flex-shrink-0 px-3 py-3 text-gray-400 hover:text-gray-700 hover:bg-gray-50"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                void taxoRemoveLibraryItem(s.catId, s.suggestionId);
+                                              }}
+                                              aria-label={`Remove ${s.name} from library`}
+                                            >
+                                              <X size={18} />
+                                            </button>
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 )}
                               </div>
@@ -2479,7 +3121,7 @@ export default function App() {
                                     <div key={`qa-${idx}`} className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-gray-50 transition-colors border-t border-gray-100 break-inside-avoid scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
                                       <button
                                         type="button"
-                                        onClick={() => addItem(qi.name, g.category, 'quickAdd', qi.id)}
+                                        onClick={() => addItem(qi.name, qi.catName || g.aisleName, 'quickAdd', qi.id, qi.catId)}
                                         className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
                                         style={{ backgroundColor: '#FF7A7A' }}
                                         aria-label={`Add ${qi.name} to list`}
@@ -2488,7 +3130,7 @@ export default function App() {
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => openSuggestionSheet(g.category, qi)}
+                                        onClick={() => openSuggestionSheet(qi.catName || g.aisleName, qi)}
                                         className="flex-1 text-left font-semibold text-sm"
                                         style={{ color: '#FF7A7A' }}
                                       >
@@ -2512,52 +3154,29 @@ export default function App() {
           ) : currentPage === 'history' ? (
             <PurchaseHistory householdId={householdId} />
           ) : (
-            <div className="max-w-2xl lg:max-w-6xl mx-auto px-4">
-              <div className="space-y-3">
-                {categories.map(cat => {
-                  const all = [...(commonItems[cat] || []).map(i => ({ ...i, isQuick: true })), ...(lessCommonItems[cat] || []).map(i => ({ ...i, isQuick: false }))].sort((a, b) => a.name.localeCompare(b.name));
-                  return (
-                    <div key={cat} className="bg-white rounded-2xl border-2 border-gray-200 overflow-hidden">
-                      <div className="bg-gray-100 px-4 py-4 border-b border-gray-200"><h3 className="font-bold text-gray-700 text-sm uppercase tracking-wide">{cat}</h3></div>
-                      <div className="px-4 pt-4 pb-3">
-                        <div className="flex gap-2">
-                          <input type="text" value={newItemInputs[cat] || ''} onChange={(e) => setNewItemInputs(prev => ({ ...prev, [cat]: e.target.value }))} onKeyPress={(e) => e.key === 'Enter' && addNewSuggestion(cat)} placeholder="Add new..." className="flex-1 px-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors" />
-                          <button onClick={() => addNewSuggestion(cat)} className="px-4 py-2.5 text-white rounded-xl font-semibold hover:opacity-90 transition-opacity" style={{ backgroundColor: '#FF7A7A' }}><Plus size={18} strokeWidth={2.5} /></button>
-                        </div>
-                      </div>
-                      {all.length > 0 ? (
-                        <div className="px-4 pb-4 space-y-2 md:columns-2 lg:columns-3 md:gap-4">
-                          {all.map(i => (
-                            <div key={i.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200 break-inside-avoid">
-                              {editingItemId === i.id ? (
-                                <input type="text" value={editingItemName} onChange={(e) => setEditingItemName(e.target.value)} onBlur={() => finishEditName(cat, i.id)} onKeyPress={(e) => e.key === 'Enter' && finishEditName(cat, i.id)} className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg text-sm font-medium" autoFocus />
-                              ) : (
-                                <>
-                                  <span className="flex-1 font-medium text-sm text-gray-800">{i.name}</span>
-                                  <button onClick={() => { setEditingItemId(i.id); setEditingItemName(i.name); }} className="text-gray-400 hover:text-gray-600 p-1 transition-colors"><Edit2 size={16} /></button>
-                                </>
-                              )}
-                              <label className="flex items-center gap-2 cursor-pointer">
-                                <span className="text-xs text-gray-500 font-semibold">Quick</span>
-                                <button onClick={() => toggleQuickAdd(cat, i.id)} className={`w-11 h-6 rounded-full relative transition-colors`} style={{ backgroundColor: i.isQuick ? '#FF7A7A' : '#D1D5DB' }}>
-                                  <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${i.isQuick ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                                </button>
-                              </label>
-                              <button onClick={() => deleteSuggestion(cat, i.id)} className="text-red-400 hover:text-red-600 p-1 transition-colors"><Trash2 size={18} /></button>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="px-4 pb-4"><div className="text-center py-6 text-gray-400 text-sm italic">No suggestions</div></div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <SuggestionsEditor
+              aisles={aislesV2}
+              categories={categoriesV2}
+              visibleItems={visibleItemsV2}
+              libraryItems={libraryItemsV2}
+              onRenameAisle={taxoRenameAisle}
+              onAddAisle={taxoAddAisle}
+              onDeleteAisle={taxoDeleteAisle}
+              onReorderAisles={taxoReorderAisles}
+              onRenameCategory={taxoRenameCategory}
+              onAddCategory={taxoAddCategory}
+              onMoveCategory={taxoMoveCategory}
+              onHideCategory={taxoHideCategory}
+              onUnhideCategory={taxoUnhideCategory}
+              onDeleteCategory={taxoDeleteCategory}
+              accordionAisles
+            />
           )}
         </div>
       </div>
+      {showHouseholdInsights && householdId && (
+        <InsightsModal householdId={householdId} onClose={() => setShowHouseholdInsights(false)} />
+      )}
       {showAdmin && isAdmin && <AdminPanel householdId={householdId} onClose={() => setShowAdmin(false)} />}
       {showDeleteAccount && user && (
         <DeleteAccountModal
@@ -2580,6 +3199,8 @@ export default function App() {
           item={selectedItem}
           members={members}
           lastPurchasedTs={selectedItemLastPurchased}
+          aisles={aislesV2}
+          categories={categoriesV2}
           onClose={() => setSelectedItem(null)}
         />
       )}

@@ -1,7 +1,7 @@
 # Technical Design Document (TDD)
 
 > **Status:** Living document — updated as architecture evolves
-> **Last updated:** 2026-04-14
+> **Last updated:** 2026-04-14 (taxonomy redesign: aisles + user-editable categories + library)
 
 ---
 
@@ -103,15 +103,25 @@ This is a pragmatic split, not an architectural preference for polyglot persiste
 │   ├── usedBy: string (email, set when used)
 │   └── usedAt: number (timestamp, set when used)
 │
-├── shopping-list: Array<{id, itemKey, name, category, quantity?, done, addedBy?, addedAt?}>
+├── households/{householdId}/shopping-list: Array<{id, itemKey, name, category, quantity?, done, addedBy?, addedAt?}>
 │
-├── shopping-history: Array<string> (item names)
+├── households/{householdId}/meta/quantityDefaults: Record<string, string>
 │
-├── meta/quantityDefaults: Record<string, string> (last used quantity by normalized item name)
+├── households/{householdId}/taxonomy/
+│   ├── migrated: boolean (flag — bootstrap/migration ran)
+│   ├── migrated_at: number (server timestamp)
+│   ├── aisles/{aisleId}: { name, order }
+│   │   (order is the user-controlled walk-the-store ordering; persisted, not derived)
+│   ├── categories/{categoryId}: { name, aisleId | null, hidden: boolean }
+│   │   (aisleId is null iff hidden=true; hidden categories live in a global page-bottom section)
+│   ├── visible-items/{categoryId}: Array<{id, name}>
+│   │   (items rendered as quick-add tiles in Add mode for that category)
+│   └── library/{categoryId}: Array<{id, name}>
+│       (autocomplete pool for that category — seed unstarred + history + previously-removed items)
 │
-├── common-items/{encodedCategory}: Array<{id, name}>
-│
-├── less-common-items/{encodedCategory}: Array<{id, name}>
+│   All v2 taxonomy data lives under a single `taxonomy/` namespace so it
+│   cannot collide with the legacy `categories`, `common-items`, and
+│   `less-common-items` siblings during the rollout window.
 │
 ├── households/{householdId}/members/{uid}
 │   ├── displayName: string
@@ -160,7 +170,7 @@ User records and logs are **per-user** (keyed by UID).
 
 Firebase Realtime Database key paths cannot contain: `.`, `#`, `$`, `[`, `]`, `/`
 
-Several category names contain these characters (e.g., "PHARMACY / OTC", "RANCH 99 / WEEE / BERKELEY BOWL").
+Categories are now user-editable, so display names may legitimately contain any of those characters. To avoid encoding entirely, `visible-items` and `library` are keyed by **category id** (a stable push-id), not by name. The encoding helpers below remain for legacy data and for any debugging path that uses display names.
 
 ### Solution
 
@@ -235,6 +245,15 @@ All state lives in React hooks within the main `App` component. No external stat
 - Suggestion rows use a split interaction model: the `+` button adds immediately, while tapping the row body opens the bottom sheet.
 - The bottom sheet for suggestions exposes an explicit add action so users can review the item before adding it.
 
+### Item Bottom Sheet: Advanced Suggestion Config
+
+- `ItemBottomSheet` accepts `aisles` and `categories` props plus a per-open `suggestionConfig` attached to the item (only present when opened via `openSuggestionSheet`).
+- `suggestionConfig` carries `{ categoryId, aisleId, onMove(toCatId), onRemove() }`. Both handlers close the sheet on success.
+- `moveSuggestionToCategory(suggestionId, fromCatId, toCatId)` in `App.jsx` performs a single multi-path RTDB `update()` across `taxonomy/visible-items/{fromCatId}` / `{toCatId}` and `taxonomy/library/{fromCatId}` / `{toCatId}`. The item preserves its visible-vs-library bucket on move. If an item with the same (case-insensitive) name already exists at the destination, the source entry is deleted and no new entry is created at the destination.
+- `removeSuggestionEverywhere(suggestionId, catId)` deletes the item from both `visible-items` and `library` under its current category in a single `update()`.
+- The advanced panel holds draft aisle/category state locally; it does not touch RTDB until Save. Cancel and backdrop tap discard silently.
+- The sheet no longer renders a trailing Save button for name/quantity; those fields commit on blur and on close via existing handlers (`updateItemName`, `updateQuantity`, `renameTaxonomySuggestionById`, `updateSuggestionQuantity`).
+
 ### Item Identity
 
 - Shopping list rows now carry a stable `itemKey` separate from the editable display name.
@@ -249,8 +268,10 @@ All state lives in React hooks within the main `App` component. No external stat
 | `isAdmin` | boolean | Firestore query | Whether user has admin privileges |
 | `list` | array | Realtime DB + IndexedDB | Current shopping list items |
 | `history` | Set | Realtime DB + IndexedDB | Previously added item names |
-| `commonItems` | object | Realtime DB + IndexedDB | Common suggestion items by category |
-| `lessCommonItems` | object | Realtime DB + IndexedDB | Less-common suggestion items by category |
+| `aisles` | array | Realtime DB + IndexedDB | Ordered aisle list (id, name, order) |
+| `categories` | array | Realtime DB + IndexedDB | Categories with aisle assignment + hidden flag |
+| `visibleItems` | object | Realtime DB + IndexedDB | Visible (quick-add) items keyed by category id |
+| `libraryItems` | object | Realtime DB + IndexedDB | Autocomplete library keyed by category id |
 | `quickAddMode` | boolean | local | Whether Add mode is active (vs Shop mode) |
 | `expandedCategories` | Set | local | Which categories are expanded |
 | `currentPage` | string | local | Current page ('list' or 'edit') |
@@ -318,9 +339,10 @@ Defined in `src/offlineStorage.js`:
 | Store | Key | Contents |
 |---|---|---|
 | `shoppingList` | `'current'` | Full shopping list array |
-| `shoppingHistory` | `'current'` | History array |
-| `commonItems` | category name | Items array per category |
-| `lessCommonItems` | category name | Items array per category |
+| `aisles` | `'current'` | Ordered aisle list |
+| `categories` | `'current'` | Categories with aisle assignment + hidden flag |
+| `visibleItems` | category id | Visible items array per category |
+| `libraryItems` | category id | Library/autocomplete items array per category |
 | `syncQueue` | auto-increment | Queued offline operations |
 | `meta` | `'lastSync'`, `'cachedUser'` | Sync timestamps, cached auth |
 
@@ -439,8 +461,10 @@ The logger automatically captures (no explicit calls needed):
 | `/inviteCodes` | Any authenticated user | Any authenticated user (unused codes only) |
 | `/shopping-list` | Any authenticated user | Any authenticated user |
 | `/shopping-history` | Any authenticated user | Any authenticated user |
-| `/common-items` | Any authenticated user | Any authenticated user |
-| `/less-common-items` | Any authenticated user | Any authenticated user |
+| `/households/{hid}/aisles` | Household members | Household members |
+| `/households/{hid}/categories` | Household members | Household members |
+| `/households/{hid}/visible-items` | Household members | Household members |
+| `/households/{hid}/library` | Household members | Household members |
 | `/logs` (root) | Admin only (isFirstUser) | — |
 | `/logs/{uid}` | Owner only | Owner only |
 
@@ -553,7 +577,19 @@ On load, if items are detected in the old string format, `migrateItems()` conver
 
 ### Default Item Seeding
 
-When the app detects no common items in Firebase (first-time setup), it seeds from the `DEFAULT_ITEMS` constant. This provides a useful starting set of suggestions without requiring manual setup.
+When a new household is created, the app seeds `aisles`, `categories`, `visible-items`, and `library` from the seed catalog (`SEED_AISLES`, `SEED_CATEGORIES`, `SEED_ITEMS`). The catalog marks ~50 of ~300 items as visible-by-default; the rest are seeded into the library for autocomplete.
+
+### Common-items / Less-common-items / History → Library Migration
+
+For existing households, a one-time migration converts the legacy `common-items`, `less-common-items`, and `shopping-history` paths into the new `aisles` / `categories` / `visible-items` / `library` shape:
+
+1. Materialize a `categories` array from the existing distinct category names. Assign each to a default aisle using a name-based mapping table (with anything unmatched grouped under a "MISC" aisle the user can clean up).
+2. Move all `common-items[cat]` entries into `visible-items[catId]`.
+3. Merge `less-common-items[cat]` entries plus `shopping-history` names that aren't already visible into `library[catId]`. History entries with no known category land under "MISC".
+4. Generate aisle ordering from the seed default for any aisles that match by name; user-added or unmatched aisles append to the end.
+5. Leave the legacy paths in place for one release as a rollback safety net, then delete in a follow-up cleanup script.
+
+Migration runs server-side (Node script in `scripts/`), one-time per household, gated by a `migration.taxonomy_v2: true` flag on the household record.
 
 ### Category Encoding Migration
 

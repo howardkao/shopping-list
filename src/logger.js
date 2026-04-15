@@ -40,6 +40,9 @@ const DB_VERSION = 1;
 const LOG_STORE = 'logs';
 
 let logDB = null;
+/** After a failed open or repeated write errors, skip IndexedDB for the rest of the session (avoids console spam). */
+let localLogsIdbDisabled = false;
+let localLogsIdbWarned = false;
 let currentUserId = null;
 let logListeners = [];
 
@@ -47,18 +50,30 @@ let logListeners = [];
 const LOG_RETENTION_DAYS = 30;
 const LOG_RETENTION_MS = LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
+function warnLocalLogsIdbOnce(message, error) {
+  if (localLogsIdbWarned) return;
+  localLogsIdbWarned = true;
+  console.warn(
+    `[shopping-list] ${message} Remote logging to Firebase may still work when signed in.`,
+    error?.message || error
+  );
+}
+
 /**
  * Initialize the logging database
+ * @returns {Promise<IDBDatabase | null>}
  */
 async function initLogDB() {
+  if (localLogsIdbDisabled) return null;
   if (logDB) return logDB;
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = () => {
-      console.error('Failed to open logs IndexedDB:', request.error);
-      reject(request.error);
+      localLogsIdbDisabled = true;
+      warnLocalLogsIdbOnce('IndexedDB for logs is unavailable; local log persistence is disabled.', request.error);
+      resolve(null);
     };
 
     request.onsuccess = () => {
@@ -86,11 +101,13 @@ async function initLogDB() {
  * Save log entry to IndexedDB
  */
 async function saveLogLocally(entry) {
+  if (localLogsIdbDisabled) return;
   try {
-    await initLogDB();
+    const db = await initLogDB();
+    if (!db) return;
 
-    return new Promise((resolve, reject) => {
-      const transaction = logDB.transaction(LOG_STORE, 'readwrite');
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(LOG_STORE, 'readwrite');
       const store = transaction.objectStore(LOG_STORE);
       const request = store.add(entry);
 
@@ -98,8 +115,8 @@ async function saveLogLocally(entry) {
       request.onerror = () => reject(request.error);
     });
   } catch (error) {
-    // Don't throw - logging should never break the app
-    console.error('Failed to save log locally:', error);
+    localLogsIdbDisabled = true;
+    warnLocalLogsIdbOnce('IndexedDB log save failed; local log persistence is disabled for this session.', error);
   }
 }
 
@@ -157,6 +174,13 @@ async function flushLogBatch() {
     }
   } catch (error) {
     // Don't throw - logging should never break the app
+    const denied =
+      error?.code === 'PERMISSION_DENIED' ||
+      String(error?.message || '').includes('PERMISSION_DENIED');
+    if (denied) {
+      // Auth cleared or rules reject write — retrying would loop forever
+      return;
+    }
     console.error('Failed to flush log batch to Firebase:', error);
     // Put logs back in batch for retry
     logBatch.unshift(...logsToSend);
@@ -274,6 +298,15 @@ export const logger = {
    * Set the current user ID (for Firebase logging)
    */
   setUserId: (userId) => {
+    if (!userId) {
+      if (batchFlushTimer) {
+        clearTimeout(batchFlushTimer);
+        batchFlushTimer = null;
+      }
+      logBatch.length = 0;
+      currentUserId = null;
+      return;
+    }
     currentUserId = userId;
     logger.info('Logger', 'User ID set', { userId, sessionId: SESSION_ID });
 
@@ -316,10 +349,11 @@ export const logger = {
    */
   getLocalLogs: async (limit = 1000) => {
     try {
-      await initLogDB();
+      const db = await initLogDB();
+      if (!db) return [];
 
       return new Promise((resolve, reject) => {
-        const transaction = logDB.transaction(LOG_STORE, 'readonly');
+        const transaction = db.transaction(LOG_STORE, 'readonly');
         const store = transaction.objectStore(LOG_STORE);
         const index = store.index('timestamp');
         const request = index.openCursor(null, 'prev'); // Newest first
@@ -337,7 +371,8 @@ export const logger = {
         request.onerror = () => reject(request.error);
       });
     } catch (error) {
-      console.error('Failed to get local logs:', error);
+      localLogsIdbDisabled = true;
+      warnLocalLogsIdbOnce('Could not read logs from IndexedDB.', error);
       return [];
     }
   },
@@ -383,11 +418,12 @@ export const logger = {
    */
   clearOldLogs: async (daysToKeep = LOG_RETENTION_DAYS) => {
     try {
-      await initLogDB();
+      const db = await initLogDB();
+      if (!db) return 0;
       const cutoffTime = Date.now() - (daysToKeep * 24 * 60 * 60 * 1000);
 
       return new Promise((resolve, reject) => {
-        const transaction = logDB.transaction(LOG_STORE, 'readwrite');
+        const transaction = db.transaction(LOG_STORE, 'readwrite');
         const store = transaction.objectStore(LOG_STORE);
         const index = store.index('timestamp');
         const request = index.openCursor(IDBKeyRange.upperBound(cutoffTime));
@@ -409,7 +445,9 @@ export const logger = {
         request.onerror = () => reject(request.error);
       });
     } catch (error) {
-      console.error('Failed to clear old logs:', error);
+      localLogsIdbDisabled = true;
+      warnLocalLogsIdbOnce('Could not clear old logs from IndexedDB.', error);
+      return 0;
     }
   },
 
@@ -430,8 +468,8 @@ export const logger = {
   }
 };
 
-// Initialize logging DB on load
-initLogDB().catch(() => {});
+// Initialize logging DB on load (failure is handled inside initLogDB)
+void initLogDB();
 
 // Log startup
 logger.info('App', 'Application started', {

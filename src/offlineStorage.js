@@ -4,30 +4,44 @@
  */
 
 const DB_NAME = 'shopping-list-offline';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORES = {
   SHOPPING_LIST: 'shoppingList',
-  SHOPPING_HISTORY: 'shoppingHistory',
-  COMMON_ITEMS: 'commonItems',
-  LESS_COMMON_ITEMS: 'lessCommonItems',
   SYNC_QUEUE: 'syncQueue',
   META: 'meta'
 };
+const DROPPED_STORES = ['shoppingHistory', 'commonItems', 'lessCommonItems'];
 
 let db = null;
+/** After a failed open, skip IndexedDB for the rest of the session (avoids console spam on every save). */
+let offlineIdbDisabled = false;
+let offlineIdbWarned = false;
+
+function warnOfflineIdbOnce(error) {
+  if (offlineIdbWarned) return;
+  offlineIdbWarned = true;
+  console.warn(
+    '[shopping-list] IndexedDB unavailable; offline cache is disabled until you reload the tab.',
+    error?.message || error
+  );
+}
 
 /**
  * Initialize the IndexedDB database
+ * @returns {Promise<IDBDatabase | null>}
  */
 export async function initOfflineDB() {
+  if (offlineIdbDisabled) return null;
   if (db) return db;
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = () => {
-      console.error('Failed to open IndexedDB:', request.error);
-      reject(request.error);
+      offlineIdbDisabled = true;
+      db = null;
+      warnOfflineIdbOnce(request.error);
+      resolve(null);
     };
 
     request.onsuccess = () => {
@@ -38,27 +52,10 @@ export async function initOfflineDB() {
     request.onupgradeneeded = (event) => {
       const database = event.target.result;
 
-      // Store for shopping list items
       if (!database.objectStoreNames.contains(STORES.SHOPPING_LIST)) {
         database.createObjectStore(STORES.SHOPPING_LIST, { keyPath: 'key' });
       }
 
-      // Store for shopping history
-      if (!database.objectStoreNames.contains(STORES.SHOPPING_HISTORY)) {
-        database.createObjectStore(STORES.SHOPPING_HISTORY, { keyPath: 'key' });
-      }
-
-      // Store for common items by category
-      if (!database.objectStoreNames.contains(STORES.COMMON_ITEMS)) {
-        database.createObjectStore(STORES.COMMON_ITEMS, { keyPath: 'category' });
-      }
-
-      // Store for less common items by category
-      if (!database.objectStoreNames.contains(STORES.LESS_COMMON_ITEMS)) {
-        database.createObjectStore(STORES.LESS_COMMON_ITEMS, { keyPath: 'category' });
-      }
-
-      // Store for queued operations to sync when back online
       if (!database.objectStoreNames.contains(STORES.SYNC_QUEUE)) {
         const syncStore = database.createObjectStore(STORES.SYNC_QUEUE, {
           keyPath: 'id',
@@ -67,9 +64,12 @@ export async function initOfflineDB() {
         syncStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
 
-      // Store for metadata (last sync time, etc.)
       if (!database.objectStoreNames.contains(STORES.META)) {
         database.createObjectStore(STORES.META, { keyPath: 'key' });
+      }
+
+      for (const name of DROPPED_STORES) {
+        if (database.objectStoreNames.contains(name)) database.deleteObjectStore(name);
       }
     };
   });
@@ -79,10 +79,11 @@ export async function initOfflineDB() {
  * Get a value from the specified store
  */
 async function getFromStore(storeName, key) {
-  await initOfflineDB();
+  const database = await initOfflineDB();
+  if (!database) return undefined;
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readonly');
+    const transaction = database.transaction(storeName, 'readonly');
     const store = transaction.objectStore(storeName);
     const request = store.get(key);
 
@@ -95,10 +96,11 @@ async function getFromStore(storeName, key) {
  * Save a value to the specified store
  */
 async function saveToStore(storeName, key, data) {
-  await initOfflineDB();
+  const database = await initOfflineDB();
+  if (!database) return;
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readwrite');
+    const transaction = database.transaction(storeName, 'readwrite');
     const store = transaction.objectStore(storeName);
     const request = store.put({ key, data, updatedAt: Date.now() });
 
@@ -117,7 +119,8 @@ export async function saveShoppingListLocally(items) {
       shoppingList: Date.now()
     });
   } catch (error) {
-    console.error('Failed to save shopping list locally:', error);
+    offlineIdbDisabled = true;
+    warnOfflineIdbOnce(error);
   }
 }
 
@@ -126,110 +129,12 @@ export async function saveShoppingListLocally(items) {
  */
 export async function loadShoppingListLocally() {
   try {
-    return await getFromStore(STORES.SHOPPING_LIST, 'current');
+    return await getFromStore(STORES.SHOPPING_LIST, 'current') ?? null;
   } catch (error) {
-    console.error('Failed to load shopping list locally:', error);
+    offlineIdbDisabled = true;
+    warnOfflineIdbOnce(error);
     return null;
   }
-}
-
-/**
- * Save shopping history to local storage
- */
-export async function saveShoppingHistoryLocally(history) {
-  try {
-    await saveToStore(STORES.SHOPPING_HISTORY, 'current', history);
-  } catch (error) {
-    console.error('Failed to save shopping history locally:', error);
-  }
-}
-
-/**
- * Load shopping history from local storage
- */
-export async function loadShoppingHistoryLocally() {
-  try {
-    return await getFromStore(STORES.SHOPPING_HISTORY, 'current');
-  } catch (error) {
-    console.error('Failed to load shopping history locally:', error);
-    return null;
-  }
-}
-
-/**
- * Save common items for a category to local storage
- */
-export async function saveCommonItemsLocally(category, items) {
-  await initOfflineDB();
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.COMMON_ITEMS, 'readwrite');
-    const store = transaction.objectStore(STORES.COMMON_ITEMS);
-    const request = store.put({ category, items, updatedAt: Date.now() });
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-}
-
-/**
- * Load all common items from local storage
- */
-export async function loadAllCommonItemsLocally() {
-  await initOfflineDB();
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.COMMON_ITEMS, 'readonly');
-    const store = transaction.objectStore(STORES.COMMON_ITEMS);
-    const request = store.getAll();
-
-    request.onsuccess = () => {
-      const result = {};
-      for (const item of request.result || []) {
-        result[item.category] = item.items;
-      }
-      resolve(result);
-    };
-    request.onerror = () => reject(request.error);
-  });
-}
-
-/**
- * Save less common items for a category to local storage
- */
-export async function saveLessCommonItemsLocally(category, items) {
-  await initOfflineDB();
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.LESS_COMMON_ITEMS, 'readwrite');
-    const store = transaction.objectStore(STORES.LESS_COMMON_ITEMS);
-    const request = store.put({ category, items, updatedAt: Date.now() });
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-}
-
-/**
- * Load all less common items from local storage
- */
-export async function loadAllLessCommonItemsLocally() {
-  await initOfflineDB();
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.LESS_COMMON_ITEMS, 'readonly');
-    const store = transaction.objectStore(STORES.LESS_COMMON_ITEMS);
-    const request = store.getAll();
-
-    request.onsuccess = () => {
-      const result = {};
-      for (const item of request.result || []) {
-        result[item.category] = item.items;
-      }
-      resolve(result);
-    };
-    request.onerror = () => reject(request.error);
-  });
 }
 
 /**
@@ -251,7 +156,8 @@ export async function saveQuantityDefaultsLocally(quantityDefaults) {
   try {
     await saveToStore(STORES.META, 'quantityDefaults', quantityDefaults);
   } catch (error) {
-    console.error('Failed to save quantity defaults locally:', error);
+    offlineIdbDisabled = true;
+    warnOfflineIdbOnce(error);
   }
 }
 
@@ -260,9 +166,10 @@ export async function saveQuantityDefaultsLocally(quantityDefaults) {
  */
 export async function loadQuantityDefaultsLocally() {
   try {
-    return await getFromStore(STORES.META, 'quantityDefaults');
+    return await getFromStore(STORES.META, 'quantityDefaults') ?? null;
   } catch (error) {
-    console.error('Failed to load quantity defaults locally:', error);
+    offlineIdbDisabled = true;
+    warnOfflineIdbOnce(error);
     return null;
   }
 }
@@ -271,10 +178,11 @@ export async function loadQuantityDefaultsLocally() {
  * Queue an operation for sync when back online
  */
 export async function queueSyncOperation(operation) {
-  await initOfflineDB();
+  const database = await initOfflineDB();
+  if (!database) return undefined;
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.SYNC_QUEUE, 'readwrite');
+    const transaction = database.transaction(STORES.SYNC_QUEUE, 'readwrite');
     const store = transaction.objectStore(STORES.SYNC_QUEUE);
     const request = store.add({
       ...operation,
@@ -290,10 +198,11 @@ export async function queueSyncOperation(operation) {
  * Get all queued sync operations
  */
 export async function getQueuedSyncOperations() {
-  await initOfflineDB();
+  const database = await initOfflineDB();
+  if (!database) return [];
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.SYNC_QUEUE, 'readonly');
+    const transaction = database.transaction(STORES.SYNC_QUEUE, 'readonly');
     const store = transaction.objectStore(STORES.SYNC_QUEUE);
     const request = store.getAll();
 
@@ -306,10 +215,11 @@ export async function getQueuedSyncOperations() {
  * Clear a sync operation after successful sync
  */
 export async function clearSyncOperation(id) {
-  await initOfflineDB();
+  const database = await initOfflineDB();
+  if (!database) return;
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.SYNC_QUEUE, 'readwrite');
+    const transaction = database.transaction(STORES.SYNC_QUEUE, 'readwrite');
     const store = transaction.objectStore(STORES.SYNC_QUEUE);
     const request = store.delete(id);
 
@@ -322,10 +232,11 @@ export async function clearSyncOperation(id) {
  * Clear all sync operations
  */
 export async function clearAllSyncOperations() {
-  await initOfflineDB();
+  const database = await initOfflineDB();
+  if (!database) return;
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.SYNC_QUEUE, 'readwrite');
+    const transaction = database.transaction(STORES.SYNC_QUEUE, 'readwrite');
     const store = transaction.objectStore(STORES.SYNC_QUEUE);
     const request = store.clear();
 
@@ -346,10 +257,11 @@ export async function hasPendingSyncOperations() {
  * Save cached user info (for offline-first auth)
  */
 export async function saveCachedUser(userInfo) {
-  await initOfflineDB();
+  const database = await initOfflineDB();
+  if (!database) return;
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.META, 'readwrite');
+    const transaction = database.transaction(STORES.META, 'readwrite');
     const store = transaction.objectStore(STORES.META);
     const request = store.put({
       key: 'cachedUser',
@@ -367,9 +279,11 @@ export async function saveCachedUser(userInfo) {
  */
 export async function loadCachedUser() {
   try {
-    await initOfflineDB();
+    const database = await initOfflineDB();
+    if (!database) return null;
+
     return new Promise((resolve, reject) => {
-      const transaction = db.transaction(STORES.META, 'readonly');
+      const transaction = database.transaction(STORES.META, 'readonly');
       const store = transaction.objectStore(STORES.META);
       const request = store.get('cachedUser');
       request.onsuccess = () => {
@@ -383,30 +297,33 @@ export async function loadCachedUser() {
       request.onerror = () => reject(request.error);
     });
   } catch (error) {
-    console.error('Failed to load cached user:', error);
+    offlineIdbDisabled = true;
+    warnOfflineIdbOnce(error);
     return null;
   }
 }
 
 /**
- * Save categories list to local storage
+ * Save the v2 taxonomy snapshot to local storage.
  */
-export async function saveCategoriesToLocally(categories) {
+export async function saveTaxonomyV2Locally(taxonomy) {
   try {
-    await saveToStore(STORES.META, 'categories', categories);
+    await saveToStore(STORES.META, 'taxonomyV2', taxonomy);
   } catch (error) {
-    console.error('Failed to save categories locally:', error);
+    offlineIdbDisabled = true;
+    warnOfflineIdbOnce(error);
   }
 }
 
 /**
- * Load categories list from local storage
+ * Load the v2 taxonomy snapshot from local storage.
  */
-export async function loadCategoriesLocally() {
+export async function loadTaxonomyV2Locally() {
   try {
-    return await getFromStore(STORES.META, 'categories');
+    return await getFromStore(STORES.META, 'taxonomyV2') ?? null;
   } catch (error) {
-    console.error('Failed to load categories locally:', error);
+    offlineIdbDisabled = true;
+    warnOfflineIdbOnce(error);
     return null;
   }
 }
@@ -415,10 +332,11 @@ export async function loadCategoriesLocally() {
  * Clear cached user info (on explicit logout)
  */
 export async function clearCachedUser() {
-  await initOfflineDB();
+  const database = await initOfflineDB();
+  if (!database) return;
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORES.META, 'readwrite');
+    const transaction = database.transaction(STORES.META, 'readwrite');
     const store = transaction.objectStore(STORES.META);
     const request = store.delete('cachedUser');
 

@@ -1,7 +1,7 @@
 # Product Requirements Document (PRD)
 
 > **Status:** Living document — updated as features evolve
-> **Last updated:** 2026-04-14
+> **Last updated:** 2026-04-14 (taxonomy redesign: aisle→category→item, single-tier visible + library, onboarding flow)
 
 ---
 
@@ -61,7 +61,7 @@ Each item on the list has:
 - `id` — unique identifier
 - `itemKey` — stable identity separate from the display name
 - `name` — display name
-- `category` — one of the predefined categories
+- `category` — the category the item belongs to (categories are user-editable; see §6)
 - `quantity` — numeric quantity (default 1)
 - `done` — boolean checked-off state
 - `addedBy` — uid of the user who added the item (nullable for legacy items)
@@ -103,8 +103,19 @@ Each item on the list has:
 - Tap an item name to open a slide-up bottom sheet with item metadata
 - Shows "Added by {name} {timestamp}" (who added the item and when)
 - Shows "Last purchased {relative time}" derived from item-events (most recent `checked` event)
+- Name and quantity commit on blur and on close; there is no explicit save button on the sheet itself
 - Dismissed by tapping the backdrop
 - Checkbox and quantity tap targets remain unaffected
+
+#### Advanced configuration (Add-mode suggestions only)
+
+- When the sheet is opened for a suggestion tile, a muted breadcrumb row appears below the metadata: `AISLE › Category` with a pencil icon
+- Tapping the breadcrumb row expands an inline advanced-config panel in place (not a separate page)
+- The panel exposes: an aisle dropdown, a category dropdown (filtered by the selected aisle), and a destructive "Remove from suggestions" action with a two-step confirmation
+- The panel has its own explicit **Save** and **Cancel** buttons — advanced edits do not save on blur
+- Save commits a category move (preserving the item's visible-vs-library bucket) and closes the sheet; Cancel (or backdrop tap) discards the advanced draft silently
+- Removing from suggestions deletes the item from both `visible-items` and `library` under its current category and closes the sheet
+- List-item sheets (opened from a shopping-list row) do not show the advanced panel
 
 ### Real-Time Sync
 
@@ -116,78 +127,161 @@ Each item on the list has:
 
 ## 4. Item Suggestion System
 
-### Two-Tier Organization
+### Single-Tier Visibility Model
 
-Items are organized into two visibility tiers per category:
+Each category has one set of **visible items** — every visible item appears as a quick-add tile in Add mode. There is no second "less common" tier.
 
+Behind the visible items is the **library**: a per-household pool of every item the autocomplete knows about. The library contains:
 
-| Tier                  | Purpose                      | Visibility in Add Mode                                 |
-| --------------------- | ---------------------------- | ------------------------------------------------------ |
-| **Common items**      | Frequently purchased items   | Always shown as quick-add buttons                      |
-| **Less-common items** | Occasionally purchased items | Hidden by default; shown via "Show less common" toggle |
+- Seed items not initially marked as visible (the unstarred entries in the seed catalog)
+- Items the user has previously added to the shopping list (legacy "history" merges into the library)
+- Items the user has previously made visible and then removed from a category
 
+The library is never displayed as tiles. It surfaces only through autocomplete, both in the Add page search bar and in the Settings → Suggestions editor.
 
-### Default Items
+### Shop / Add mode layout
 
-On first setup (when no items exist in Firebase), the app seeds each category with a set of default common items. These defaults are hardcoded in the app as a starting point.
+The shopping list groups by **aisle**, not by category. Category names are not shown in Shop or Add mode — the aisle is the only heading the shopper sees. Within an aisle, list items and (in Add mode) visible-item tiles from every category in that aisle are flattened and alphabetized together. The per-aisle search bar autocompletes against the union of visible + library items across every category in that aisle; when the user selects a suggestion, the item is filed under its correct category behind the scenes. A novel typed name routes to the aisle's first category.
+
+Categories are still first-class in Settings (they govern item grouping for promotion / move / hide / delete), but they are deliberately invisible during shopping to keep the list scannable.
+
+### Promotion / Demotion
+
+- A library item becomes **visible** when the user adds it through the Settings editor's autocomplete (or types a brand-new name there).
+- A visible item becomes **library-only** when the user removes it from the visible set in the editor. Its autocomplete entry is preserved.
+
+### Default Items (seed)
+
+On first setup, each seed category is populated from a curated catalog of ~300 items. ~50 of these are marked as visible-by-default; the remaining ~250 are seeded into the library so autocomplete works on day one without surfacing 300 tiles.
 
 ### Item Structure (suggestions)
 
-Each suggestion item has:
+Visible items and library entries share the same shape:
 
 - `id` — unique identifier
 - `name` — display name
-
-### Shopping History
-
-- When an item is added to the shopping list, its name is recorded in a history set
-- History items appear as search suggestions, even if they're not in the common/less-common lists
-- History persists across sessions
+- `category` — the category the item belongs to (library entries also carry this so autocomplete can place them on add)
 
 ---
 
-## 5. Edit Suggestions Page
+## 5. Settings → Suggestions Page (Aisle & Category Editor)
 
-A dedicated page for managing the suggestion items that appear in Add Mode.
+A dedicated page for managing the household's aisles, categories, and visible items. The same component is used in onboarding step 2 (with wizard chrome and reorder mode on by default) and as the standalone Settings page (without chrome, reorder mode off by default).
 
-### Features
+### Layout
 
-- Accessible via navigation (separate from the shopping list page)
-- Shows all categories with their common and less-common items
-- **Add items** — add new items to any category (common or less-common tier)
-- **Edit items** — rename existing items inline
-- **Delete items** — remove items from suggestions
-- **Toggle tier** — move items between common and less-common
-- Items sorted alphabetically within each category
-- Changes sync to Firebase in real time
+- All aisles render as collapsed rows in current order, with a category-count badge per aisle.
+- A "Hidden categories ({N})" section sits at the page bottom, omitted when empty.
+- A **+ Add aisle** action sits below the aisle list.
+
+### Aisle interactions
+
+- Tap an aisle row to expand it inline; categories appear underneath.
+- Inline rename via tapping the aisle name when expanded.
+- Overflow `⋯` menu offers *Rename* and *Delete aisle*. Delete is disabled while the aisle still contains categories — its tooltip directs the user to move or delete those categories first.
+- Aisles can be deleted outright. There is no "hidden aisle" state.
+
+### Aisle reordering
+
+- Reorder is gated behind a "Reorder aisles" mode. In Settings, the mode is off by default and toggled via a header button. In onboarding, the mode is on by default with framing copy that explains why ordering matters ("drag aisles into the order you walk your store").
+- In reorder mode, every aisle row shows a drag handle, all aisles auto-collapse, and tap-to-expand and overflow are suppressed.
+- Reorder is never required to advance through onboarding — the seed order is a reasonable default.
+
+### Category interactions
+
+- Tap a category row to expand it inline to the visible-items editor.
+- Inline rename via tapping the category name when expanded.
+- Overflow `⋯` menu:
+  - *Rename*
+  - *Move to…* opens a sheet listing all aisles (current aisle disabled). One-time copy at the top of the sheet notes that categories don't remember their original aisle.
+  - *Hide category* — single tap, no confirmation. Moves the category out of its aisle into the page-bottom Hidden section. Item data is preserved while hidden.
+- Categories cannot be deleted directly. They must first be hidden.
+
+### Visible-items editor (expanded category)
+
+- A wrapped grid of pill chips, one per visible item. Each chip has the item name and a small `×` that demotes it to library-only.
+- A single **Add an item…** input below the grid.
+  - Typing autocompletes against the library.
+  - Tapping a suggestion adds it as a visible chip.
+  - Typing a brand-new name and pressing Enter creates the item, adds it to the visible chips, and adds it to the library.
+- Empty-state copy: "No suggestions yet. Add some above."
+
+### Hidden categories section
+
+- Each hidden category row has an overflow `⋯` with:
+  - *Unhide* — opens a "Move to aisle…" sheet. The user must pick an aisle; a category cannot return to limbo. On selection, the category appears in that aisle with all items intact.
+  - *Delete permanently* — confirmation modal naming what's lost: the visible items in that category and the library/autocomplete entries associated with it. Items in other categories are unaffected. The action cannot be undone.
+
+### Add aisle / add category
+
+- **+ Add aisle** opens an inline name input at the bottom of the aisle list. Commit creates an empty aisle (no seed categories).
+- **+ Add category** appears at the bottom of an expanded aisle. Commit creates an empty category in that aisle.
+
+### Out of scope (v1)
+
+- Reordering categories within an aisle, or items within a category. Categories follow insertion order; items sort alphabetically.
+- Bulk hide / delete / move operations.
+- Cross-aisle search inside the editor.
+- Recovering deleted aisles, categories, or items.
 
 ---
 
-## 6. Category System
+## 6. Aisle & Category System
 
-### Predefined Categories
+### Three-Tier Taxonomy
 
-The app uses a fixed set of 12 categories reflecting the stores and sections the household shops at:
+The app organizes shopping data in three tiers: **aisle → category → item**.
 
-1. VEGGIES
-2. FRUIT
-3. MEAT & FISH
-4. DELI, DAIRY, EGGS
-5. FROZEN
-6. DRY GOODS
-7. BAKING, SPICES & OILS
-8. PREPARED FOODS
-9. PHARMACY / OTC
-10. TARGET / AMAZON / COSTCO
-11. COSTCO BULK FOODS
-12. RANCH 99 / WEEE / BERKELEY BOWL
+- **Aisles** are the top-level grouping. Their order represents the path the user walks through a store, and is therefore user-controlled.
+- **Categories** live under exactly one aisle. They group related items.
+- **Items** live under exactly one category. The same item name may exist independently under multiple categories (e.g. "tomato" in *vegetable* and in *canned goods*); these are separate entries.
+
+### Seed Taxonomy
+
+A new household is seeded with 9 aisles and 52 categories (defined in the seed catalog). Both are fully editable after onboarding.
+
+### Aisle Behavior
+
+- Renameable, addable, deletable, reorderable.
+- Deletion requires the aisle to contain no categories (move or delete its categories first).
+- Aisles do not have a "hidden" state. If you don't want an aisle, delete it.
+- New aisles are created empty. They have no seed categories.
 
 ### Category Behavior
 
-- Categories cannot be added, removed, or renamed at runtime
-- Category order is fixed (defined in code)
-- Categories expand/collapse independently
-- Auto-expansion behavior differs by mode (Shop vs Add)
+- Renameable, addable, hideable, movable between aisles.
+- Reassignment between aisles is destructive: a category does not remember its original aisle.
+- Categories cannot be deleted directly — they must first be hidden. Hidden categories live in a global page-bottom section, unattached to any aisle.
+- Unhiding a category requires selecting an aisle to place it into.
+- Permanent deletion of a hidden category is destructive: the category's visible items and its library/autocomplete entries are lost. Items in other categories are unaffected.
+- New categories are created empty (no seed items).
+
+### Item Behavior
+
+- Items are scoped to one category. Deleting their category deletes them.
+- Categories expand/collapse independently in the shopping list view.
+- Auto-expansion behavior differs by mode (Shop vs Add).
+
+---
+
+## 6a. Onboarding
+
+### Goals
+
+- Establish the user's mental model: this app is meant to mirror *how they shop*, not enforce a canonical taxonomy.
+- Get the user to a usable Shop mode quickly, with reasonable defaults they can edit later.
+
+### Flow
+
+1. **Welcome** — short intro framing the app as a tool to align with the user's shopping pattern. Copy: "Let's set up your shopping aisles."
+2. **Aisle & Category Editor** — the same component used in Settings (see §5), with wizard chrome and reorder mode on by default. Framing copy: "Drag aisles into the order you walk your store. You can rearrange or edit anything later in Settings." Primary action: **Looks good →**. Secondary: **Reset to defaults** (enabled only after edits).
+3. **Land in Shop mode** — the user is dropped into an empty Shop view with a one-time hint pointing at the Add toggle. Building the first list is normal use, not onboarding.
+
+### Notes
+
+- Onboarding is single-pass for now. Users can re-edit aisles, categories, and visible items in Settings at any time.
+- No store selection step. Stores are not part of the data model.
+- The editor is identical in onboarding and Settings; only the wizard chrome and the default reorder-mode flag differ.
 
 ---
 
