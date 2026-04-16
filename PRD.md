@@ -1,7 +1,7 @@
 # Product Requirements Document (PRD)
 
 > **Status:** Living document — updated as features evolve
-> **Last updated:** 2026-04-14 (taxonomy redesign: aisle→category→item, single-tier visible + library, onboarding flow)
+> **Last updated:** 2026-04-16 (navigation redesign; contextual Clear chip; effective purchase semantics for analytics + last purchased)
 
 ---
 
@@ -102,7 +102,7 @@ Each item on the list has:
 
 - Tap an item name to open a slide-up bottom sheet with item metadata
 - Shows "Added by {name} {timestamp}" (who added the item and when)
-- Shows "Last purchased {relative time}" derived from item-events (most recent `checked` event)
+- Shows "Last purchased {relative time}" derived from item-events: most recent **effective** purchase (a `checked` event not voided by an `unchecked` within two hours on the same list identity; see `purchaseSemantics.js`)
 - Name and quantity commit on blur and on close; there is no explicit save button on the sheet itself
 - Dismissed by tapping the backdrop
 - Checkbox and quantity tap targets remain unaffected
@@ -294,22 +294,36 @@ A new household is seeded with 9 aisles and 52 categories (defined in the seed c
 - Multi-column on larger screens (2 columns at md breakpoint, 3 at lg)
 - Plus Jakarta Sans font family
 
+### Navigation chrome
+
+The app treats **Shop and Add as co-equal primary modes** of the list page. Other pages (History, Settings, Account) are deliberately tertiary. Navigation chrome adapts to breakpoint:
+
+- **Mobile (< lg):** Top header is minimal — hamburger menu (left), **Shopping List** title (center), small sync dot (right). The header hides on scroll-down to free content space; it reappears on scroll-up. A **fixed bottom nav bar** carries the primary controls: Shop/Add segmented toggle and a contextual Clear chip that appears above the bar when there are checked items. The bottom bar is always visible regardless of scroll. The hamburger menu drops down from the header for tertiary navigation (Shopping List, History, Settings, Account).
+- **Desktop (lg+):** A single always-visible top toolbar carries everything: **Shopping List** title (left), Shop/Add segmented toggle (only on the list page), Clear button (only on the list page when items are checked), nav links (List / History / Settings / Account), and the sync pill (right). The hamburger expands inline because horizontal space is plentiful. No bottom bar.
+
+### Clear chip behavior (mobile)
+
+- Renders only when `doneCount > 0`. Disappears when there's nothing to clear.
+- **Entry animation:** slides up from the nav bar with a subtle bounce on every appearance.
+- **Always present on resume:** if a session opens with items already checked, the chip is visible from load (no transition required).
+- **First-run tooltip:** the very first time the chip appears for a device, a one-time callout appears above it ("All done with these? Tap to clear.") that auto-dismisses after ~4s. State is persisted via localStorage flag (`tend.clearChipTooltipSeen.v1`).
+- Label includes a live count: `Clear N done`.
+
 ### Scroll Behavior
 
-- **Header** hides on scroll down, reappears on scroll up
-- **Toolbar** becomes sticky when scrolling past its natural position
-- **Scroll fade effects** — during fast scrolling (>800px/s), UI elements fade or desaturate to improve readability of content while the list is in motion
+- **Header** (mobile only) hides on scroll down, reappears on scroll up.
+- **Bottom nav bar** (mobile only) is fixed-positioned and never hides — it's the always-reachable home for Shop/Add and Clear.
+- **Scroll fade effects** — during fast scrolling (>800px/s), UI elements fade or desaturate to improve readability of content while the list is in motion.
 
 ### Status Indicators
 
-- **Online/offline indicator** — visual feedback for connectivity state
-- **Pending sync badge** — shows count of operations waiting to sync
-- **Last sync time** — relative timestamp (e.g., "2 minutes ago")
+- **Online/offline indicator** — visual feedback for connectivity state. On mobile, a colored dot in the header. On desktop, a full pill with text label.
+- **Pending sync badge** — shows pending sync state via spinner + "Syncing" label (desktop) or blue dot (mobile).
+- **Last sync time** — relative timestamp (e.g., "2 minutes ago") shown in the offline banner.
 
-### Navigation
+### Safe-area insets
 
-- Two-page structure: Shopping List and Edit Suggestions
-- Navigation via toolbar/header controls
+Fixed bottom elements (the mobile bottom nav bar) use `padding-bottom: max(env(safe-area-inset-bottom), 0.75rem)` so the iOS home indicator does not overlap the controls.
 
 ---
 
@@ -390,6 +404,7 @@ Capture every list mutation (add / check / uncheck / remove) as a per-household 
 ### Behavior
 
 - Every time an item is added, checked, unchecked, or removed-while-unchecked, an event is appended to `/households/{hid}/item-events`.
+- Shop-mode `checked` / `unchecked` events may include `itemKey` (stable list identity). **Effective purchases** (used for purchase history, last-purchased, and shortcut intelligence) apply a two-hour rule: an `unchecked` within two hours of the latest still-open `checked` for the same identity voids that check (accidental tap + correction).
 - Adds carry a `source` flag (`typed` vs `quickAdd`) so we can detect items the user keeps typing that should be promoted to quick-add.
 - Logging is fire-and-forget — never blocks the UI, never breaks a mutation.
 - No end-user UX is built on this data yet. It's collected now so it exists when we want to use it.

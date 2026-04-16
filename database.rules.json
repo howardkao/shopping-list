@@ -77,6 +77,7 @@
             "name":     { ".validate": "newData.isString() && newData.val().length <= 200" },
             "category":   { ".validate": "newData.isString() && newData.val().length <= 100" },
             "categoryId": { ".validate": "newData.isString() && newData.val().length <= 50" },
+            "itemKey":    { ".validate": "newData.isString() && newData.val().length <= 80" },
             "action":     { ".validate": "newData.isString() && newData.val().matches(/^(added|checked|unchecked|removed)$/)" },
             "source":     { ".validate": "newData.isString() && newData.val().length <= 30" },
             "qty":        { ".validate": "newData.isNumber()" },

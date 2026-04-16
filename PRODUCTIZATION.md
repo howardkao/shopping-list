@@ -39,8 +39,13 @@ This document tracks the ongoing effort to productize this app for public, multi
 
 ## Open Decisions
 
-- [ ] **Business model**: freemium (free 1 household, paid for more)? flat subscription? open source / self-hosted? 
-  - Leading option: free tier on Firebase Spark (~400 households), then Blaze + freemium
+- [ ] **Business model**: free trial + annual subscription — details below still open
+  - Leading option: ~$5-10/year after 2-month free trial
+  - [ ] **Price point**: $5/year (impulse buy, low revenue) vs $8-10/year (doubles revenue, still cheap). AnyList comparable at $12/year.
+  - [ ] **Trial length**: 2 months (8+ shopping trips, enough to invest in taxonomy) vs 3 months (safer but may lose conversion signal). Must be configured in App Store Connect + Play Console.
+  - [ ] **Post-trial behavior**: read-only mode (preserves data, gates adding)? degraded mode (disable sync/collaboration)? full lockout? nag-based?
+  - [ ] **Subscription scope**: per-household (one person pays, all benefit — better UX) vs per-user (higher revenue, feels petty for $5). RevenueCat supports either via entitlement mapping.
+  - [ ] **Web vs in-app pricing**: uniform ($5 everywhere) or web discount ($5 web / $6 in-app to offset 15% platform fee)? Most apps keep uniform.
 - [x] **App store strategy**: Capacitor wrapper for both iOS App Store and Google Play — decided 2026-04-12
   - Plan documented in `NATIVE_APP_PLAN.md`
 - [ ] **RTDB vs Firestore for household data**: RTDB is simpler and already used, but Firestore is more cost-efficient at scale and supports finer-grained security rules
@@ -71,6 +76,9 @@ This document tracks the ongoing effort to productize this app for public, multi
 - [x] **Account deletion + data cleanup** — 2026-04-10
 - [ ] **Privacy Policy + Terms of Service** — required before any public launch or app store submission
 - [ ] **Firebase App Check** — prevent automated account creation and data scraping
+- [ ] **Google + Apple SSO** — reduces signup friction; Apple SSO required by guideline 4.8 if Google SSO is offered
+- [ ] **Subscription system (RevenueCat)** — Apple IAP + Google Play Billing + Stripe, unified cross-platform
+- [ ] **Cross-platform analytics (Firebase Analytics)** — unified event tracking across web, iOS, Android
 
 ### Should-Have
 
@@ -125,6 +133,40 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ---
 
 ## Session Log
+
+### 2026-04-16 — Header wordmark: Shopping List
+- **`src/App.jsx`:** Top header center label changed from **Tend** back to **Shopping List** (tap still returns to the list page).
+
+### 2026-04-16 — Navigation redesign: mobile bottom bar, desktop top toolbar, contextual Clear chip
+- **Architecture:** Shop and Add are co-equal primary modes. Mobile gets a fixed **bottom nav bar** (`lg:hidden`) carrying Shop/Add segmented + a contextual **Clear chip**. Desktop (`lg+`) flips to a single always-visible top toolbar that carries brand wordmark, Shop/Add toggle (when on list page), Clear button (when items checked), inline nav links (List / History / Settings / Account), and the sync pill.
+- **Header (mobile):** restructured to hamburger left + **Tend** wordmark center + sync dot right. Wordmark is the brand name (previously the header showed page-title text like "Shopping List" / "Settings"). Tapping the wordmark returns to the list page.
+- **Clear chip discoverability:** three layered techniques — (1) entry animation: chip slides up from the nav bar with a brief bounce on every appearance via the `animate-chip-in` keyframe. (3) always present on resume: chip is rendered conditionally on `doneCount > 0`, so opening the app with items already checked shows the chip immediately. (4) one-time first-run tooltip: a small "All done with these? Tap to clear." callout above the chip the very first time it appears for a device, gated by `localStorage['tend.clearChipTooltipSeen.v1']`, auto-dismisses after 4s.
+- **Removed:** `showStickyToolbar` state, `toolbarRef`, the in-page sticky toolbar, and the original page-top toolbar. Scroll handler retained header-hide-on-scroll + fast-scroll fade effects.
+- **CSS additions (`src/index.css`):** `chip-in` keyframe + `.animate-chip-in`, `tooltip-in` keyframe + `.animate-tooltip-in`, `.pb-safe` utility (`max(env(safe-area-inset-bottom), 0.75rem)`) for iOS home-indicator clearance.
+- **Other:** `doneCount` derived value introduced (replaces inline `list.filter(i => i.done).length` in three places); content padding adjusted to `pb-32 lg:pb-6` on the list page so the bottom bar doesn't overlap content. Floating debug button (admin-only) repositioned to `bottom-28` on mobile so it sits above the bottom bar.
+- **Docs:** PRD §7 (UI/UX Requirements) rewritten to describe the breakpoint-flipped chrome + Clear chip behavior + safe-area handling. TDD §6 (state management) gained a new **Navigation chrome (responsive)** subsection. `nav-mockups.html` (disposable design artifact from this session) deleted after sign-off.
+- **Build:** `npm run build` clean.
+
+### 2026-04-16 — Data-driven suggestion management (A1 promotion + B1 dormancy)
+- **New modules:** `src/categoryClassifier.js` (perishability tier classification: fresh/packaged/pantry/nonfood via seed-ID lookup, keyword scan, fallback) and rewritten `src/itemAnalytics.js` (category-aware analytics over the `item-events` stream).
+- **A1 — Promotion prompts:** When a user adds an item in Add mode that has been checked off ≥3× within the category's promotion window (21d fresh/packaged, 42d pantry/nonfood) and isn't already a visible shortcut, an amber inline card asks "Add as a shortcut?" with Yes/No. Auto-dismisses after 8 seconds.
+- **B1 — Dormant shortcut cleanup:** At the bottom of each aisle in Add mode, a gray card flags shortcuts with no activity beyond the category's dormancy window. Expandable "Manage cleanup" with per-item Remove/Keep buttons. Remove demotes to library; Keep dismisses (90-day cooldown, permanent after 2 dismissals).
+- **Per-category thresholds:** dormantDays and minEventAge are now tier-specific (fresh 21d, packaged 35d, pantry 70d, nonfood 90d) instead of a single global 56-day guard. Tighter thresholds serve double duty: cleanup + teaching users that a curated shortcut list is the app's differentiating value.
+- **`createdAt` on shortcuts:** New visible-item entries now carry `createdAt` timestamp (bootstrap, promote-to-shortcut, A1 acceptance). Dormancy check skips shortcuts newer than their category's dormancy window.
+- **Dismissal persistence:** `suggestion-dismissals` path in Firebase with escalation model (first dismiss → 90-day cooldown, second → permanent suppress).
+- **`categoryId` on events:** All `logItemEvent` calls now include `categoryId` for richer analytics.
+- **InsightsModal updated** to use new `promotionCandidates` + `dormantShortcuts` APIs instead of legacy wrappers.
+- **DB rules:** Added `suggestion-dismissals` and `categoryId` validation under `item-events`.
+- Deployed hosting + database rules. Build clean.
+
+### 2026-04-16 — Native app plan: SSO, subscriptions, analytics, pricing strategy
+- Expanded `NATIVE_APP_PLAN.md` from 5 phases to 8: added Google + Apple SSO (Phase 1), RevenueCat subscriptions (Phase 4), Firebase Analytics (Phase 5). Estimated ~9-13 sessions total.
+- **SSO decision:** Add both Google and Apple SSO. Apple guideline 4.8 requires Apple SSO if any third-party social login is offered. Email/password alone wouldn't require it, but adding Google SSO triggers the requirement. Firebase Auth supports both natively; Capacitor plugin `@capacitor-firebase/authentication` handles native dialogs.
+- **Subscriptions decision:** RevenueCat to unify Apple IAP (15% fee), Google Play Billing (15%), and Stripe (~3% web). Free under $2.5K/mo revenue. Handles cross-platform entitlements, receipt validation, and subscription status.
+- **Analytics decision:** Firebase Analytics — free, native Capacitor plugin, same ecosystem, RevenueCat integration built in. Core event taxonomy defined (20+ events across acquisition, engagement, subscription, technical health). Disable IDFA to skip iOS ATT prompt.
+- **Pricing discussion (not decided):** ~$5-10/year after 2-month free trial. Per-household subscription (one person pays, all benefit). Post-trial behavior leading toward read-only mode (can view/check items, can't add/edit). Open decisions added to PRODUCTIZATION.md.
+- Added SSO, subscriptions, and analytics as must-have work items in PRODUCTIZATION.md.
+- No code changes this session; planning only.
 
 ### 2026-04-15 — Edit suggestions from the Add-view bottom sheet + legacy Firestore cleanup
 - **Feature:** `ItemBottomSheet` (`src/App.jsx`) gained an advanced-config panel for suggestion items. When the sheet is opened via `openSuggestionSheet`, a muted `AISLE › Category` breadcrumb row with a pencil icon appears below the metadata block. Tapping expands an inline panel with aisle + category dropdowns and a two-step "Remove from suggestions" destructive action. The panel has its own explicit **Save** / **Cancel** buttons; advanced edits do not save on blur, backdrop tap discards silently. List-item sheets are untouched.
@@ -345,6 +387,33 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ### 2026-04-15 — Onboarding step 2: single header + Done CTA
 - **Change:** Removed duplicate outer title/instructions and the extra bottom button from `Onboarding.jsx` (wizard chrome in `SuggestionsEditor` already provides step label, copy, and primary action). Renamed wizard primary button from “Looks good →” to **Done**.
 
+### 2026-04-15 — Seed catalog: Frozen meals library
+- **`src/seedCatalog.js`:** Add frozen mac and cheese and chicken pot pie (new households only).
+
+### 2026-04-15 — Seed catalog: Deli prepared library
+- **`src/seedCatalog.js`:** Removed generic `dips`; added guacamole, tzatziki, spinach artichoke dip, olive tapenade (new households only).
+
+### 2026-04-15 — Seed catalog: fewer shortcuts + naming
+- **`src/seedCatalog.js`:** Demoted listed items to library; **chuck roast** → **beef chuck**; **paper towel** → **paper towels**, **trash bag** → **trash bags** (new households only).
+
+### 2026-04-15 — Seed catalog: trims (beef, pork, yogurt, sweeteners, pastries)
+- **`src/seedCatalog.js`:** Drop beef sausage, turkey kielbasa, generic pork sausage, drinkable yogurt / yogurt cups / tubes, stevia, cakes & pies; rename beef franks → beef hotdogs.
+
+### 2026-04-15 — Seed catalog: packaged + bakery + household overhaul
+- **`src/seedCatalog.js`:** Frozen produce through baby reworked (specific SKUs, plural names where requested, drops/renames per review). **International** replaced with **Latin American**, **East Asian**, **Southeast Asian**, and **Kosher** grocery categories; **tahini** → condiments; **tortilla chips** → snacks; **salsa** only in deli prepared. **Bread & rolls** + **Tortillas & flatbreads** merged into **Breads & tortillas**. Broths → soups; OTC list per user; etc.
+- **`src/categoryClassifier.js`:** Tier keys for new categories; packaged keyword list updated.
+
+### 2026-04-15 — Seed catalog: Eggs library
+- **`src/seedCatalog.js`:** Add egg substitute (new households only).
+
+### 2026-04-15 — Seed taxonomy: Dairy & Eggs + butter + deli prepared placement
+- **`src/seedCatalog.js`:** Aisle slug `deli-dairy-eggs` → `dairy-eggs`, name **Dairy & Eggs**. Category `butter-spreads` → `butter-dairy-spreads` (**Butter & dairy spreads**). **Deli prepared** under **Prepared Foods & Bakery**; seed **hummus** moved to `deli-prepared`.
+- **`src/categoryClassifier.js`:** `butter-dairy-spreads` / `deli-prepared` tier keys and comments updated.
+- **`scripts/migrate-to-taxonomy-v2.cjs`**, **`scripts/reseed-with-legacy.cjs`:** `SEED_AISLES` / `LEGACY_TO_AISLE` use `dairy-eggs`.
+
+### 2026-04-15 — Seed catalog: Yogurt library
+- **`src/seedCatalog.js`:** Added vanilla/strawberry yogurt, whole milk and low-fat yogurt, skyr, kefir, drinkable yogurt, yogurt tubes (new households only).
+
 ### 2026-04-15 — Seed catalog: Cheese flavor + form
 - **`src/seedCatalog.js`:** Cheese library expands sliced/shredded/grated lines; drops generic `sliced cheese`; adds fresh mozzarella, grated parmesan, sliced swiss, sliced provolone, shredded Mexican blend (new households only).
 
@@ -381,6 +450,12 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ### 2026-04-15 — Account: Household Insights + invite wording
 - **Account page:** “Household Insights” is a first-level action (opens the same modal as before) for any signed-in user with a `householdId`; “Admin Panel” row renamed to **Invite Household Members** (admins only).
 - **Modal:** Former admin modal title/subtitle updated to **Invite Household Members** / invitation-code copy; insights entry removed from inside that modal (`src/App.jsx`).
+
+### 2026-04-16 — Purchase semantics (2h check/uncheck pairing)
+- **`src/purchaseSemantics.js`:** Central model — an `unchecked` within two hours of the latest unmatched `checked` voids that check (per `itemKey` or legacy name+category).
+- **`src/itemAnalytics.js`:** `buildItemStats`, `promotionCandidates`, `userContributions`, and `eventSummary` count only **effective** checks (promote/demote and insights stay aligned).
+- **`src/App.jsx`:** Purchase History and bottom-sheet “last purchased” use the same semantics; shop toggles log optional `itemKey` on check/uncheck.
+- **`database.rules.json`:** Allow optional `itemKey` on item-events writes.
 
 ### 2026-04-10 — Initial productization planning
 - Discussed what's needed to go from single-household personal app to public multi-household product

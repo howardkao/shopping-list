@@ -1,18 +1,20 @@
 // Tier 1 analytics — pure functions over the household item-events log.
 //
-// Events shape: { ts, uid, name, category, categoryId?, action, source?, qty? }
+// Events shape: { ts, uid, name, category, categoryId?, itemKey?, action, source?, qty? }
 // Names are normalized to lowercase on write; consumers can trust that.
 //
 // "visible items" = shortcuts shown as quick-add tiles in Add mode (keyed by categoryId).
 // "library" = autocomplete-only items (also keyed by categoryId).
 
 import { getThresholds } from './categoryClassifier.js';
+import { computeEffectiveCheckEvents } from './purchaseSemantics.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const itemKey = (name, category) => `${(category || '').toLowerCase()}::${(name || '').toLowerCase()}`;
 
 export function buildItemStats(events, { now = Date.now() } = {}) {
+  const effectiveCheckSet = new Set(computeEffectiveCheckEvents(events));
   const stats = new Map();
   for (const e of events) {
     if (!e || !e.name) continue;
@@ -48,7 +50,7 @@ export function buildItemStats(events, { now = Date.now() } = {}) {
       else if (e.source === 'quickAdd') s.sources.quickAdd++;
       else if (e.source === 'voice') s.sources.voice++;
       else s.sources.other++;
-    } else if (e.action === 'checked') {
+    } else if (e.action === 'checked' && effectiveCheckSet.has(e)) {
       s.checked++;
       s.lastCheckedTs = Math.max(s.lastCheckedTs || 0, e.ts);
     } else if (e.action === 'unchecked') {
@@ -151,6 +153,7 @@ export function dormantShortcuts(events, visibleItemsByCategoryId, categoriesV2,
  * @param {{ now?: number }} opts
  */
 export function promotionCandidates(events, visibleItemsByCategoryId, categoriesV2, { now = Date.now() } = {}) {
+  const effectiveCheckSet = new Set(computeEffectiveCheckEvents(events));
   // Build a name→categoryId reverse lookup from visible items
   const visibleNameSet = new Set();
   for (const [catId, items] of Object.entries(visibleItemsByCategoryId || {})) {
@@ -168,7 +171,7 @@ export function promotionCandidates(events, visibleItemsByCategoryId, categories
   // Count checked events per item, within each category's threshold window
   const candidates = new Map(); // key → { name, category, categoryId, checkedCount, lastTs }
   for (const e of events) {
-    if (e.action !== 'checked') continue;
+    if (e.action !== 'checked' || !effectiveCheckSet.has(e)) continue;
     const catId = e.categoryId || catIdByName[(e.category || '').toLowerCase()] || null;
     const catName = e.category || '';
     const { promotionChecks, promotionDays } = getThresholds(catName, catId);
@@ -221,6 +224,7 @@ export function dormantQuickAddCandidates(events, commonItemsByCategory, { dorma
 
 /** Per-user contribution split: who added what, who checked off what. */
 export function userContributions(events) {
+  const effectiveCheckSet = new Set(computeEffectiveCheckEvents(events));
   const users = new Map();
   for (const e of events) {
     if (!e.uid) continue;
@@ -230,7 +234,7 @@ export function userContributions(events) {
       users.set(e.uid, u);
     }
     if (e.action === 'added') u.added++;
-    else if (e.action === 'checked') u.checked++;
+    else if (e.action === 'checked' && effectiveCheckSet.has(e)) u.checked++;
     else if (e.action === 'removed') u.removed++;
   }
   return Array.from(users.values()).sort((a, b) => (b.added + b.checked) - (a.added + a.checked));
@@ -238,9 +242,14 @@ export function userContributions(events) {
 
 /** Summary counters across the full event stream. */
 export function eventSummary(events) {
+  const effectiveCheckSet = new Set(computeEffectiveCheckEvents(events));
   const out = { total: events.length, added: 0, checked: 0, unchecked: 0, removed: 0, typed: 0, quickAdd: 0, firstTs: null, lastTs: null };
   for (const e of events) {
-    out[e.action] = (out[e.action] || 0) + 1;
+    if (e.action === 'checked') {
+      if (effectiveCheckSet.has(e)) out.checked++;
+    } else {
+      out[e.action] = (out[e.action] || 0) + 1;
+    }
     if (e.source === 'typed') out.typed++;
     else if (e.source === 'quickAdd') out.quickAdd++;
     if (out.firstTs === null || e.ts < out.firstTs) out.firstTs = e.ts;

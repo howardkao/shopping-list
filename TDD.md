@@ -1,7 +1,7 @@
 # Technical Design Document (TDD)
 
 > **Status:** Living document — updated as architecture evolves
-> **Last updated:** 2026-04-14 (taxonomy redesign: aisles + user-editable categories + library)
+> **Last updated:** 2026-04-16 (navigation redesign; item-events `itemKey`; effective purchase aggregation via `purchaseSemantics.js`)
 
 ---
 
@@ -244,6 +244,15 @@ All state lives in React hooks within the main `App` component. No external stat
 
 - Suggestion rows use a split interaction model: the `+` button adds immediately, while tapping the row body opens the bottom sheet.
 - The bottom sheet for suggestions exposes an explicit add action so users can review the item before adding it.
+
+### Navigation chrome (responsive)
+
+- The previous in-page Shop/Add+Clear toolbar (with scroll-based "sticky" promotion) was removed in favor of a breakpoint-flipped chrome:
+  - **Mobile (`< lg`):** controls live in a fixed bottom nav bar (`fixed bottom-0` with `pb-safe`, `lg:hidden`). Header still hides on scroll-down for content focus, but the bottom bar is always visible.
+  - **Desktop (`>= lg`):** controls live in the always-visible top header alongside expanded nav links.
+- The deprecated `showStickyToolbar` state and `toolbarRef` were removed. Scroll handler retains only the header-hide-on-scroll behavior and the velocity-based fade-effect detection.
+- The Clear control is **contextual** on mobile: a chip rendered conditionally on `doneCount > 0`, with a CSS entry animation (`animate-chip-in`, defined in `src/index.css`). The `key` prop on the chip uses the boolean `hasDone` so React re-mounts (and re-runs the entry animation) on each transition from no-done to has-done.
+- The first-run tooltip is gated by a localStorage flag (`tend.clearChipTooltipSeen.v1`); a `useEffect` keyed on the boolean `hasDone` boundary fires the show/hide logic exactly once per device per fresh-install.
 
 ### Item Bottom Sheet: Advanced Suggestion Config
 
@@ -541,6 +550,7 @@ Events live at `/households/{householdId}/item-events/{pushId}`. Push IDs give u
 | `uid` | Author of the action. Enables per-user splits. |
 | `name` | Always lowercased on write so consumers can trust equality checks. |
 | `category` | Snapshot of the category at event time. |
+| `itemKey` | Optional; present on `checked` / `unchecked` from shop toggles when known. Groups pairing with legacy `name`+`category` rows. |
 | `action` | `added` (item put on the list), `checked` (proxy for purchased), `unchecked` (mistake correction), `removed` (only logged when an unchecked item is removed — cleared/checked items don't need a separate removed event since `checked` already represents the buy). |
 | `source` | Only on `added`: `typed` if added from search/free-text, `quickAdd` if tapped from suggestions. Used to drive promotion candidates. |
 | `qty` | Quantity at the time of the event. Important for the future Costco/stockpiling mitigation (Tier 2). |
@@ -551,7 +561,9 @@ Logged inline from `addItem`, `toggleDone`, and `removeItem` in `App.jsx` via a 
 
 ### Aggregation
 
-Pure functions in `src/itemAnalytics.js`: `buildItemStats`, `topPurchased`, `dormantQuickAddCandidates`, `promotionCandidates`, `userContributions`, `eventSummary`. All operate on the in-memory event array — no server-side aggregation. At ~10–20 events/day per household this is trivial well past 1 year of history.
+`src/purchaseSemantics.js` defines a **two-hour undo window**: per list identity, an `unchecked` within two hours of the latest unmatched `checked` voids that check (LIFO). Surviving checks are **effective purchases** — used for purchase history, last-purchased UI, and shortcut promote/demote analytics.
+
+Pure functions in `src/itemAnalytics.js`: `buildItemStats`, `topPurchased`, `dormantQuickAddCandidates`, `promotionCandidates`, `userContributions`, `eventSummary`. They consume the raw stream but treat `checked` counts and `lastCheckedTs` as **effective** only (via `computeEffectiveCheckEvents`). All operate on the in-memory event array — no server-side aggregation. At ~10–20 events/day per household this is trivial well past 1 year of history.
 
 ### Surfacing
 

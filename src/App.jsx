@@ -37,6 +37,7 @@ import {
   topPurchased,
   userContributions,
 } from './itemAnalytics';
+import { computeEffectiveCheckEvents, lastEffectivePurchaseTimestamp } from './purchaseSemantics.js';
 // categoryClassifier is used internally by itemAnalytics
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -1128,15 +1129,17 @@ function PurchaseHistory({ householdId }) {
         const snap = await get(ref(database, `households/${householdId}/item-events`));
         if (cancelled) return;
         const raw = snap.val() || {};
-        const events = Object.values(raw).filter(e => e && typeof e.ts === 'number' && (e.action === 'checked' || e.action === 'unchecked'));
+        const events = Object.values(raw).filter(e => e && typeof e.ts === 'number');
 
-        // Net out checked/unchecked per item per local date
-        const dayMap = new Map(); // dateStr -> Map(itemKey -> { name, category, qty, count })
-        for (const e of events) {
+        // Effective purchases only (see purchaseSemantics.js — uncheck within 2h voids prior check)
+        const dayMap = new Map(); // dateStr -> Map(rowKey -> { name, category, qty, count, quantityLabel })
+        for (const e of computeEffectiveCheckEvents(events)) {
           const dateStr = new Date(e.ts).toLocaleDateString('en-CA'); // YYYY-MM-DD in local tz
           if (!dayMap.has(dateStr)) dayMap.set(dateStr, new Map());
           const items = dayMap.get(dateStr);
-          const key = `${(e.category || '').toLowerCase()}::${(e.name || '').toLowerCase()}`;
+          const key = e.itemKey != null && String(e.itemKey).trim() !== ''
+            ? `k:${String(e.itemKey)}`
+            : `${(e.category || '').toLowerCase()}::${(e.name || '').toLowerCase()}`;
           if (!items.has(key)) {
             items.set(key, {
               name: e.name,
@@ -1147,15 +1150,14 @@ function PurchaseHistory({ householdId }) {
             });
           }
           const item = items.get(key);
-          if (e.action === 'checked') item.count++;
-          else if (e.action === 'unchecked') item.count--;
+          item.count++;
           if (e.qty) item.qty = e.qty;
           if (e.quantityLabel && String(e.quantityLabel).trim()) {
             item.quantityLabel = String(e.quantityLabel).trim();
           }
         }
 
-        // Build sorted groups (newest first), filter out items with count <= 0
+        // Build sorted groups (newest first)
         const groups = [];
         for (const [dateStr, items] of dayMap) {
           const purchased = Array.from(items.values()).filter(i => i.count > 0);
@@ -1942,6 +1944,9 @@ export default function App() {
       action: event.action,
     };
     if (event.categoryId) payload.categoryId = event.categoryId;
+    if (event.itemKey != null && String(event.itemKey).trim() !== '') {
+      payload.itemKey = String(event.itemKey).trim().slice(0, 80);
+    }
     if (event.source) payload.source = event.source;
     if (event.qty != null) payload.qty = Number(event.qty);
     const qLabel = (event.quantityLabel != null && String(event.quantityLabel).trim())
@@ -2002,6 +2007,7 @@ export default function App() {
         name: target.name,
         category: getShoppingCategoryName(target),
         categoryId: getItemCategoryId(target),
+        itemKey: getStableItemKey(target),
         action: target.done ? 'unchecked' : 'checked',
         qty: Number(target.quantity) || 1,
         quantityLabel: (target.quantity || '').trim() || undefined,
@@ -2031,26 +2037,20 @@ export default function App() {
     });
   };
 
-  const loadLastPurchasedForItemName = async (name) => {
+  const loadLastPurchasedForItemQuery = async (query) => {
     if (!householdId) {
       setSelectedItemLastPurchased(null);
       return;
     }
     try {
       const eventsSnap = await get(ref(database, `households/${householdId}/item-events`));
-      const events = eventsSnap.val();
-      if (!events) {
+      const raw = eventsSnap.val();
+      if (!raw) {
         setSelectedItemLastPurchased(null);
         return;
       }
-      const itemNameLower = name.toLowerCase();
-      let latestTs = null;
-      Object.values(events).forEach(ev => {
-        if (ev.action === 'checked' && ev.name === itemNameLower) {
-          if (!latestTs || ev.ts > latestTs) latestTs = ev.ts;
-        }
-      });
-      setSelectedItemLastPurchased(latestTs);
+      const all = Object.values(raw);
+      setSelectedItemLastPurchased(lastEffectivePurchaseTimestamp(all, query, {}));
     } catch (err) {
       logger.warn('App', 'Failed to fetch last purchased for item', { error: err.message });
     }
@@ -2123,7 +2123,13 @@ export default function App() {
     }
 
     setSelectedItem(si => (si && getStableItemKey(si) === itemKey ? { ...si, name: trimmed } : si));
-    void loadLastPurchasedForItemName(trimmed);
+    const row = outcome.nextList.find(li => getStableItemKey(li) === itemKey);
+    void loadLastPurchasedForItemQuery({
+      name: trimmed,
+      itemKey,
+      categoryName: row ? getShoppingCategoryName(row) : '',
+      categoryId: row ? getItemCategoryId(row) : null,
+    });
   };
 
   const renameTaxonomySuggestionById = (categoryId, suggestionId, trimmed) => {
@@ -2335,7 +2341,12 @@ export default function App() {
     }
     setSelectedItem(base);
     setSelectedItemLastPurchased(null);
-    await loadLastPurchasedForItemName(item.name);
+    await loadLastPurchasedForItemQuery({
+      name: item.name,
+      itemKey: getStableItemKey(item),
+      categoryName: getShoppingCategoryName(item),
+      categoryId: getItemCategoryId(item),
+    });
   };
 
   const openSuggestionSheet = async (cat, suggestion) => {
@@ -2350,7 +2361,12 @@ export default function App() {
           setSelectedItem(si =>
             si && String(si.itemKey) === String(itemKey) ? { ...si, name: trimmed } : si
           );
-          void loadLastPurchasedForItemName(trimmed);
+          void loadLastPurchasedForItemQuery({
+            name: trimmed,
+            itemKey: suggestionId,
+            categoryName: cat,
+            categoryId,
+          });
         }
       : undefined;
     const suggestionConfig = categoryId
@@ -2379,7 +2395,12 @@ export default function App() {
     };
     setSelectedItem(item);
     setSelectedItemLastPurchased(null);
-    await loadLastPurchasedForItemName(suggestion.name);
+    await loadLastPurchasedForItemQuery({
+      name: suggestion.name,
+      itemKey: suggestionId,
+      categoryName: cat,
+      categoryId,
+    });
   };
 
   const doneCount = list.reduce((n, item) => n + (item.done ? 1 : 0), 0);
@@ -3118,7 +3139,7 @@ export default function App() {
                 className="font-bold text-xl flex-1 lg:flex-none text-center lg:text-left"
                 style={{ color: '#FF7A7A' }}
               >
-                Tend
+                Shopping List
               </button>
 
               {currentPage === 'list' && (
