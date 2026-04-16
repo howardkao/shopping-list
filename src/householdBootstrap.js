@@ -50,7 +50,7 @@ export async function bootstrapHouseholdTaxonomy(householdId) {
     const bucket = item.starred ? visibleOut : libraryOut;
     if (!bucket[catId]) bucket[catId] = [];
     const itemId = push(ref(database, `households/${householdId}/taxonomy/visible-items/${catId}`)).key;
-    bucket[catId].push({ id: itemId, name: item.name });
+    bucket[catId].push({ id: itemId, name: item.name, createdAt: Date.now() });
   }
 
   // Single multi-path update for atomicity. If any rule rejects, nothing is written.

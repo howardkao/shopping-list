@@ -24,7 +24,7 @@ const path = require('path');
 const LEGACY_TO_AISLE = {
   'PRODUCE':              'produce',
   'MEAT & FISH':          'meat-seafood',
-  'DELI, DAIRY & EGGS':   'deli-dairy-eggs',
+  'DELI, DAIRY & EGGS':   'dairy-eggs',
   'FROZEN':               'frozen',
   'DRY GOODS':            'packaged-foods',
   'BAKING, SPICES & OILS':'baking-spices-oils',
@@ -34,7 +34,7 @@ const LEGACY_TO_AISLE = {
 
   'VEGGIES':                          'produce',
   'FRUIT':                            'produce',
-  'DELI, DAIRY, EGGS':                'deli-dairy-eggs',
+  'DELI, DAIRY, EGGS':                'dairy-eggs',
   'PHARMACY / OTC':                   'pharmacy-personal',
   'TARGET / AMAZON / COSTCO':         'household-bulk',
   'COSTCO BULK FOODS':                'household-bulk',

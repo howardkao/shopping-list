@@ -75,12 +75,23 @@
             "ts":       { ".validate": "newData.isNumber()" },
             "uid":      { ".validate": "newData.isString() && newData.val().length <= 50" },
             "name":     { ".validate": "newData.isString() && newData.val().length <= 200" },
-            "category": { ".validate": "newData.isString() && newData.val().length <= 100" },
-            "action":   { ".validate": "newData.isString() && newData.val().matches(/^(added|checked|unchecked|removed)$/)" },
-            "source":   { ".validate": "newData.isString() && newData.val().length <= 30" },
-            "qty":      { ".validate": "newData.isNumber()" },
+            "category":   { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "categoryId": { ".validate": "newData.isString() && newData.val().length <= 50" },
+            "action":     { ".validate": "newData.isString() && newData.val().matches(/^(added|checked|unchecked|removed)$/)" },
+            "source":     { ".validate": "newData.isString() && newData.val().length <= 30" },
+            "qty":        { ".validate": "newData.isNumber()" },
             "quantityLabel": { ".validate": "newData.isString() && newData.val().length <= 100" },
-            "$other":   { ".validate": false }
+            "$other":     { ".validate": false }
+          }
+        },
+
+        "suggestion-dismissals": {
+          "$key": {
+            "action":         { ".validate": "newData.isString() && newData.val().length <= 30" },
+            "dismissedAt":    { ".validate": "newData.isNumber()" },
+            "resurfaceAfter": { ".validate": "newData.val() == null || newData.isNumber()" },
+            "dismissCount":   { ".validate": "newData.isNumber()" },
+            "$other":         { ".validate": false }
           }
         },
 

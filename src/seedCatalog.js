@@ -14,7 +14,7 @@
 export const SEED_AISLES = [
   { id: 'produce',             name: 'Produce' },
   { id: 'meat-seafood',        name: 'Meat & Seafood' },
-  { id: 'deli-dairy-eggs',     name: 'Deli, Dairy & Eggs' },
+  { id: 'dairy-eggs',          name: 'Dairy & Eggs' },
   { id: 'frozen',              name: 'Frozen' },
   { id: 'packaged-foods',      name: 'Packaged Foods' },
   { id: 'baking-spices-oils',  name: 'Baking, Spices & Oils' },
@@ -37,13 +37,12 @@ export const SEED_CATEGORIES = [
   { id: 'deli-meat',          aisleId: 'meat-seafood',       name: 'Deli meat' },
   { id: 'plant-protein',      aisleId: 'meat-seafood',       name: 'Plant-based protein' },
 
-  // DELI, DAIRY & EGGS
-  { id: 'milk-cream',         aisleId: 'deli-dairy-eggs',    name: 'Milk & cream' },
-  { id: 'cheese',             aisleId: 'deli-dairy-eggs',    name: 'Cheese' },
-  { id: 'yogurt',             aisleId: 'deli-dairy-eggs',    name: 'Yogurt' },
-  { id: 'butter-spreads',     aisleId: 'deli-dairy-eggs',    name: 'Butter & spreads' },
-  { id: 'eggs',               aisleId: 'deli-dairy-eggs',    name: 'Eggs' },
-  { id: 'deli-prepared',      aisleId: 'deli-dairy-eggs',    name: 'Deli prepared' },
+  // DAIRY & EGGS
+  { id: 'milk-cream',           aisleId: 'dairy-eggs',      name: 'Milk & cream' },
+  { id: 'cheese',               aisleId: 'dairy-eggs',      name: 'Cheese' },
+  { id: 'yogurt',               aisleId: 'dairy-eggs',      name: 'Yogurt' },
+  { id: 'butter-dairy-spreads', aisleId: 'dairy-eggs',      name: 'Butter & dairy spreads' },
+  { id: 'eggs',                 aisleId: 'dairy-eggs',      name: 'Eggs' },
 
   // FROZEN
   { id: 'frozen-meals',       aisleId: 'frozen',             name: 'Frozen meals' },
@@ -60,7 +59,10 @@ export const SEED_CATEGORIES = [
   { id: 'pasta-grains',       aisleId: 'packaged-foods',     name: 'Pasta & grains' },
   { id: 'cereal-breakfast',   aisleId: 'packaged-foods',     name: 'Cereal & breakfast' },
   { id: 'soups-broths',       aisleId: 'packaged-foods',     name: 'Soups & broths' },
-  { id: 'international',      aisleId: 'packaged-foods',     name: 'International' },
+  { id: 'latin-foods',        aisleId: 'packaged-foods',     name: 'Latin American groceries' },
+  { id: 'east-asian-foods',   aisleId: 'packaged-foods',     name: 'East Asian groceries' },
+  { id: 'southeast-asian-foods', aisleId: 'packaged-foods',  name: 'Southeast Asian groceries' },
+  { id: 'kosher-foods',       aisleId: 'packaged-foods',     name: 'Kosher groceries' },
 
   // BAKING, SPICES & OILS
   { id: 'baking',             aisleId: 'baking-spices-oils', name: 'Baking' },
@@ -69,11 +71,11 @@ export const SEED_CATEGORIES = [
   { id: 'sweeteners',         aisleId: 'baking-spices-oils', name: 'Sweeteners' },
 
   // PREPARED FOODS & BAKERY
-  { id: 'bread-rolls',        aisleId: 'bakery-prepared',    name: 'Bread & rolls' },
-  { id: 'tortillas-flatbreads', aisleId: 'bakery-prepared',  name: 'Tortillas & flatbreads' },
+  { id: 'breads-tortillas',   aisleId: 'bakery-prepared',    name: 'Breads & tortillas' },
   { id: 'pastries-desserts',  aisleId: 'bakery-prepared',    name: 'Pastries & desserts' },
   { id: 'rotisserie-hotbar',  aisleId: 'bakery-prepared',    name: 'Rotisserie & hot bar' },
   { id: 'sushi-sandwiches',   aisleId: 'bakery-prepared',    name: 'Sushi & sandwiches' },
+  { id: 'deli-prepared',      aisleId: 'bakery-prepared',    name: 'Deli prepared' },
 
   // PERSONAL CARE & PHARMACY
   { id: 'otc-meds',           aisleId: 'pharmacy-personal',  name: 'OTC meds' },
@@ -103,7 +105,7 @@ export const SEED_ITEMS = [
   // fruit
   { categoryId: 'fruit', name: 'bananas',    starred: true  },
   { categoryId: 'fruit', name: 'apples',     starred: true  },
-  { categoryId: 'fruit', name: 'strawberries', starred: true  },
+  { categoryId: 'fruit', name: 'strawberries', starred: false },
   { categoryId: 'fruit', name: 'lemons',     starred: false },
   { categoryId: 'fruit', name: 'avocados',    starred: false },
   { categoryId: 'fruit', name: 'blueberries', starred: false },
@@ -118,7 +120,7 @@ export const SEED_ITEMS = [
   // vegetable
   { categoryId: 'vegetable', name: 'onions',        starred: true  },
   { categoryId: 'vegetable', name: 'garlic',        starred: false },
-  { categoryId: 'vegetable', name: 'tomatoes',      starred: true  },
+  { categoryId: 'vegetable', name: 'tomatoes',      starred: false },
   { categoryId: 'vegetable', name: 'carrots',       starred: true  },
   { categoryId: 'vegetable', name: 'potatoes',      starred: true  },
   { categoryId: 'vegetable', name: 'spinach',       starred: false },
@@ -148,8 +150,8 @@ export const SEED_ITEMS = [
   // --- MEAT & SEAFOOD ---
   // beef
   { categoryId: 'beef', name: 'ground beef',      starred: true  },
-  { categoryId: 'beef', name: 'chuck roast',      starred: true  },
-  { categoryId: 'beef', name: 'brisket',          starred: true  },
+  { categoryId: 'beef', name: 'beef chuck',       starred: true  },
+  { categoryId: 'beef', name: 'brisket',          starred: false },
   { categoryId: 'beef', name: 'ribeye',           starred: false },
   { categoryId: 'beef', name: 'sirloin',          starred: false },
   { categoryId: 'beef', name: 'stew meat',        starred: false },
@@ -157,8 +159,7 @@ export const SEED_ITEMS = [
   { categoryId: 'beef', name: 'skirt steak',      starred: false },
   { categoryId: 'beef', name: 'beef short ribs',  starred: false },
   { categoryId: 'beef', name: 'hamburger patties', starred: false },
-  { categoryId: 'beef', name: 'beef sausage',     starred: false },
-  { categoryId: 'beef', name: 'beef franks',      starred: false },
+  { categoryId: 'beef', name: 'beef hotdogs',     starred: false },
 
   // poultry
   { categoryId: 'poultry', name: 'chicken breast', starred: true  },
@@ -168,13 +169,11 @@ export const SEED_ITEMS = [
   { categoryId: 'poultry', name: 'ground turkey',  starred: false },
   { categoryId: 'poultry', name: 'chicken sausage', starred: false },
   { categoryId: 'poultry', name: 'turkey sausage', starred: false },
-  { categoryId: 'poultry', name: 'turkey kielbasa', starred: false },
 
   // pork
-  { categoryId: 'pork', name: 'bacon',           starred: true  },
+  { categoryId: 'pork', name: 'bacon',           starred: false },
   { categoryId: 'pork', name: 'pork chop',       starred: false },
   { categoryId: 'pork', name: 'pork tenderloin', starred: false },
-  { categoryId: 'pork', name: 'sausage',         starred: false },
   { categoryId: 'pork', name: 'Italian sausage', starred: false },
   { categoryId: 'pork', name: 'breakfast sausage', starred: false },
   { categoryId: 'pork', name: 'bratwurst',       starred: false },
@@ -208,7 +207,7 @@ export const SEED_ITEMS = [
   { categoryId: 'plant-protein', name: 'tempeh',                starred: false },
   { categoryId: 'plant-protein', name: 'plant-based sausage', starred: false },
 
-  // --- DELI, DAIRY & EGGS ---
+  // --- DAIRY & EGGS ---
   // milk & cream
   { categoryId: 'milk-cream', name: 'milk',          starred: true  },
   { categoryId: 'milk-cream', name: 'heavy cream',   starred: false },
@@ -217,7 +216,7 @@ export const SEED_ITEMS = [
   { categoryId: 'milk-cream', name: 'almond milk',   starred: false },
 
   // cheese
-  { categoryId: 'cheese', name: 'cheddar',                 starred: true  },
+  { categoryId: 'cheese', name: 'cheddar',                 starred: false },
   { categoryId: 'cheese', name: 'shredded cheddar',       starred: false },
   { categoryId: 'cheese', name: 'sliced cheddar',         starred: false },
   { categoryId: 'cheese', name: 'mozzarella',             starred: false },
@@ -232,136 +231,184 @@ export const SEED_ITEMS = [
   { categoryId: 'cheese', name: 'shredded Mexican blend', starred: false },
 
   // yogurt
-  { categoryId: 'yogurt', name: 'greek yogurt', starred: true  },
-  { categoryId: 'yogurt', name: 'plain yogurt', starred: false },
-  { categoryId: 'yogurt', name: 'yogurt cups',  starred: false },
-
-  // butter & spreads
-  { categoryId: 'butter-spreads', name: 'butter',    starred: true  },
-  { categoryId: 'butter-spreads', name: 'margarine', starred: false },
-  { categoryId: 'butter-spreads', name: 'hummus',    starred: false },
+  { categoryId: 'yogurt', name: 'greek yogurt',      starred: false },
+  { categoryId: 'yogurt', name: 'plain yogurt',      starred: false },
+  { categoryId: 'yogurt', name: 'vanilla yogurt',    starred: false },
+  { categoryId: 'yogurt', name: 'strawberry yogurt', starred: false },
+  { categoryId: 'yogurt', name: 'whole milk yogurt', starred: false },
+  { categoryId: 'yogurt', name: 'low-fat yogurt',    starred: false },
+  { categoryId: 'yogurt', name: 'skyr',              starred: false },
+  { categoryId: 'yogurt', name: 'kefir',             starred: false },
+  // butter & dairy spreads
+  { categoryId: 'butter-dairy-spreads', name: 'butter',    starred: true  },
+  { categoryId: 'butter-dairy-spreads', name: 'margarine', starred: false },
 
   // eggs
-  { categoryId: 'eggs', name: 'eggs',       starred: true  },
-  { categoryId: 'eggs', name: 'egg whites', starred: false },
+  { categoryId: 'eggs', name: 'eggs',           starred: true  },
+  { categoryId: 'eggs', name: 'egg whites',     starred: false },
+  { categoryId: 'eggs', name: 'egg substitute', starred: false },
 
   // deli prepared
-  { categoryId: 'deli-prepared', name: 'fresh pasta', starred: false },
-  { categoryId: 'deli-prepared', name: 'dips',        starred: false },
-  { categoryId: 'deli-prepared', name: 'salsa',       starred: false },
-  { categoryId: 'deli-prepared', name: 'pesto',       starred: false },
+  { categoryId: 'deli-prepared', name: 'fresh pasta',            starred: false },
+  { categoryId: 'deli-prepared', name: 'hummus',                 starred: false },
+  { categoryId: 'deli-prepared', name: 'guacamole',              starred: false },
+  { categoryId: 'deli-prepared', name: 'tzatziki',               starred: false },
+  { categoryId: 'deli-prepared', name: 'spinach artichoke dip', starred: false },
+  { categoryId: 'deli-prepared', name: 'olive tapenade',         starred: false },
+  { categoryId: 'deli-prepared', name: 'salsa',                  starred: false },
+  { categoryId: 'deli-prepared', name: 'pesto',                  starred: false },
 
   // --- FROZEN ---
   // frozen meals
-  { categoryId: 'frozen-meals', name: 'frozen pizza',    starred: true  },
-  { categoryId: 'frozen-meals', name: 'frozen burrito',  starred: false },
-  { categoryId: 'frozen-meals', name: 'frozen dumplings',starred: false },
-  { categoryId: 'frozen-meals', name: 'lasagna',         starred: false },
+  { categoryId: 'frozen-meals', name: 'frozen pizza',         starred: true  },
+  { categoryId: 'frozen-meals', name: 'frozen burrito',       starred: false },
+  { categoryId: 'frozen-meals', name: 'frozen dumplings',     starred: false },
+  { categoryId: 'frozen-meals', name: 'lasagna',              starred: false },
+  { categoryId: 'frozen-meals', name: 'frozen mac and cheese',  starred: false },
+  { categoryId: 'frozen-meals', name: 'chicken pot pie',      starred: false },
 
   // frozen produce
-  { categoryId: 'frozen-produce', name: 'frozen vegetables', starred: true  },
-  { categoryId: 'frozen-produce', name: 'frozen berries',    starred: false },
-  { categoryId: 'frozen-produce', name: 'frozen spinach',    starred: false },
-  { categoryId: 'frozen-produce', name: 'frozen fruit',      starred: false },
+  { categoryId: 'frozen-produce', name: 'frozen peas',            starred: false },
+  { categoryId: 'frozen-produce', name: 'frozen corn',            starred: false },
+  { categoryId: 'frozen-produce', name: 'frozen broccoli',        starred: false },
+  { categoryId: 'frozen-produce', name: 'frozen cauliflower',   starred: false },
+  { categoryId: 'frozen-produce', name: 'frozen edamame',         starred: false },
+  { categoryId: 'frozen-produce', name: 'frozen spinach',       starred: false },
+  { categoryId: 'frozen-produce', name: 'frozen strawberries',    starred: false },
+  { categoryId: 'frozen-produce', name: 'frozen blueberries',     starred: false },
+  { categoryId: 'frozen-produce', name: 'frozen mango chunks',    starred: false },
 
   // frozen meat & seafood
-  { categoryId: 'frozen-meat-seafood', name: 'frozen shrimp',       starred: false },
-  { categoryId: 'frozen-meat-seafood', name: 'frozen chicken',      starred: false },
-  { categoryId: 'frozen-meat-seafood', name: 'frozen fish fillet',  starred: false },
+  { categoryId: 'frozen-meat-seafood', name: 'frozen shrimp',          starred: false },
+  { categoryId: 'frozen-meat-seafood', name: 'frozen chicken breast', starred: false },
+  { categoryId: 'frozen-meat-seafood', name: 'frozen chicken wings',   starred: false },
+  { categoryId: 'frozen-meat-seafood', name: 'frozen salmon fillets', starred: false },
+  { categoryId: 'frozen-meat-seafood', name: 'frozen cod fillets',    starred: false },
+  { categoryId: 'frozen-meat-seafood', name: 'fish sticks',           starred: false },
 
   // ice cream & desserts
-  { categoryId: 'ice-cream-desserts', name: 'ice cream',    starred: true  },
-  { categoryId: 'ice-cream-desserts', name: 'popsicle',     starred: false },
-  { categoryId: 'ice-cream-desserts', name: 'frozen yogurt',starred: false },
+  { categoryId: 'ice-cream-desserts', name: 'ice cream',            starred: true  },
+  { categoryId: 'ice-cream-desserts', name: 'popsicles',            starred: false },
+  { categoryId: 'ice-cream-desserts', name: 'frozen yogurt',        starred: false },
+  { categoryId: 'ice-cream-desserts', name: 'ice cream sandwiches', starred: false },
+  { categoryId: 'ice-cream-desserts', name: 'sherbet',              starred: false },
+  { categoryId: 'ice-cream-desserts', name: 'sorbet',               starred: false },
 
   // frozen breakfast
-  { categoryId: 'frozen-breakfast', name: 'frozen waffles',    starred: false },
-  { categoryId: 'frozen-breakfast', name: 'hash browns',       starred: false },
-  { categoryId: 'frozen-breakfast', name: 'breakfast sandwich',starred: false },
+  { categoryId: 'frozen-breakfast', name: 'frozen waffles',      starred: true  },
+  { categoryId: 'frozen-breakfast', name: 'hash browns',         starred: false },
+  { categoryId: 'frozen-breakfast', name: 'frozen pancakes',     starred: false },
+  { categoryId: 'frozen-breakfast', name: 'breakfast sandwich', starred: false },
 
   // --- PACKAGED FOODS ---
   // beverages
   { categoryId: 'beverages', name: 'coffee',          starred: true  },
-  { categoryId: 'beverages', name: 'sparkling water', starred: true  },
-  { categoryId: 'beverages', name: 'tea',             starred: false },
-  { categoryId: 'beverages', name: 'juice',           starred: false },
-  { categoryId: 'beverages', name: 'soda',            starred: false },
+  { categoryId: 'beverages', name: 'sparkling water', starred: false },
+  { categoryId: 'beverages', name: 'black tea',       starred: false },
+  { categoryId: 'beverages', name: 'green tea',       starred: false },
+  { categoryId: 'beverages', name: 'orange juice',    starred: false },
+  { categoryId: 'beverages', name: 'apple juice',     starred: false },
   { categoryId: 'beverages', name: 'bottled water',   starred: false },
-  { categoryId: 'beverages', name: 'kombucha',        starred: false },
 
   // snacks
-  { categoryId: 'snacks', name: 'chips',       starred: true  },
-  { categoryId: 'snacks', name: 'crackers',    starred: true  },
-  { categoryId: 'snacks', name: 'popcorn',     starred: false },
-  { categoryId: 'snacks', name: 'pretzels',    starred: false },
-  { categoryId: 'snacks', name: 'trail mix',   starred: false },
-  { categoryId: 'snacks', name: 'granola bar', starred: false },
-  { categoryId: 'snacks', name: 'nuts',        starred: false },
-  { categoryId: 'snacks', name: 'chocolate',   starred: false },
-  { categoryId: 'snacks', name: 'cookies',     starred: false },
+  { categoryId: 'snacks', name: 'chips',          starred: true  },
+  { categoryId: 'snacks', name: 'crackers',       starred: true  },
+  { categoryId: 'snacks', name: 'tortilla chips', starred: false },
+  { categoryId: 'snacks', name: 'popcorn',        starred: false },
+  { categoryId: 'snacks', name: 'pretzels',       starred: false },
+  { categoryId: 'snacks', name: 'trail mix',      starred: false },
+  { categoryId: 'snacks', name: 'granola bars',   starred: false },
+  { categoryId: 'snacks', name: 'protein bars',   starred: false },
+  { categoryId: 'snacks', name: 'nuts',           starred: false },
+  { categoryId: 'snacks', name: 'chocolate',      starred: false },
+  { categoryId: 'snacks', name: 'cookies',        starred: false },
+  { categoryId: 'snacks', name: 'beef jerky',     starred: false },
 
   // canned goods
   { categoryId: 'canned-goods', name: 'black beans',    starred: false },
   { categoryId: 'canned-goods', name: 'chickpeas',      starred: false },
   { categoryId: 'canned-goods', name: 'diced tomatoes', starred: false },
   { categoryId: 'canned-goods', name: 'tomato paste',   starred: false },
-  { categoryId: 'canned-goods', name: 'tuna can',       starred: false },
+  { categoryId: 'canned-goods', name: 'canned corn',    starred: false },
+  { categoryId: 'canned-goods', name: 'canned green beans', starred: false },
+  { categoryId: 'canned-goods', name: 'canned tuna',    starred: false },
   { categoryId: 'canned-goods', name: 'coconut milk',   starred: false },
-  { categoryId: 'canned-goods', name: 'chicken broth',  starred: false },
+  { categoryId: 'canned-goods', name: 'coconut cream',  starred: false },
 
   // condiments & sauces
-  { categoryId: 'condiments-sauces', name: 'ketchup',        starred: true  },
-  { categoryId: 'condiments-sauces', name: 'mayo',           starred: true  },
-  { categoryId: 'condiments-sauces', name: 'mustard',        starred: true  },
-  { categoryId: 'condiments-sauces', name: 'soy sauce',      starred: true  },
-  { categoryId: 'condiments-sauces', name: 'sriracha',       starred: false },
-  { categoryId: 'condiments-sauces', name: 'hot sauce',      starred: false },
-  { categoryId: 'condiments-sauces', name: 'salad dressing', starred: false },
-  { categoryId: 'condiments-sauces', name: 'BBQ sauce',      starred: false },
-  { categoryId: 'condiments-sauces', name: 'relish',         starred: false },
-  { categoryId: 'condiments-sauces', name: 'jam',            starred: false },
+  { categoryId: 'condiments-sauces', name: 'ketchup',         starred: false },
+  { categoryId: 'condiments-sauces', name: 'mayo',            starred: false },
+  { categoryId: 'condiments-sauces', name: 'mustard',         starred: false },
+  { categoryId: 'condiments-sauces', name: 'soy sauce',       starred: false },
+  { categoryId: 'condiments-sauces', name: 'tahini',          starred: false },
+  { categoryId: 'condiments-sauces', name: 'sriracha',        starred: false },
+  { categoryId: 'condiments-sauces', name: 'hot sauce',       starred: false },
+  { categoryId: 'condiments-sauces', name: 'ranch dressing',  starred: false },
+  { categoryId: 'condiments-sauces', name: 'italian dressing', starred: false },
+  { categoryId: 'condiments-sauces', name: 'BBQ sauce',       starred: false },
+  { categoryId: 'condiments-sauces', name: 'relish',          starred: false },
 
   // pasta & grains
-  { categoryId: 'pasta-grains', name: 'pasta',    starred: true  },
-  { categoryId: 'pasta-grains', name: 'rice',     starred: true  },
-  { categoryId: 'pasta-grains', name: 'quinoa',   starred: false },
-  { categoryId: 'pasta-grains', name: 'couscous', starred: false },
-  { categoryId: 'pasta-grains', name: 'ramen',    starred: false },
-  { categoryId: 'pasta-grains', name: 'noodles',  starred: false },
+  { categoryId: 'pasta-grains', name: 'pasta',       starred: true  },
+  { categoryId: 'pasta-grains', name: 'quinoa',      starred: false },
+  { categoryId: 'pasta-grains', name: 'couscous',    starred: false },
+  { categoryId: 'pasta-grains', name: 'ramen noodles', starred: false },
+  { categoryId: 'pasta-grains', name: 'egg noodles', starred: false },
 
   // cereal & breakfast
-  { categoryId: 'cereal-breakfast', name: 'cereal',       starred: true  },
-  { categoryId: 'cereal-breakfast', name: 'oatmeal',      starred: false },
-  { categoryId: 'cereal-breakfast', name: 'granola',      starred: false },
-  { categoryId: 'cereal-breakfast', name: 'pancake mix',  starred: false },
+  { categoryId: 'cereal-breakfast', name: 'cereal',          starred: true  },
+  { categoryId: 'cereal-breakfast', name: 'instant oatmeal', starred: false },
+  { categoryId: 'cereal-breakfast', name: 'rolled oats',     starred: false },
+  { categoryId: 'cereal-breakfast', name: 'granola',         starred: false },
+  { categoryId: 'cereal-breakfast', name: 'pancake mix',     starred: false },
 
   // soups & broths
-  { categoryId: 'soups-broths', name: 'canned soup', starred: false },
-  { categoryId: 'soups-broths', name: 'bone broth',  starred: false },
-  { categoryId: 'soups-broths', name: 'ramen cups',  starred: false },
+  { categoryId: 'soups-broths', name: 'chicken noodle soup', starred: false },
+  { categoryId: 'soups-broths', name: 'tomato soup',         starred: false },
+  { categoryId: 'soups-broths', name: 'minestrone',         starred: false },
+  { categoryId: 'soups-broths', name: 'bone broth',          starred: false },
+  { categoryId: 'soups-broths', name: 'instant ramen',       starred: false },
+  { categoryId: 'soups-broths', name: 'chicken broth',       starred: false },
+  { categoryId: 'soups-broths', name: 'beef broth',          starred: false },
 
-  // international
-  { categoryId: 'international', name: 'curry paste',   starred: false },
-  { categoryId: 'international', name: 'miso',          starred: false },
-  { categoryId: 'international', name: 'rice vinegar',  starred: false },
-  { categoryId: 'international', name: 'fish sauce',    starred: false },
-  { categoryId: 'international', name: 'tahini',        starred: false },
-  { categoryId: 'international', name: 'tortilla chips',starred: false },
-  { categoryId: 'international', name: 'salsa',         starred: false },
+  // latin american groceries
+  { categoryId: 'latin-foods', name: 'enchilada sauce',         starred: false },
+  { categoryId: 'latin-foods', name: 'chipotle peppers in adobo', starred: false },
+  { categoryId: 'latin-foods', name: 'masa harina',             starred: false },
+  { categoryId: 'latin-foods', name: 'dulce de leche',          starred: false },
+
+  // east asian groceries
+  { categoryId: 'east-asian-foods', name: 'miso',          starred: false },
+  { categoryId: 'east-asian-foods', name: 'rice vinegar',  starred: false },
+  { categoryId: 'east-asian-foods', name: 'gochujang',     starred: false },
+  { categoryId: 'east-asian-foods', name: 'hoisin sauce',  starred: false },
+  { categoryId: 'east-asian-foods', name: 'nori sheets',   starred: false },
+  { categoryId: 'east-asian-foods', name: 'mirin',         starred: false },
+
+  // southeast asian groceries
+  { categoryId: 'southeast-asian-foods', name: 'curry paste',    starred: false },
+  { categoryId: 'southeast-asian-foods', name: 'fish sauce',     starred: false },
+  { categoryId: 'southeast-asian-foods', name: 'tamarind paste', starred: false },
+
+  // kosher groceries
+  { categoryId: 'kosher-foods', name: 'matzo',       starred: false },
+  { categoryId: 'kosher-foods', name: 'grape juice', starred: false },
 
   // --- BAKING, SPICES & OILS ---
   // baking
-  { categoryId: 'baking', name: 'flour',           starred: true  },
-  { categoryId: 'baking', name: 'sugar',           starred: true  },
-  { categoryId: 'baking', name: 'brown sugar',     starred: false },
-  { categoryId: 'baking', name: 'baking powder',   starred: false },
-  { categoryId: 'baking', name: 'baking soda',     starred: false },
-  { categoryId: 'baking', name: 'chocolate chips', starred: false },
-  { categoryId: 'baking', name: 'vanilla extract', starred: false },
+  { categoryId: 'baking', name: 'flour',            starred: true  },
+  { categoryId: 'baking', name: 'sugar',            starred: true  },
+  { categoryId: 'baking', name: 'brown sugar',      starred: false },
+  { categoryId: 'baking', name: 'baking powder',    starred: false },
+  { categoryId: 'baking', name: 'baking soda',      starred: false },
+  { categoryId: 'baking', name: 'chocolate chips',  starred: false },
+  { categoryId: 'baking', name: 'vanilla extract',  starred: false },
+  { categoryId: 'baking', name: 'powdered sugar',   starred: false },
+  { categoryId: 'baking', name: 'cornstarch',       starred: false },
 
   // spices & seasonings
   { categoryId: 'spices-seasonings', name: 'salt',              starred: true  },
-  { categoryId: 'spices-seasonings', name: 'black pepper',      starred: true  },
+  { categoryId: 'spices-seasonings', name: 'black pepper',      starred: false },
   { categoryId: 'spices-seasonings', name: 'garlic powder',     starred: false },
   { categoryId: 'spices-seasonings', name: 'onion powder',      starred: false },
   { categoryId: 'spices-seasonings', name: 'paprika',           starred: false },
@@ -371,80 +418,80 @@ export const SEED_ITEMS = [
   { categoryId: 'spices-seasonings', name: 'oregano',           starred: false },
   { categoryId: 'spices-seasonings', name: 'Italian seasoning', starred: false },
   { categoryId: 'spices-seasonings', name: 'red pepper flakes', starred: false },
+  { categoryId: 'spices-seasonings', name: 'ground ginger',    starred: false },
+  { categoryId: 'spices-seasonings', name: 'bay leaves',       starred: false },
 
   // oils & vinegars
-  { categoryId: 'oils-vinegars', name: 'olive oil',           starred: true  },
-  { categoryId: 'oils-vinegars', name: 'vegetable oil',       starred: false },
-  { categoryId: 'oils-vinegars', name: 'sesame oil',          starred: false },
-  { categoryId: 'oils-vinegars', name: 'balsamic vinegar',    starred: false },
+  { categoryId: 'oils-vinegars', name: 'olive oil',            starred: true  },
+  { categoryId: 'oils-vinegars', name: 'vegetable oil',        starred: false },
+  { categoryId: 'oils-vinegars', name: 'sesame oil',           starred: false },
+  { categoryId: 'oils-vinegars', name: 'avocado oil',          starred: false },
+  { categoryId: 'oils-vinegars', name: 'balsamic vinegar',     starred: false },
   { categoryId: 'oils-vinegars', name: 'apple cider vinegar', starred: false },
-  { categoryId: 'oils-vinegars', name: 'cooking spray',       starred: false },
+  { categoryId: 'oils-vinegars', name: 'cooking spray',        starred: false },
 
   // sweeteners
   { categoryId: 'sweeteners', name: 'honey',       starred: false },
   { categoryId: 'sweeteners', name: 'maple syrup', starred: false },
   { categoryId: 'sweeteners', name: 'agave',       starred: false },
-  { categoryId: 'sweeteners', name: 'stevia',      starred: false },
 
   // --- PREPARED FOODS & BAKERY ---
-  // bread & rolls
-  { categoryId: 'bread-rolls', name: 'bread',         starred: true  },
-  { categoryId: 'bread-rolls', name: 'bagel',         starred: false },
-  { categoryId: 'bread-rolls', name: 'hamburger bun', starred: false },
-  { categoryId: 'bread-rolls', name: 'hot dog bun',   starred: false },
-  { categoryId: 'bread-rolls', name: 'dinner roll',   starred: false },
-  { categoryId: 'bread-rolls', name: 'english muffin',starred: false },
-  { categoryId: 'bread-rolls', name: 'sourdough',     starred: false },
-
-  // tortillas & flatbreads
-  { categoryId: 'tortillas-flatbreads', name: 'tortilla', starred: true  },
-  { categoryId: 'tortillas-flatbreads', name: 'pita',     starred: false },
-  { categoryId: 'tortillas-flatbreads', name: 'naan',     starred: false },
+  // breads & tortillas
+  { categoryId: 'breads-tortillas', name: 'bread',            starred: true  },
+  { categoryId: 'breads-tortillas', name: 'flour tortillas',  starred: true  },
+  { categoryId: 'breads-tortillas', name: 'bagels',           starred: false },
+  { categoryId: 'breads-tortillas', name: 'hamburger buns', starred: false },
+  { categoryId: 'breads-tortillas', name: 'hot dog buns',     starred: false },
+  { categoryId: 'breads-tortillas', name: 'dinner rolls',    starred: false },
+  { categoryId: 'breads-tortillas', name: 'english muffins', starred: false },
+  { categoryId: 'breads-tortillas', name: 'sourdough',        starred: false },
+  { categoryId: 'breads-tortillas', name: 'brioche buns',     starred: false },
+  { categoryId: 'breads-tortillas', name: 'corn tortillas',   starred: false },
+  { categoryId: 'breads-tortillas', name: 'pita',             starred: false },
+  { categoryId: 'breads-tortillas', name: 'naan',             starred: false },
 
   // pastries & desserts
-  { categoryId: 'pastries-desserts', name: 'muffin',    starred: false },
-  { categoryId: 'pastries-desserts', name: 'croissant', starred: false },
-  { categoryId: 'pastries-desserts', name: 'donut',     starred: false },
-  { categoryId: 'pastries-desserts', name: 'cake',      starred: false },
-  { categoryId: 'pastries-desserts', name: 'pie',       starred: false },
+  { categoryId: 'pastries-desserts', name: 'muffins',      starred: false },
+  { categoryId: 'pastries-desserts', name: 'croissants',   starred: false },
+  { categoryId: 'pastries-desserts', name: 'donuts',       starred: false },
+  { categoryId: 'pastries-desserts', name: 'cinnamon rolls', starred: false },
+  { categoryId: 'pastries-desserts', name: 'danishes',     starred: false },
 
   // rotisserie & hot bar
-  { categoryId: 'rotisserie-hotbar', name: 'rotisserie chicken', starred: false },
-  { categoryId: 'rotisserie-hotbar', name: 'hot bar entree',     starred: false },
+  { categoryId: 'rotisserie-hotbar', name: 'rotisserie chicken', starred: true  },
+  { categoryId: 'rotisserie-hotbar', name: 'fried chicken',      starred: false },
   { categoryId: 'rotisserie-hotbar', name: 'mac and cheese',     starred: false },
+  { categoryId: 'rotisserie-hotbar', name: 'mashed potatoes',    starred: false },
 
   // sushi & sandwiches
-  { categoryId: 'sushi-sandwiches', name: 'california roll',     starred: false },
-  { categoryId: 'sushi-sandwiches', name: 'pre-made sandwich',   starred: false },
-  { categoryId: 'sushi-sandwiches', name: 'wrap',                starred: false },
+  { categoryId: 'sushi-sandwiches', name: 'california roll',   starred: false },
+  { categoryId: 'sushi-sandwiches', name: 'turkey sandwich',   starred: false },
+  { categoryId: 'sushi-sandwiches', name: 'chicken wrap',      starred: false },
 
   // --- PERSONAL CARE & PHARMACY ---
   // OTC meds
-  { categoryId: 'otc-meds', name: 'ibuprofen',        starred: true  },
-  { categoryId: 'otc-meds', name: 'acetaminophen',    starred: false },
-  { categoryId: 'otc-meds', name: 'allergy medicine', starred: false },
-  { categoryId: 'otc-meds', name: 'cold medicine',    starred: false },
-  { categoryId: 'otc-meds', name: 'antacid',          starred: false },
+  { categoryId: 'otc-meds', name: 'aspirin',          starred: true  },
+  { categoryId: 'otc-meds', name: 'allergy meds',     starred: false },
+  { categoryId: 'otc-meds', name: 'cold/flu syrup',   starred: false },
+  { categoryId: 'otc-meds', name: 'antacids',         starred: false },
   { categoryId: 'otc-meds', name: 'cough drops',      starred: false },
 
   // vitamins & supplements
   { categoryId: 'vitamins-supplements', name: 'multivitamin', starred: false },
-  { categoryId: 'vitamins-supplements', name: 'vitamin D',    starred: false },
-  { categoryId: 'vitamins-supplements', name: 'vitamin C',    starred: false },
   { categoryId: 'vitamins-supplements', name: 'probiotic',    starred: false },
   { categoryId: 'vitamins-supplements', name: 'fish oil',     starred: false },
 
   // first aid
-  { categoryId: 'first-aid', name: 'band-aids',         starred: false },
-  { categoryId: 'first-aid', name: 'neosporin',         starred: false },
-  { categoryId: 'first-aid', name: 'hydrogen peroxide', starred: false },
-  { categoryId: 'first-aid', name: 'rubbing alcohol',   starred: false },
+  { categoryId: 'first-aid', name: 'adhesive bandages',   starred: false },
+  { categoryId: 'first-aid', name: 'antibiotic ointment', starred: false },
+  { categoryId: 'first-aid', name: 'rubbing alcohol',     starred: false },
 
   // oral care
-  { categoryId: 'oral-care', name: 'toothpaste', starred: true  },
-  { categoryId: 'oral-care', name: 'toothbrush', starred: false },
-  { categoryId: 'oral-care', name: 'floss',      starred: false },
-  { categoryId: 'oral-care', name: 'mouthwash',  starred: false },
+  { categoryId: 'oral-care', name: 'toothpaste',       starred: true  },
+  { categoryId: 'oral-care', name: 'toothbrush',       starred: false },
+  { categoryId: 'oral-care', name: 'floss',            starred: false },
+  { categoryId: 'oral-care', name: 'mouthwash',        starred: false },
+  { categoryId: 'oral-care', name: 'whitening strips', starred: false },
 
   // hair & skin
   { categoryId: 'hair-skin', name: 'shampoo',     starred: true  },
@@ -454,10 +501,12 @@ export const SEED_ITEMS = [
   { categoryId: 'hair-skin', name: 'sunscreen',   starred: false },
   { categoryId: 'hair-skin', name: 'deodorant',   starred: false },
   { categoryId: 'hair-skin', name: 'face wash',   starred: false },
+  { categoryId: 'hair-skin', name: 'lip balm',    starred: false },
 
   // shaving & grooming
-  { categoryId: 'shaving-grooming', name: 'razor',         starred: false },
-  { categoryId: 'shaving-grooming', name: 'shaving cream', starred: false },
+  { categoryId: 'shaving-grooming', name: 'razor',          starred: false },
+  { categoryId: 'shaving-grooming', name: 'shaving cream',  starred: false },
+  { categoryId: 'shaving-grooming', name: 'aftershave',     starred: false },
 
   // feminine care
   { categoryId: 'feminine-care', name: 'tampons',      starred: false },
@@ -466,16 +515,16 @@ export const SEED_ITEMS = [
 
   // --- HOUSEHOLD & BULK ---
   // cleaning
-  { categoryId: 'cleaning', name: 'dish soap',           starred: true  },
-  { categoryId: 'cleaning', name: 'hand soap',           starred: true  },
-  { categoryId: 'cleaning', name: 'all-purpose cleaner', starred: false },
-  { categoryId: 'cleaning', name: 'glass cleaner',       starred: false },
-  { categoryId: 'cleaning', name: 'bleach',              starred: false },
-  { categoryId: 'cleaning', name: 'sponges',             starred: false },
-  { categoryId: 'cleaning', name: 'disinfecting wipes',  starred: false },
+  { categoryId: 'cleaning', name: 'dish soap',             starred: true  },
+  { categoryId: 'cleaning', name: 'hand soap',             starred: false },
+  { categoryId: 'cleaning', name: 'all-purpose cleaner',   starred: false },
+  { categoryId: 'cleaning', name: 'glass cleaner',         starred: false },
+  { categoryId: 'cleaning', name: 'bleach',                starred: false },
+  { categoryId: 'cleaning', name: 'sponges',               starred: false },
+  { categoryId: 'cleaning', name: 'disinfecting wipes',    starred: false },
 
   // paper goods
-  { categoryId: 'paper-goods', name: 'paper towel',  starred: true  },
+  { categoryId: 'paper-goods', name: 'paper towels', starred: true  },
   { categoryId: 'paper-goods', name: 'toilet paper', starred: true  },
   { categoryId: 'paper-goods', name: 'tissues',      starred: false },
   { categoryId: 'paper-goods', name: 'napkins',      starred: false },
@@ -487,32 +536,31 @@ export const SEED_ITEMS = [
   { categoryId: 'laundry', name: 'stain remover',     starred: false },
 
   // kitchen consumables
-  { categoryId: 'kitchen-consumables', name: 'trash bag',              starred: true  },
-  { categoryId: 'kitchen-consumables', name: 'foil',                   starred: false },
-  { categoryId: 'kitchen-consumables', name: 'plastic wrap',           starred: false },
-  { categoryId: 'kitchen-consumables', name: 'parchment paper',        starred: false },
-  { categoryId: 'kitchen-consumables', name: 'ziploc bag',             starred: false },
-  { categoryId: 'kitchen-consumables', name: 'food storage container', starred: false },
+  { categoryId: 'kitchen-consumables', name: 'trash bags',      starred: true  },
+  { categoryId: 'kitchen-consumables', name: 'aluminum foil',   starred: false },
+  { categoryId: 'kitchen-consumables', name: 'plastic wrap',    starred: false },
+  { categoryId: 'kitchen-consumables', name: 'parchment paper', starred: false },
 
   // pet
-  { categoryId: 'pet', name: 'dog food',    starred: false },
-  { categoryId: 'pet', name: 'cat food',    starred: false },
-  { categoryId: 'pet', name: 'cat litter',  starred: false },
-  { categoryId: 'pet', name: 'pet treats',  starred: false },
+  { categoryId: 'pet', name: 'dry dog food',     starred: false },
+  { categoryId: 'pet', name: 'wet dog food',     starred: false },
+  { categoryId: 'pet', name: 'cat food',         starred: false },
+  { categoryId: 'pet', name: 'clumping cat litter', starred: false },
+  { categoryId: 'pet', name: 'cat treats',       starred: false },
+  { categoryId: 'pet', name: 'dog treats',       starred: false },
 
   // batteries & light bulbs
   { categoryId: 'batteries-bulbs', name: 'AA batteries',  starred: false },
   { categoryId: 'batteries-bulbs', name: 'AAA batteries', starred: false },
   { categoryId: 'batteries-bulbs', name: '9V battery',    starred: false },
-  { categoryId: 'batteries-bulbs', name: 'light bulb',    starred: false },
+  { categoryId: 'batteries-bulbs', name: 'light bulbs',   starred: false },
 
   // storage & organization
-  { categoryId: 'storage-organization', name: 'storage bin',         starred: false },
-  { categoryId: 'storage-organization', name: 'ziploc bags (bulk)',  starred: false },
+  { categoryId: 'storage-organization', name: 'reusable shopping bags', starred: false },
 
   // baby
-  { categoryId: 'baby', name: 'diapers',   starred: false },
-  { categoryId: 'baby', name: 'wipes',     starred: false },
-  { categoryId: 'baby', name: 'formula',   starred: false },
-  { categoryId: 'baby', name: 'baby food', starred: false },
+  { categoryId: 'baby', name: 'diapers',           starred: false },
+  { categoryId: 'baby', name: 'baby wipes',        starred: false },
+  { categoryId: 'baby', name: 'infant formula',    starred: false },
+  { categoryId: 'baby', name: 'diaper rash cream', starred: false },
 ];

@@ -1,6 +1,12 @@
 // Tier 1 analytics — pure functions over the household item-events log.
-// Events shape: { ts, uid, name, category, action, source?, qty? }
+//
+// Events shape: { ts, uid, name, category, categoryId?, action, source?, qty? }
 // Names are normalized to lowercase on write; consumers can trust that.
+//
+// "visible items" = shortcuts shown as quick-add tiles in Add mode (keyed by categoryId).
+// "library" = autocomplete-only items (also keyed by categoryId).
+
+import { getThresholds } from './categoryClassifier.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -17,6 +23,7 @@ export function buildItemStats(events, { now = Date.now() } = {}) {
         key,
         name: e.name,
         category: e.category,
+        categoryId: e.categoryId || null,
         added: 0,
         checked: 0,
         unchecked: 0,
@@ -25,11 +32,12 @@ export function buildItemStats(events, { now = Date.now() } = {}) {
         lastTs: e.ts,
         lastCheckedTs: null,
         lastAddedTs: null,
-        sources: { typed: 0, quickAdd: 0, other: 0 },
+        sources: { typed: 0, quickAdd: 0, voice: 0, other: 0 },
         users: new Set(),
       };
       stats.set(key, s);
     }
+    if (e.categoryId && !s.categoryId) s.categoryId = e.categoryId;
     if (e.ts < s.firstTs) s.firstTs = e.ts;
     if (e.ts > s.lastTs) s.lastTs = e.ts;
     if (e.uid) s.users.add(e.uid);
@@ -38,6 +46,7 @@ export function buildItemStats(events, { now = Date.now() } = {}) {
       s.lastAddedTs = Math.max(s.lastAddedTs || 0, e.ts);
       if (e.source === 'typed') s.sources.typed++;
       else if (e.source === 'quickAdd') s.sources.quickAdd++;
+      else if (e.source === 'voice') s.sources.voice++;
       else s.sources.other++;
     } else if (e.action === 'checked') {
       s.checked++;
@@ -66,7 +75,133 @@ export function topPurchased(events, { limit = 20, sinceDays = null, now = Date.
     .slice(0, limit);
 }
 
-/** Quick-add items not added in the last N days — candidates for demotion. */
+/**
+ * Visible (shortcut) items with no add or check activity within their category's
+ * dormancy window. Category-aware: fresh items flag sooner than pantry staples.
+ *
+ * Guards against false positives:
+ *   - Per-category minEventAge: won't flag items in a tier until the event stream
+ *     is old enough for absence to be meaningful at that tier's cadence.
+ *   - Per-item createdAt: won't flag a shortcut that was added more recently than
+ *     its category's dormancy window (items without createdAt are treated as old).
+ *
+ * @param {Array} events — full event stream
+ * @param {Record<string, Array<{id, name, createdAt?}>>} visibleItemsByCategoryId
+ * @param {Record<string, {name: string}>} categoriesV2
+ * @param {{ now?: number }} opts
+ */
+export function dormantShortcuts(events, visibleItemsByCategoryId, categoriesV2, {
+  now = Date.now(),
+} = {}) {
+  const stats = buildItemStats(events, { now });
+
+  // Compute event stream age once (days since earliest event)
+  const earliest = events.length > 0
+    ? events.reduce((min, e) => (e.ts < min ? e.ts : min), now)
+    : now;
+  const streamAgeDays = (now - earliest) / DAY_MS;
+
+  const out = [];
+  for (const [catId, items] of Object.entries(visibleItemsByCategoryId || {})) {
+    const cat = categoriesV2[catId];
+    const catName = cat?.name || '';
+    const { dormantDays, minEventAge, tier } = getThresholds(catName, catId);
+
+    // Skip this category if the event stream isn't old enough for this tier
+    if (streamAgeDays < minEventAge && events.length > 0) continue;
+
+    for (const item of items || []) {
+      // Skip shortcuts added more recently than this category's dormancy window
+      if (item.createdAt && (now - item.createdAt) / DAY_MS < dormantDays) continue;
+
+      const nameLower = (item.name || '').toLowerCase();
+      // Find matching stat — try exact category match first, then name-only
+      let s = stats.get(itemKey(nameLower, catName));
+      if (!s) {
+        // Fall back to scanning all stats for a name match (category may have been renamed)
+        for (const candidate of stats.values()) {
+          if (candidate.name === nameLower) { s = candidate; break; }
+        }
+      }
+      const lastUse = s ? Math.max(s.lastAddedTs || 0, s.lastCheckedTs || 0) : 0;
+      const days = lastUse ? Math.floor((now - lastUse) / DAY_MS) : null;
+      if (days === null || days >= dormantDays) {
+        out.push({
+          categoryId: catId,
+          categoryName: catName,
+          suggestionId: item.id,
+          name: item.name,
+          daysSinceLastUse: days,
+          dormantDays,
+          tier,
+        });
+      }
+    }
+  }
+  return out.sort((a, b) => (b.daysSinceLastUse ?? Infinity) - (a.daysSinceLastUse ?? Infinity));
+}
+
+/**
+ * Items checked (bought) frequently that are not currently visible shortcuts.
+ * Uses category-aware thresholds: fresh items qualify faster than pantry/nonfood.
+ *
+ * @param {Array} events
+ * @param {Record<string, Array<{id, name}>>} visibleItemsByCategoryId
+ * @param {Record<string, {name: string}>} categoriesV2
+ * @param {{ now?: number }} opts
+ */
+export function promotionCandidates(events, visibleItemsByCategoryId, categoriesV2, { now = Date.now() } = {}) {
+  // Build a name→categoryId reverse lookup from visible items
+  const visibleNameSet = new Set();
+  for (const [catId, items] of Object.entries(visibleItemsByCategoryId || {})) {
+    for (const item of items || []) {
+      visibleNameSet.add(`${catId}::${(item.name || '').toLowerCase()}`);
+    }
+  }
+
+  // Build a categoryName → categoryId lookup
+  const catIdByName = {};
+  for (const [catId, cat] of Object.entries(categoriesV2 || {})) {
+    catIdByName[(cat?.name || '').toLowerCase()] = catId;
+  }
+
+  // Count checked events per item, within each category's threshold window
+  const candidates = new Map(); // key → { name, category, categoryId, checkedCount, lastTs }
+  for (const e of events) {
+    if (e.action !== 'checked') continue;
+    const catId = e.categoryId || catIdByName[(e.category || '').toLowerCase()] || null;
+    const catName = e.category || '';
+    const { promotionChecks, promotionDays } = getThresholds(catName, catId);
+    const since = now - promotionDays * DAY_MS;
+    if (e.ts < since) continue;
+
+    const key = itemKey(e.name, catName);
+    let c = candidates.get(key);
+    if (!c) {
+      c = { name: e.name, category: catName, categoryId: catId, checkedCount: 0, lastTs: e.ts, threshold: promotionChecks };
+      candidates.set(key, c);
+    }
+    c.checkedCount++;
+    if (e.ts > c.lastTs) c.lastTs = e.ts;
+  }
+
+  return Array.from(candidates.values())
+    .filter(c => {
+      if (c.checkedCount < c.threshold) return false;
+      // Exclude if already a visible shortcut
+      if (c.categoryId && visibleNameSet.has(`${c.categoryId}::${(c.name || '').toLowerCase()}`)) return false;
+      // Also check by scanning all categories for name match (in case categoryId didn't resolve)
+      for (const [catId, items] of Object.entries(visibleItemsByCategoryId || {})) {
+        if ((items || []).some(i => (i.name || '').toLowerCase() === (c.name || '').toLowerCase())) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b.checkedCount - a.checkedCount || b.lastTs - a.lastTs);
+}
+
+// --- Legacy API wrappers (for InsightsModal backward compat) ---
+
+/** @deprecated Use dormantShortcuts instead */
 export function dormantQuickAddCandidates(events, commonItemsByCategory, { dormantDays = 56, now = Date.now() } = {}) {
   const stats = buildItemStats(events, { now });
   const out = [];
@@ -82,32 +217,6 @@ export function dormantQuickAddCandidates(events, commonItemsByCategory, { dorma
     }
   }
   return out.sort((a, b) => (b.daysSinceLastUse ?? Infinity) - (a.daysSinceLastUse ?? Infinity));
-}
-
-/** Items the user has typed-added repeatedly that aren't already in the quick-add list — promotion candidates. */
-export function promotionCandidates(events, commonItemsByCategory, { minAdds = 3, withinDays = 42, now = Date.now() } = {}) {
-  const since = now - withinDays * DAY_MS;
-  const counts = new Map();
-  for (const e of events) {
-    if (e.action !== 'added' || e.source !== 'typed') continue;
-    if (e.ts < since) continue;
-    const key = itemKey(e.name, e.category);
-    let c = counts.get(key);
-    if (!c) {
-      c = { name: e.name, category: e.category, count: 0, lastTs: e.ts };
-      counts.set(key, c);
-    }
-    c.count++;
-    if (e.ts > c.lastTs) c.lastTs = e.ts;
-  }
-  const inQuickAdd = new Set();
-  for (const [category, items] of Object.entries(commonItemsByCategory || {})) {
-    for (const item of items || []) inQuickAdd.add(itemKey(item.name, category));
-  }
-  return Array.from(counts.entries())
-    .filter(([key, c]) => c.count >= minAdds && !inQuickAdd.has(key))
-    .map(([, c]) => c)
-    .sort((a, b) => b.count - a.count);
 }
 
 /** Per-user contribution split: who added what, who checked off what. */

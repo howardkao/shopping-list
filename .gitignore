@@ -58,6 +58,7 @@ voice-mcp/.dev.vars
 # Local requirements docs (not committed; see CLAUDE.md for workflow)
 PRD.md
 TDD.md
+DESIGN_REVIEW.md
 
 # Internal planning and AI agent docs
 PRODUCTIZATION.md

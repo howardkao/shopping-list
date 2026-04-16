@@ -38,7 +38,7 @@ const os = require('os');
 const SEED_AISLES = [
   { id: 'produce',            name: 'Produce' },
   { id: 'meat-seafood',       name: 'Meat & Seafood' },
-  { id: 'deli-dairy-eggs',    name: 'Deli, Dairy & Eggs' },
+  { id: 'dairy-eggs',         name: 'Dairy & Eggs' },
   { id: 'frozen',             name: 'Frozen' },
   { id: 'packaged-foods',     name: 'Packaged Foods' },
   { id: 'baking-spices-oils', name: 'Baking, Spices & Oils' },
@@ -54,7 +54,7 @@ const LEGACY_TO_AISLE = {
   // Generic set (current CATEGORIES in App.jsx as of 2026-04-14):
   'PRODUCE':              'produce',
   'MEAT & FISH':          'meat-seafood',
-  'DELI, DAIRY & EGGS':   'deli-dairy-eggs',
+  'DELI, DAIRY & EGGS':   'dairy-eggs',
   'FROZEN':               'frozen',
   'DRY GOODS':            'packaged-foods',
   'BAKING, SPICES & OILS':'baking-spices-oils',
@@ -65,7 +65,7 @@ const LEGACY_TO_AISLE = {
   // Older personal set:
   'VEGGIES':                          'produce',
   'FRUIT':                            'produce',
-  'DELI, DAIRY, EGGS':                'deli-dairy-eggs',
+  'DELI, DAIRY, EGGS':                'dairy-eggs',
   'PHARMACY / OTC':                   'pharmacy-personal',
   'TARGET / AMAZON / COSTCO':         'household-bulk',
   'COSTCO BULK FOODS':                'household-bulk',

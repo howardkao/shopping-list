@@ -32,12 +32,12 @@ import Onboarding from './Onboarding';
 import { bootstrapHouseholdTaxonomy } from './householdBootstrap';
 import { formatAisleNameForDisplay } from './aisleDisplay';
 import {
-  buildItemStats,
-  topPurchased,
-  dormantQuickAddCandidates,
+  dormantShortcuts,
   promotionCandidates,
+  topPurchased,
   userContributions,
 } from './itemAnalytics';
+// categoryClassifier is used internally by itemAnalytics
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -369,6 +369,8 @@ function InsightsModal({ householdId, onClose }) {
   const [error, setError] = useState(null);
   const [events, setEvents] = useState([]);
   const [commonByCat, setCommonByCat] = useState({});
+  const [categoriesV2, setCategoriesV2] = useState({});
+  const [visibleByCatId, setVisibleByCatId] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -385,15 +387,20 @@ function InsightsModal({ householdId, onClose }) {
         evList.sort((a, b) => a.ts - b.ts);
         const visRaw = visSnap.val() || {};
         const catRaw = catSnap.val() || {};
+        // Build visibleItemsByCategoryId (keyed by catId) for new analytics API
+        const visByCatId = {};
         const cByCat = {};
         for (const [catId, items] of Object.entries(visRaw)) {
-          const name = catRaw[catId]?.name;
-          if (!name) continue;
           const arr = Array.isArray(items) ? items : Object.values(items || {});
-          cByCat[name] = arr.filter(Boolean);
+          const filtered = arr.filter(Boolean);
+          visByCatId[catId] = filtered;
+          const name = catRaw[catId]?.name;
+          if (name) cByCat[name] = filtered;
         }
         setEvents(evList);
         setCommonByCat(cByCat);
+        setCategoriesV2(catRaw);
+        setVisibleByCatId(visByCatId);
         setLoading(false);
       } catch (err) {
         if (cancelled) return;
@@ -405,8 +412,8 @@ function InsightsModal({ householdId, onClose }) {
   }, [householdId]);
 
   const top = events.length ? topPurchased(events, { limit: 15 }) : [];
-  const promote = events.length ? promotionCandidates(events, commonByCat, { minAdds: 3, withinDays: 42 }) : [];
-  const dormant = Object.keys(commonByCat).length ? dormantQuickAddCandidates(events, commonByCat, { dormantDays: 56 }) : [];
+  const promote = events.length ? promotionCandidates(events, visibleByCatId, categoriesV2) : [];
+  const dormant = Object.keys(visibleByCatId).length ? dormantShortcuts(events, visibleByCatId, categoriesV2) : [];
   const users = events.length ? userContributions(events) : [];
 
   return (
@@ -442,13 +449,13 @@ function InsightsModal({ householdId, onClose }) {
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Promotion candidates <span className="text-xs font-normal text-gray-500">(typed ≥3× in 42 days, not in quick-add)</span></h3>
+                <h3 className="font-bold text-gray-800 mb-2">Promotion candidates <span className="text-xs font-normal text-gray-500">(checked ≥3× in threshold window, not a shortcut)</span></h3>
                 {promote.length === 0 ? <div className="text-gray-500">None.</div> : (
                   <div className="space-y-1">
                     {promote.map(c => (
-                      <div key={`${c.category}::${c.name}`} className="flex justify-between items-center bg-amber-50 rounded-lg px-3 py-2">
+                      <div key={`${c.categoryId || c.category}::${c.name}`} className="flex justify-between items-center bg-amber-50 rounded-lg px-3 py-2">
                         <div><span className="font-semibold">{c.name}</span> <span className="text-gray-500 text-xs">· {c.category}</span></div>
-                        <div className="text-gray-600">typed ×{c.count}</div>
+                        <div className="text-gray-600">checked ×{c.checkedCount}</div>
                       </div>
                     ))}
                   </div>
@@ -456,12 +463,12 @@ function InsightsModal({ householdId, onClose }) {
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Dormant quick-add items <span className="text-xs font-normal text-gray-500">(no use in 56+ days)</span></h3>
+                <h3 className="font-bold text-gray-800 mb-2">Dormant shortcuts <span className="text-xs font-normal text-gray-500">(no use beyond category threshold)</span></h3>
                 {dormant.length === 0 ? <div className="text-gray-500">None.</div> : (
                   <div className="space-y-1">
                     {dormant.slice(0, 30).map(d => (
-                      <div key={`${d.category}::${d.name}`} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
-                        <div><span className="font-semibold">{d.name}</span> <span className="text-gray-500 text-xs">· {d.category}</span></div>
+                      <div key={`${d.categoryId}::${d.name}`} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
+                        <div><span className="font-semibold">{d.name}</span> <span className="text-gray-500 text-xs">· {d.categoryName}</span></div>
                         <div className="text-gray-600">{d.daysSinceLastUse == null ? 'never used' : `${d.daysSinceLastUse}d ago`}</div>
                       </div>
                     ))}
@@ -1245,8 +1252,9 @@ export default function App() {
   const [localDataLoaded, setLocalDataLoaded] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
   const [showHeader, setShowHeader] = useState(true);
-  const [showStickyToolbar, setShowStickyToolbar] = useState(false);
   const [isScrolling, setIsScrolling] = useState(false);
+  /** Clear chip first-run tooltip: shows once per device when chip first appears. localStorage-gated. */
+  const [showClearChipTooltip, setShowClearChipTooltip] = useState(false);
   const scrollTimeoutRef = useRef(null);
   const prevQuickAddMode = useRef(quickAddMode);
   /** Last aisle-id key we applied shop default expansion for (empty = not yet seeded in shop). */
@@ -1255,10 +1263,16 @@ export default function App() {
   const shopAisleDefaultsHouseholdIdRef = useRef(null);
   /** Shop mode: previous snapshot of whether each aisle had any list items (for auto-collapse when emptied). */
   const prevShopAisleHadItemsRef = useRef({});
+
+  // --- A1/B1 suggestion intelligence ---
+  const [suggestionDismissals, setSuggestionDismissals] = useState({});
+  const [promotionCandidatesCache, setPromotionCandidatesCache] = useState([]);
+  const [dormantShortcutsCache, setDormantShortcutsCache] = useState([]);
+  const [activePromotionPrompt, setActivePromotionPrompt] = useState(null);
+  const promotionTimerRef = useRef(null);
   const lastScrollY = useRef(0);
   const lastScrollTime = useRef(Date.now());
   const smoothedVelocity = useRef(0);
-  const toolbarRef = useRef(null);
   const [showUpdateToast, setShowUpdateToast] = useState(false);
   const [showOfflineToast, setShowOfflineToast] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState(null);
@@ -1927,6 +1941,7 @@ export default function App() {
       category: event.category || '',
       action: event.action,
     };
+    if (event.categoryId) payload.categoryId = event.categoryId;
     if (event.source) payload.source = event.source;
     if (event.qty != null) payload.qty = Number(event.qty);
     const qLabel = (event.quantityLabel != null && String(event.quantityLabel).trim())
@@ -1961,6 +1976,7 @@ export default function App() {
     logItemEvent({
       name,
       category,
+      categoryId: categoryIdResolved,
       action: 'added',
       source,
       qty: Number(defaultQuantity) || 1,
@@ -1985,6 +2001,7 @@ export default function App() {
       logItemEvent({
         name: target.name,
         category: getShoppingCategoryName(target),
+        categoryId: getItemCategoryId(target),
         action: target.done ? 'unchecked' : 'checked',
         qty: Number(target.quantity) || 1,
         quantityLabel: (target.quantity || '').trim() || undefined,
@@ -2280,7 +2297,7 @@ export default function App() {
             if (vis.some(i => i.name.toLowerCase() === lower)) return null;
             const libItem = lib.find(i => i.name.toLowerCase() === lower);
             const newId = libItem?.id || push(ref(database, `${taxonomyBase}/visible-items/${catId}`)).key;
-            const entry = stampRecord({ id: newId, name: trimmed });
+            const entry = stampRecord({ id: newId, name: trimmed, createdAt: libItem?.createdAt || Date.now() });
             const nextVis = [...vis, entry];
             const nextLib = libItem ? lib.filter(i => i.id !== libItem.id) : lib;
             setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
@@ -2365,12 +2382,38 @@ export default function App() {
     await loadLastPurchasedForItemName(suggestion.name);
   };
 
+  const doneCount = list.reduce((n, item) => n + (item.done ? 1 : 0), 0);
+
   const clearDone = () => {
     const newList = list.filter(item => !item.done);
     setList(newList); // Optimistic update
     save('shopping-list', newList);
     saveShoppingListLocally(newList);
   };
+
+  /**
+   * First-run tooltip for the Clear chip. Shows once per device when chip first appears, then never again
+   * (localStorage flag). Auto-dismisses after 4s. Tapping the chip itself dismisses naturally because
+   * clearing all done items unmounts the chip.
+   */
+  const hasDone = doneCount > 0;
+  useEffect(() => {
+    if (!hasDone) {
+      setShowClearChipTooltip(false);
+      return;
+    }
+    if (typeof window === 'undefined') return;
+    try {
+      const FLAG = 'tend.clearChipTooltipSeen.v1';
+      if (window.localStorage.getItem(FLAG)) return;
+      setShowClearChipTooltip(true);
+      window.localStorage.setItem(FLAG, '1');
+      const t = window.setTimeout(() => setShowClearChipTooltip(false), 4000);
+      return () => window.clearTimeout(t);
+    } catch {
+      // localStorage unavailable (private mode, blocked, etc.) — silently skip the teaching moment.
+    }
+  }, [hasDone]);
 
   const removeItem = (id) => {
     const target = list.find(item => item.id === id);
@@ -2386,6 +2429,7 @@ export default function App() {
       logItemEvent({
         name: target.name,
         category: getShoppingCategoryName(target),
+        categoryId: getItemCategoryId(target),
         action: 'removed',
         qty: Number(target.quantity) || 1,
         quantityLabel: (target.quantity || '').trim() || undefined,
@@ -2399,6 +2443,7 @@ export default function App() {
     const categoryName = catId ? v2CategoryNameById[catId] : (aislesV2[aisleId]?.name || '');
     addItem(suggestion.name, categoryName, 'typed', generateId(), catId);
     setCategorySearches(prev => ({ ...prev, [aisleId]: '' }));
+    checkPromotionAfterAdd(suggestion.name, categoryName);
   };
 
   const getAisleSuggestions = (aisleId) => {
@@ -2566,29 +2611,149 @@ export default function App() {
     prevShopAisleHadItemsRef.current = nextHadItems;
   }, [quickAddMode, list, aislesV2, categoriesV2, householdId]);
 
+  // --- A1/B1: Load events and compute candidates when entering Add mode ---
+  useEffect(() => {
+    if (!quickAddMode || !householdId) {
+      setActivePromotionPrompt(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [evSnap, dismissSnap] = await Promise.all([
+          get(ref(database, `households/${householdId}/item-events`)),
+          get(ref(database, `households/${householdId}/suggestion-dismissals`)),
+        ]);
+        if (cancelled) return;
+        const evRaw = evSnap.val() || {};
+        const evList = Object.values(evRaw).filter(e => e && typeof e.ts === 'number');
+        evList.sort((a, b) => a.ts - b.ts);
+
+        const dismissRaw = dismissSnap.val() || {};
+        setSuggestionDismissals(dismissRaw);
+
+        const now = Date.now();
+        const isDismissed = (key) => {
+          const d = dismissRaw[key];
+          if (!d) return false;
+          if (d.resurfaceAfter === null || d.resurfaceAfter === undefined) {
+            return d.dismissCount >= 2;
+          }
+          return d.resurfaceAfter > now;
+        };
+
+        const promo = promotionCandidates(evList, visibleItemsV2, categoriesV2, { now });
+        const filtered = promo.filter(c => {
+          const key = `${c.categoryId || c.category}::${(c.name || '').toLowerCase()}::promote`;
+          return !isDismissed(key);
+        });
+        setPromotionCandidatesCache(filtered);
+
+        const dormant = dormantShortcuts(evList, visibleItemsV2, categoriesV2, { now });
+        const filteredDormant = dormant.filter(d => {
+          const key = `${d.categoryId}::${(d.name || '').toLowerCase()}::demote`;
+          return !isDismissed(key);
+        });
+        setDormantShortcutsCache(filteredDormant);
+      } catch (err) {
+        logger.warn('App', 'A1/B1 candidate computation failed', { error: err.message });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [quickAddMode, householdId]);
+
+  const dismissSuggestion = async (key, action) => {
+    if (!householdId) return;
+    const existing = suggestionDismissals[key];
+    const count = (existing?.dismissCount || 0) + 1;
+    const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
+    const record = {
+      action,
+      dismissedAt: Date.now(),
+      resurfaceAfter: count >= 2 ? null : Date.now() + NINETY_DAYS,
+      dismissCount: count,
+    };
+    setSuggestionDismissals(prev => ({ ...prev, [key]: record }));
+    try {
+      await set(ref(database, `households/${householdId}/suggestion-dismissals/${key}`), record);
+    } catch (err) {
+      logger.warn('App', 'dismissal write failed', { error: err.message, key });
+    }
+  };
+
+  const handlePromotionAccept = async (candidate) => {
+    setActivePromotionPrompt(null);
+    if (promotionTimerRef.current) clearTimeout(promotionTimerRef.current);
+    const catId = candidate.categoryId || categoryIdByName[(candidate.category || '').toLowerCase()];
+    if (!catId || !taxonomyBase) return;
+    const trimmed = (candidate.name || '').trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    const vis = visibleItemsV2[catId] || [];
+    const lib = libraryItemsV2[catId] || [];
+    if (vis.some(i => i.name.toLowerCase() === lower)) return;
+    const libItem = lib.find(i => i.name.toLowerCase() === lower);
+    const newId = libItem?.id || push(ref(database, `${taxonomyBase}/visible-items/${catId}`)).key;
+    const entry = stampRecord({ id: newId, name: trimmed, createdAt: libItem?.createdAt || Date.now() });
+    const nextVis = [...vis, entry].sort((a, b) => a.name.localeCompare(b.name));
+    const nextLib = libItem ? lib.filter(i => i.id !== libItem.id) : lib;
+    setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
+    if (libItem) setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
+    const updates = { [`${taxonomyBase}/visible-items/${catId}`]: nextVis };
+    if (libItem) updates[`${taxonomyBase}/library/${catId}`] = nextLib.length > 0 ? nextLib : null;
+    await update(ref(database), updates);
+    setPromotionCandidatesCache(prev => prev.filter(c => c.name !== candidate.name || c.category !== candidate.category));
+  };
+
+  const handlePromotionDismiss = (candidate) => {
+    setActivePromotionPrompt(null);
+    if (promotionTimerRef.current) clearTimeout(promotionTimerRef.current);
+    const key = `${candidate.categoryId || candidate.category}::${(candidate.name || '').toLowerCase()}::promote`;
+    dismissSuggestion(key, 'not-interested');
+    setPromotionCandidatesCache(prev => prev.filter(c => c.name !== candidate.name || c.category !== candidate.category));
+  };
+
+  const handleDormantDemote = async (item) => {
+    await removeSuggestionEverywhere(item.suggestionId, item.categoryId);
+    setDormantShortcutsCache(prev => prev.filter(d => !(d.suggestionId === item.suggestionId && d.categoryId === item.categoryId)));
+  };
+
+  const handleDormantKeep = (item) => {
+    const key = `${item.categoryId}::${(item.name || '').toLowerCase()}::demote`;
+    dismissSuggestion(key, 'keep');
+    setDormantShortcutsCache(prev => prev.filter(d => !(d.suggestionId === item.suggestionId && d.categoryId === item.categoryId)));
+  };
+
+  // After a typed add, check if the item is a promotion candidate
+  const checkPromotionAfterAdd = (name, category) => {
+    if (promotionTimerRef.current) clearTimeout(promotionTimerRef.current);
+    const lower = (name || '').toLowerCase();
+    const candidate = promotionCandidatesCache.find(c =>
+      (c.name || '').toLowerCase() === lower
+    );
+    if (!candidate) return;
+    setActivePromotionPrompt(candidate);
+    promotionTimerRef.current = setTimeout(() => {
+      setActivePromotionPrompt(prev => {
+        if (prev && (prev.name || '').toLowerCase() === lower) return null;
+        return prev;
+      });
+    }, 8000);
+  };
+
   useEffect(() => {
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
       const scrollingDown = currentScrollY > lastScrollY.current;
       const scrollingUp = currentScrollY < lastScrollY.current;
 
-      // Header visibility - hide when scrolling down past 50px, show when scrolling up
+      // Header visibility - hide when scrolling down past 50px, show when scrolling up.
+      // Bottom nav bar (mobile) is independently fixed-positioned and stays visible regardless.
       if (scrollingDown && currentScrollY > 50) {
         setShowHeader(false);
         setShowMenu(false); // Close menu when hiding header
       } else if (scrollingUp) {
         setShowHeader(true);
-      }
-
-      // Toolbar stickiness - only on list page
-      if (currentPage === 'list' && toolbarRef.current) {
-        const toolbarTop = toolbarRef.current.getBoundingClientRect().top + currentScrollY;
-
-        if (scrollingDown && currentScrollY > toolbarTop - 20) {
-          setShowStickyToolbar(true);
-        } else if (scrollingUp && currentScrollY < toolbarTop - 100) {
-          setShowStickyToolbar(false);
-        }
       }
 
       // Detect scrolling for fade effects - only at moderate to fast speeds
@@ -2935,43 +3100,95 @@ export default function App() {
         }
       `}</style>
       <div className={`min-h-screen scroll-fade-bg ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: isScrolling ? '#FFFFFF' : '#F7F7F7' }}>
-        <div className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
-          <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-4">
-            <div className="flex items-center gap-3">
-              {currentPage === 'list' && <div className="flex-1 font-bold text-xl" style={{ color: '#FF6B6B' }}>Shopping List</div>}
-              {currentPage === 'settings' && <div className="flex-1 font-bold text-xl text-gray-800">Settings</div>}
-              {currentPage === 'history' && <div className="flex-1 font-bold text-xl text-gray-800">Purchase History</div>}
-              {currentPage === 'account' && <div className="flex-1 font-bold text-xl text-gray-800">Account</div>}
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-colors ${
+        {/* Header — mobile: hamburger left, brand center, sync dot right (hides on scroll-down).
+            Desktop (lg+): brand left, Shop/Add + Clear inline (when on list), nav links, sync pill. Always visible. */}
+        <div className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 lg:translate-y-0 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
+          <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3">
+            <div className="flex items-center gap-2 lg:gap-3">
+              <button
+                onClick={() => setShowMenu(!showMenu)}
+                className="lg:hidden p-2 -ml-2 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label="Menu"
+              >
+                <Menu size={22} className="text-gray-700" />
+              </button>
+
+              <button
+                onClick={() => { setCurrentPage('list'); setShowMenu(false); }}
+                className="font-bold text-xl flex-1 lg:flex-none text-center lg:text-left"
+                style={{ color: '#FF7A7A' }}
+              >
+                Tend
+              </button>
+
+              {currentPage === 'list' && (
+                <div className="hidden lg:flex bg-gray-100 rounded-xl p-1 gap-1 ml-4">
+                  <button
+                    onClick={() => setQuickAddMode(false)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
+                    style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
+                  >
+                    <ShoppingCart size={16} strokeWidth={2.5} />
+                    Shop
+                  </button>
+                  <button
+                    onClick={() => setQuickAddMode(true)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
+                    style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
+                  >
+                    <ClipboardList size={16} strokeWidth={2.5} />
+                    Add
+                  </button>
+                </div>
+              )}
+
+              {currentPage === 'list' && doneCount > 0 && (
+                <button
+                  onClick={clearDone}
+                  className="hidden lg:flex items-center gap-1.5 px-3 py-2 rounded-lg text-white font-bold text-sm hover:opacity-90"
+                  style={{ backgroundColor: '#FF7A7A' }}
+                >
+                  <Check size={16} strokeWidth={2.5} />
+                  Clear {doneCount} done
+                </button>
+              )}
+
+              <div className="hidden lg:flex items-center gap-1 ml-auto">
+                <button onClick={() => setCurrentPage('list')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'list' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'list' ? { color: '#FF7A7A' } : {}}>List</button>
+                <button onClick={() => setCurrentPage('history')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'history' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'history' ? { color: '#FF7A7A' } : {}}>History</button>
+                <button onClick={() => setCurrentPage('settings')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'settings' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'settings' ? { color: '#FF7A7A' } : {}}>Settings</button>
+                <button onClick={() => setCurrentPage('account')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'account' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'account' ? { color: '#FF7A7A' } : {}}>Account</button>
+              </div>
+
+              <div className={`flex items-center gap-1.5 px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
                 !isOnline || !isConnected
                   ? 'bg-red-100'
                   : pendingOps > 0
                     ? 'bg-blue-100'
                     : 'bg-green-100'
-              }`}>
+              }`} aria-label={!isOnline || !isConnected ? 'Offline' : pendingOps > 0 ? 'Syncing' : 'Online'}>
                 {!isOnline || !isConnected ? (
                   <>
                     <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span className="text-xs font-medium text-red-600">Offline</span>
+                    <span className="hidden lg:inline text-xs font-medium text-red-600">Offline</span>
                   </>
                 ) : pendingOps > 0 ? (
                   <>
                     <Loader2 size={14} className="text-blue-600 animate-spin" />
-                    <span className="text-xs font-medium text-blue-600">Syncing</span>
+                    <span className="hidden lg:inline text-xs font-medium text-blue-600">Syncing</span>
                   </>
                 ) : (
                   <>
                     <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                    <span className="text-xs font-medium text-green-600">Online</span>
+                    <span className="hidden lg:inline text-xs font-medium text-green-600">Online</span>
                   </>
                 )}
               </div>
-              <button onClick={() => setShowMenu(!showMenu)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors"><Menu size={24} className="text-gray-700" /></button>
             </div>
           </div>
           {showMenu && (
-            <div className="absolute top-full left-0 right-0 bg-white shadow-lg border-t border-gray-200">
-              <div className="max-w-2xl lg:max-w-6xl mx-auto">
+            <div className="lg:hidden absolute top-full left-0 right-0 bg-white shadow-lg border-t border-gray-200">
+              <div className="max-w-2xl mx-auto">
                 <button onClick={() => { setCurrentPage('list'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 ${currentPage === 'list' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'list' ? '#FF7A7A' : '#374151' }}>Shopping List</button>
                 <button onClick={() => { setCurrentPage('history'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'history' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'history' ? '#FF7A7A' : '#374151' }}><History size={20} />Purchase History</button>
                 <button onClick={() => { setCurrentPage('settings'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'settings' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'settings' ? '#FF7A7A' : '#374151' }}><Settings size={20} />Settings</button>
@@ -2987,7 +3204,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="pt-20 pb-6">
+        <div className={`pt-20 lg:pb-6 ${currentPage === 'list' ? 'pb-32' : 'pb-6'}`}>
           {currentPage === 'account' ? (
             <div className="max-w-2xl mx-auto px-4">
               <div className="space-y-3">
@@ -3011,87 +3228,8 @@ export default function App() {
             </div>
           ) : currentPage === 'list' ? (
             <div className="max-w-2xl lg:max-w-6xl mx-auto px-4">
-              {/* Sticky toolbar when scrolling */}
-              {showStickyToolbar && (
-                <div className="fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-40 transition-transform duration-300" style={{ transform: showHeader ? 'translateY(72px)' : 'translateY(0)' }}>
-                  <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3">
-                    <div className="flex items-stretch gap-3">
-                      <div className={`bg-white rounded-2xl p-1.5 border-2 border-gray-200 flex-1 scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''}`}>
-                        <div className="flex gap-1 h-full">
-                          <button
-                            onClick={() => setQuickAddMode(false)}
-                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold transition-all text-sm ${
-                              !quickAddMode
-                                ? 'text-white'
-                                : 'text-gray-600 hover:bg-gray-50'
-                            }`}
-                            style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
-                          >
-                            <ShoppingCart size={18} strokeWidth={2.5} />
-                            <span>Shop</span>
-                          </button>
-                          <button
-                            onClick={() => setQuickAddMode(true)}
-                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold transition-all text-sm ${
-                              quickAddMode
-                                ? 'text-white'
-                                : 'text-gray-600 hover:bg-gray-50'
-                            }`}
-                            style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
-                          >
-                            <ClipboardList size={18} strokeWidth={2.5} />
-                            <span>Add</span>
-                          </button>
-                        </div>
-                      </div>
-                      <div className={`rounded-2xl p-1.5 border-2 transition-colors scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''} ${list.filter(i => i.done).length === 0 ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
-                        <button onClick={clearDone} disabled={list.filter(i => i.done).length === 0} className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all h-full ${list.filter(i => i.done).length === 0 ? 'text-gray-400' : 'text-white'}`} style={{ backgroundColor: list.filter(i => i.done).length === 0 ? 'transparent' : (quickAddMode ? '#6B7280' : '#FF7A7A') }}>
-                          <Check size={18} strokeWidth={2.5} />
-                          <span>Clear</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Original toolbar in page */}
-              <div ref={toolbarRef} className="flex items-stretch gap-3 mb-6">
-                <div className={`bg-white rounded-2xl p-1.5 border-2 border-gray-200 flex-1 scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''}`}>
-                  <div className="flex gap-1 h-full">
-                    <button
-                      onClick={() => setQuickAddMode(false)}
-                      className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold transition-all text-sm ${
-                        !quickAddMode
-                          ? 'text-white'
-                          : 'text-gray-600 hover:bg-gray-50'
-                      }`}
-                      style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
-                    >
-                      <ShoppingCart size={18} strokeWidth={2.5} />
-                      <span>Shop</span>
-                    </button>
-                    <button
-                      onClick={() => setQuickAddMode(true)}
-                      className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold transition-all text-sm ${
-                        quickAddMode
-                          ? 'text-white'
-                          : 'text-gray-600 hover:bg-gray-50'
-                      }`}
-                      style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
-                    >
-                      <ClipboardList size={18} strokeWidth={2.5} />
-                      <span>Add</span>
-                    </button>
-                  </div>
-                </div>
-                <div className={`rounded-2xl p-1.5 border-2 transition-colors scroll-fade-partial ${isScrolling ? 'is-scrolling' : ''} ${list.filter(i => i.done).length === 0 ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
-                  <button onClick={clearDone} disabled={list.filter(i => i.done).length === 0} className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all h-full ${list.filter(i => i.done).length === 0 ? 'text-gray-400' : 'text-white'}`} style={{ backgroundColor: list.filter(i => i.done).length === 0 ? 'transparent' : (quickAddMode ? '#6B7280' : '#FF7A7A') }}>
-                    <Check size={18} strokeWidth={2.5} />
-                    <span>Clear</span>
-                  </button>
-                </div>
-              </div>
+              {/* Toolbar lives in the desktop header (>=lg) and in the mobile bottom nav bar (<lg).
+                  See the fixed bottom-bar block at the bottom of this return for the mobile placement. */}
               <div className="space-y-3">
                 {organized.map(g => {
                   const search = categorySearches[g.aisleId] || '';
@@ -3254,6 +3392,96 @@ export default function App() {
                           ) : (
                             <div className="px-4 pb-4"><div className="text-center py-6 text-gray-400 text-sm italic">No items</div></div>
                           )}
+                          {/* A1: Inline promotion prompt */}
+                          {quickAddMode && activePromotionPrompt && (() => {
+                            const promptAisle = categoriesV2[activePromotionPrompt.categoryId]?.aisleId;
+                            const inThisAisle = promptAisle === g.aisleId ||
+                              (!promptAisle && g.categoryIdSet.has(activePromotionPrompt.categoryId));
+                            if (!inThisAisle) return null;
+                            return (
+                              <div className="mx-4 mb-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-center gap-3">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-amber-900">
+                                    <span className="font-bold">{activePromotionPrompt.name}</span> — add as a shortcut?
+                                  </p>
+                                  <p className="text-xs text-amber-700 mt-0.5">
+                                    Bought {activePromotionPrompt.checkedCount}× recently
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePromotionAccept(activePromotionPrompt)}
+                                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold text-white"
+                                  style={{ backgroundColor: '#FF7A7A' }}
+                                >
+                                  Yes
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePromotionDismiss(activePromotionPrompt)}
+                                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold text-gray-600 bg-white border border-gray-200"
+                                >
+                                  No thanks
+                                </button>
+                              </div>
+                            );
+                          })()}
+                          {/* B1: Dormant shortcuts hint */}
+                          {quickAddMode && (() => {
+                            const catIds = g.categoryIdSet || new Set();
+                            const aisleDormant = dormantShortcutsCache.filter(d => catIds.has(d.categoryId));
+                            if (aisleDormant.length === 0) return null;
+                            const [showCleanup, setShowCleanup] = [
+                              expandedCategories[`cleanup-${g.aisleId}`],
+                              (v) => setExpandedCategories(prev => ({ ...prev, [`cleanup-${g.aisleId}`]: v })),
+                            ];
+                            return (
+                              <div className="mx-4 mb-3 rounded-xl bg-gray-50 border border-gray-200 px-4 py-3">
+                                <p className="text-xs text-gray-500">
+                                  {aisleDormant.length === 1
+                                    ? <><span className="font-semibold text-gray-600">{aisleDormant[0].name}</span> hasn't been used in a while and may be cluttering your shortcuts.</>
+                                    : <><span className="font-semibold text-gray-600">{aisleDormant.length} shortcuts</span> in this aisle haven't been used in a while.</>}
+                                  {' '}
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowCleanup(!showCleanup)}
+                                    className="text-xs font-semibold underline underline-offset-2"
+                                    style={{ color: '#FF7A7A' }}
+                                  >
+                                    {showCleanup ? 'Hide' : 'Manage cleanup'}
+                                  </button>
+                                </p>
+                                {showCleanup && (
+                                  <div className="mt-3 space-y-1.5">
+                                    {aisleDormant.map(d => (
+                                      <div key={`${d.categoryId}-${d.suggestionId}`} className="flex items-center gap-2 rounded-lg bg-white border border-gray-200 px-3 py-2">
+                                        <div className="flex-1 min-w-0">
+                                          <span className="text-sm font-medium text-gray-700">{d.name}</span>
+                                          <span className="text-xs text-gray-400 ml-1.5">
+                                            {d.daysSinceLastUse == null ? 'never used' : `${d.daysSinceLastUse}d ago`}
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDormantDemote(d)}
+                                          className="flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100"
+                                        >
+                                          Remove
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDormantKeep(d)}
+                                          className="flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-bold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                                        >
+                                          Keep
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </>
                       )}
                     </div>
@@ -3281,6 +3509,56 @@ export default function App() {
             />
           )}
         </div>
+
+        {/* Mobile bottom nav bar — Shop/Add primary toggle + contextual Clear chip.
+            Only on the list page (Shop/Add modes don't apply elsewhere). Hidden at lg+ where the desktop header carries these controls. */}
+        {currentPage === 'list' && (
+          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 px-3 pt-3 pb-safe pointer-events-none">
+            {doneCount > 0 && (
+              <div className="flex justify-center mb-2 pointer-events-auto relative">
+                {showClearChipTooltip && (
+                  <div
+                    className="animate-tooltip-in absolute left-1/2 -top-12 -translate-x-1/2 bg-gray-900 text-white text-xs font-medium px-3 py-2 rounded-lg shadow-lg whitespace-nowrap"
+                    aria-hidden="true"
+                  >
+                    All done with these? Tap to clear.
+                    <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
+                  </div>
+                )}
+                <button
+                  key={`clear-chip-${hasDone}`}
+                  onClick={clearDone}
+                  className="animate-chip-in flex items-center gap-1.5 px-4 py-2 rounded-full text-white text-xs font-bold shadow-lg active:scale-95 transition-transform"
+                  style={{ backgroundColor: '#FF7A7A' }}
+                  aria-label={`Clear ${doneCount} done item${doneCount === 1 ? '' : 's'}`}
+                >
+                  <Check size={14} strokeWidth={2.5} />
+                  Clear {doneCount} done
+                </button>
+              </div>
+            )}
+            <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-1.5 flex gap-1 pointer-events-auto">
+              <button
+                onClick={() => setQuickAddMode(false)}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
+                aria-pressed={!quickAddMode}
+              >
+                <ShoppingCart size={18} strokeWidth={2.5} />
+                Shop
+              </button>
+              <button
+                onClick={() => setQuickAddMode(true)}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
+                aria-pressed={quickAddMode}
+              >
+                <ClipboardList size={18} strokeWidth={2.5} />
+                Add
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       {showHouseholdInsights && householdId && (
         <InsightsModal householdId={householdId} onClose={() => setShowHouseholdInsights(false)} />
@@ -3326,11 +3604,11 @@ export default function App() {
       {showDebugPanel && (
         <DebugPanel onClose={() => setShowDebugPanel(false)} />
       )}
-      {/* Floating debug button (only for admins) */}
+      {/* Floating debug button (admins only). Sits above the mobile bottom bar (currentPage='list') so it doesn't overlap. */}
       {isAdmin && (
         <button
           onClick={() => setShowDebugPanel(true)}
-          className="fixed bottom-4 left-4 p-3 bg-gray-800 text-white rounded-full shadow-lg hover:bg-gray-700 transition-colors z-40"
+          className={`fixed left-4 lg:bottom-4 ${currentPage === 'list' ? 'bottom-28' : 'bottom-4'} p-3 bg-gray-800 text-white rounded-full shadow-lg hover:bg-gray-700 transition-colors z-40`}
           title="Open Debug Panel (Ctrl+Shift+D)"
         >
           <Bug size={20} />
