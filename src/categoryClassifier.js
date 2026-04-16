@@ -41,8 +41,9 @@ const TIER_BY_SEED_ID = {
   'beverages': 'packaged', 'snacks': 'packaged', 'canned-goods': 'packaged',
   'condiments-sauces': 'packaged', 'pasta-grains': 'packaged',
   'cereal-breakfast': 'packaged', 'soups-broths': 'packaged',
-  'latin-foods': 'packaged', 'east-asian-foods': 'packaged',
-  'southeast-asian-foods': 'packaged', 'kosher-foods': 'packaged',
+  'latin-foods': 'packaged',
+  'east-southeast-asian-foods': 'packaged', 'south-asian-foods': 'packaged',
+  'kosher-foods': 'packaged',
 
   // Baking, Spices & Oils
   'baking': 'pantry', 'spices-seasonings': 'pantry',
@@ -73,7 +74,7 @@ const KEYWORD_RULES = [
     'soup', 'broth', 'ice cream', 'latin', 'hispanic', 'asian', 'kosher',
   ]],
   ['fresh', [
-    'fruit', 'veggie', 'vegetable', 'produce', 'meat', 'poultry', 'chicken',
+    'fruit', 'veggie', 'veggies', 'vegetable', 'produce', 'meat', 'poultry', 'chicken',
     'beef', 'pork', 'lamb', 'fish', 'seafood', 'shrimp', 'salmon',
     'deli', 'dairy', 'milk', 'cream', 'cheese', 'yogurt', 'yoghurt', 'butter',
     'egg', 'bread', 'bakery', 'fresh', 'herb', 'sushi', 'sandwich',

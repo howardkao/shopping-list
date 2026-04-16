@@ -22,7 +22,7 @@ const path = require('path');
 
 // Same mapping table used by migrate-to-taxonomy-v2.cjs.
 const LEGACY_TO_AISLE = {
-  'PRODUCE':              'produce',
+  'PRODUCE':              'fruit',
   'MEAT & FISH':          'meat-seafood',
   'DELI, DAIRY & EGGS':   'dairy-eggs',
   'FROZEN':               'frozen',
@@ -32,13 +32,13 @@ const LEGACY_TO_AISLE = {
   'HOUSEHOLD & PHARMACY': 'pharmacy-personal',
   'OTHER':                null, // MISC
 
-  'VEGGIES':                          'produce',
-  'FRUIT':                            'produce',
+  'VEGGIES':                          'veggies',
+  'FRUIT':                            'fruit',
   'DELI, DAIRY, EGGS':                'dairy-eggs',
   'PHARMACY / OTC':                   'pharmacy-personal',
   'TARGET / AMAZON / COSTCO':         'household-bulk',
   'COSTCO BULK FOODS':                'household-bulk',
-  'RANCH 99 / WEEE / BERKELEY BOWL':  'produce',
+  'RANCH 99 / WEEE / BERKELEY BOWL':  'veggies',
 };
 
 function encodeCategory(s) {

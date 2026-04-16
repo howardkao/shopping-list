@@ -451,11 +451,27 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **Account page:** “Household Insights” is a first-level action (opens the same modal as before) for any signed-in user with a `householdId`; “Admin Panel” row renamed to **Invite Household Members** (admins only).
 - **Modal:** Former admin modal title/subtitle updated to **Invite Household Members** / invitation-code copy; insights entry removed from inside that modal (`src/App.jsx`).
 
+### 2026-04-16 — Purchase History: show aisle (not category)
+- **`src/App.jsx`:** Purchase History resolves each row’s **aisle** from current taxonomy (`categoryId` on item-events, else category name → aisle). Uses `formatAisleNameForDisplay` for the right-hand label; falls back to stored category label only when no taxonomy match. Item-events fetch stays keyed on `householdId`; labels refresh via `useMemo` when taxonomy loads.
+
+### 2026-04-16 — Bugfix: new household showed all categories under Produce
+- **Cause:** IndexedDB `taxonomyV2` was global (not household-scoped). Stale categories from another household had `aisleId` keys that did not exist in the new household’s aisles map; the legacy “orphan category → first aisle” migration then reassigned **every** category to Produce (54+ in UI).
+- **`src/App.jsx`:** Persist `householdId` in the taxonomy snapshot; hydrate from IndexedDB only when `blob.householdId === householdId`. Guard the legacy migration when no category references any known aisle but many categories exist (stale cross-household graph).
+- **`src/offlineStorage.js`:** Document `householdId` on the saved taxonomy object.
+
 ### 2026-04-16 — Purchase semantics (2h check/uncheck pairing)
 - **`src/purchaseSemantics.js`:** Central model — an `unchecked` within two hours of the latest unmatched `checked` voids that check (per `itemKey` or legacy name+category).
 - **`src/itemAnalytics.js`:** `buildItemStats`, `promotionCandidates`, `userContributions`, and `eventSummary` count only **effective** checks (promote/demote and insights stay aligned).
 - **`src/App.jsx`:** Purchase History and bottom-sheet “last purchased” use the same semantics; shop toggles log optional `itemKey` on check/uncheck.
 - **`database.rules.json`:** Allow optional `itemKey` on item-events writes.
+
+### 2026-04-16 — Account: delete action bottom-aligned
+- **`src/App.jsx`:** Account page uses a full-viewport-height column so **Delete Account** sits at the bottom with a top divider and generous bottom padding (including `safe-area-inset-bottom`) to separate it from Sign out and reduce accidental taps near the screen edge.
+
+### 2026-04-16 — Seed catalog: Fruit / Veggies aisles, Asian grocery rows
+- **`src/seedCatalog.js`:** Replaced single **Produce** aisle with **Fruit** and **Veggies**; **Vegetables** display name (slug `vegetable` unchanged); **Fresh herbs** under Veggies. Packaged Foods: merged **East Asian** + **Southeast Asian** into **East & Southeast Asian groceries** (`east-southeast-asian-foods`); added **South Asian groceries** (six library items: basmati rice, ghee, red lentils, tikka masala simmer sauce, garam masala, papadums).
+- **`src/categoryClassifier.js`:** Tier map + keyword `veggies` for renames.
+- **`scripts/migrate-to-taxonomy-v2.cjs`**, **`scripts/reseed-with-legacy.cjs`:** `SEED_AISLES` / `LEGACY_TO_AISLE` aligned with new aisle slugs (`fruit` / `veggies`; legacy `PRODUCE` → `fruit`, `RANCH 99…` → `veggies`).
 
 ### 2026-04-10 — Initial productization planning
 - Discussed what's needed to go from single-household personal app to public multi-household product

@@ -36,7 +36,8 @@ const os = require('os');
 // Kept in sync with src/seedCatalog.js by convention; not imported because
 // this script runs as CJS and the seed file is ESM.
 const SEED_AISLES = [
-  { id: 'produce',            name: 'Produce' },
+  { id: 'fruit',              name: 'Fruit' },
+  { id: 'veggies',            name: 'Veggies' },
   { id: 'meat-seafood',       name: 'Meat & Seafood' },
   { id: 'dairy-eggs',         name: 'Dairy & Eggs' },
   { id: 'frozen',             name: 'Frozen' },
@@ -52,7 +53,7 @@ const SEED_AISLES = [
 // Unknown names fall through to the MISC aisle created at runtime.
 const LEGACY_TO_AISLE = {
   // Generic set (current CATEGORIES in App.jsx as of 2026-04-14):
-  'PRODUCE':              'produce',
+  'PRODUCE':              'fruit',
   'MEAT & FISH':          'meat-seafood',
   'DELI, DAIRY & EGGS':   'dairy-eggs',
   'FROZEN':               'frozen',
@@ -63,13 +64,13 @@ const LEGACY_TO_AISLE = {
   'OTHER':                null, // MISC
 
   // Older personal set:
-  'VEGGIES':                          'produce',
-  'FRUIT':                            'produce',
+  'VEGGIES':                          'veggies',
+  'FRUIT':                            'fruit',
   'DELI, DAIRY, EGGS':                'dairy-eggs',
   'PHARMACY / OTC':                   'pharmacy-personal',
   'TARGET / AMAZON / COSTCO':         'household-bulk',
   'COSTCO BULK FOODS':                'household-bulk',
-  'RANCH 99 / WEEE / BERKELEY BOWL':  'produce',
+  'RANCH 99 / WEEE / BERKELEY BOWL':  'veggies',
 };
 
 // Category-name encoding used by legacy paths. Matches encodeCategory() in App.jsx.

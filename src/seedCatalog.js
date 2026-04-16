@@ -12,7 +12,8 @@
 // under /households/{hid}/{aisles,categories,visible-items,library}.
 
 export const SEED_AISLES = [
-  { id: 'produce',             name: 'Produce' },
+  { id: 'fruit',               name: 'Fruit' },
+  { id: 'veggies',             name: 'Veggies' },
   { id: 'meat-seafood',        name: 'Meat & Seafood' },
   { id: 'dairy-eggs',          name: 'Dairy & Eggs' },
   { id: 'frozen',              name: 'Frozen' },
@@ -24,10 +25,10 @@ export const SEED_AISLES = [
 ];
 
 export const SEED_CATEGORIES = [
-  // PRODUCE
-  { id: 'fruit',              aisleId: 'produce',            name: 'Fruit' },
-  { id: 'vegetable',          aisleId: 'produce',            name: 'Vegetable' },
-  { id: 'fresh-herbs',        aisleId: 'produce',            name: 'Fresh herbs' },
+  // FRUIT / VEGGIES
+  { id: 'fruit',              aisleId: 'fruit',              name: 'Fruit' },
+  { id: 'vegetable',          aisleId: 'veggies',            name: 'Vegetables' },
+  { id: 'fresh-herbs',        aisleId: 'veggies',            name: 'Fresh herbs' },
 
   // MEAT & SEAFOOD
   { id: 'beef',               aisleId: 'meat-seafood',       name: 'Beef' },
@@ -60,8 +61,8 @@ export const SEED_CATEGORIES = [
   { id: 'cereal-breakfast',   aisleId: 'packaged-foods',     name: 'Cereal & breakfast' },
   { id: 'soups-broths',       aisleId: 'packaged-foods',     name: 'Soups & broths' },
   { id: 'latin-foods',        aisleId: 'packaged-foods',     name: 'Latin American groceries' },
-  { id: 'east-asian-foods',   aisleId: 'packaged-foods',     name: 'East Asian groceries' },
-  { id: 'southeast-asian-foods', aisleId: 'packaged-foods',  name: 'Southeast Asian groceries' },
+  { id: 'east-southeast-asian-foods', aisleId: 'packaged-foods', name: 'East & Southeast Asian groceries' },
+  { id: 'south-asian-foods',  aisleId: 'packaged-foods',     name: 'South Asian groceries' },
   { id: 'kosher-foods',       aisleId: 'packaged-foods',     name: 'Kosher groceries' },
 
   // BAKING, SPICES & OILS
@@ -377,18 +378,24 @@ export const SEED_ITEMS = [
   { categoryId: 'latin-foods', name: 'masa harina',             starred: false },
   { categoryId: 'latin-foods', name: 'dulce de leche',          starred: false },
 
-  // east asian groceries
-  { categoryId: 'east-asian-foods', name: 'miso',          starred: false },
-  { categoryId: 'east-asian-foods', name: 'rice vinegar',  starred: false },
-  { categoryId: 'east-asian-foods', name: 'gochujang',     starred: false },
-  { categoryId: 'east-asian-foods', name: 'hoisin sauce',  starred: false },
-  { categoryId: 'east-asian-foods', name: 'nori sheets',   starred: false },
-  { categoryId: 'east-asian-foods', name: 'mirin',         starred: false },
+  // east & southeast asian groceries
+  { categoryId: 'east-southeast-asian-foods', name: 'miso',          starred: false },
+  { categoryId: 'east-southeast-asian-foods', name: 'rice vinegar',  starred: false },
+  { categoryId: 'east-southeast-asian-foods', name: 'gochujang',     starred: false },
+  { categoryId: 'east-southeast-asian-foods', name: 'hoisin sauce',  starred: false },
+  { categoryId: 'east-southeast-asian-foods', name: 'nori sheets',   starred: false },
+  { categoryId: 'east-southeast-asian-foods', name: 'mirin',         starred: false },
+  { categoryId: 'east-southeast-asian-foods', name: 'curry paste',   starred: false },
+  { categoryId: 'east-southeast-asian-foods', name: 'fish sauce',    starred: false },
+  { categoryId: 'east-southeast-asian-foods', name: 'tamarind paste', starred: false },
 
-  // southeast asian groceries
-  { categoryId: 'southeast-asian-foods', name: 'curry paste',    starred: false },
-  { categoryId: 'southeast-asian-foods', name: 'fish sauce',     starred: false },
-  { categoryId: 'southeast-asian-foods', name: 'tamarind paste', starred: false },
+  // south asian groceries
+  { categoryId: 'south-asian-foods', name: 'basmati rice',              starred: false },
+  { categoryId: 'south-asian-foods', name: 'ghee',                      starred: false },
+  { categoryId: 'south-asian-foods', name: 'red lentils',               starred: false },
+  { categoryId: 'south-asian-foods', name: 'tikka masala simmer sauce', starred: false },
+  { categoryId: 'south-asian-foods', name: 'garam masala',              starred: false },
+  { categoryId: 'south-asian-foods', name: 'papadums',                  starred: false },
 
   // kosher groceries
   { categoryId: 'kosher-foods', name: 'matzo',       starred: false },

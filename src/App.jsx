@@ -1117,13 +1117,17 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
   );
 }
 
-function PurchaseHistory({ householdId }) {
+function PurchaseHistory({ householdId, aisles = {}, categories = {} }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [dayGroups, setDayGroups] = useState([]);
+  /** Raw groups from Firebase (no aisle labels); `null` until first fetch completes for this household. */
+  const [baseDayGroups, setBaseDayGroups] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setBaseDayGroups(null);
     (async () => {
       try {
         const snap = await get(ref(database, `households/${householdId}/item-events`));
@@ -1132,7 +1136,7 @@ function PurchaseHistory({ householdId }) {
         const events = Object.values(raw).filter(e => e && typeof e.ts === 'number');
 
         // Effective purchases only (see purchaseSemantics.js — uncheck within 2h voids prior check)
-        const dayMap = new Map(); // dateStr -> Map(rowKey -> { name, category, qty, count, quantityLabel })
+        const dayMap = new Map(); // dateStr -> Map(rowKey -> { name, category, categoryId?, qty, count, quantityLabel })
         for (const e of computeEffectiveCheckEvents(events)) {
           const dateStr = new Date(e.ts).toLocaleDateString('en-CA'); // YYYY-MM-DD in local tz
           if (!dayMap.has(dateStr)) dayMap.set(dateStr, new Map());
@@ -1144,12 +1148,14 @@ function PurchaseHistory({ householdId }) {
             items.set(key, {
               name: e.name,
               category: e.category,
+              categoryId: e.categoryId || null,
               qty: e.qty || 1,
               quantityLabel: (e.quantityLabel && String(e.quantityLabel).trim()) || '',
               count: 0,
             });
           }
           const item = items.get(key);
+          if (e.categoryId && !item.categoryId) item.categoryId = e.categoryId;
           item.count++;
           if (e.qty) item.qty = e.qty;
           if (e.quantityLabel && String(e.quantityLabel).trim()) {
@@ -1157,7 +1163,7 @@ function PurchaseHistory({ householdId }) {
           }
         }
 
-        // Build sorted groups (newest first)
+        // Build sorted groups (newest first); aisle labels applied in useMemo when taxonomy is available
         const groups = [];
         for (const [dateStr, items] of dayMap) {
           const purchased = Array.from(items.values()).filter(i => i.count > 0);
@@ -1168,7 +1174,7 @@ function PurchaseHistory({ householdId }) {
         }
         groups.sort((a, b) => b.dateStr.localeCompare(a.dateStr));
 
-        setDayGroups(groups);
+        setBaseDayGroups(groups);
         setLoading(false);
       } catch (err) {
         if (cancelled) return;
@@ -1178,6 +1184,42 @@ function PurchaseHistory({ householdId }) {
     })();
     return () => { cancelled = true; };
   }, [householdId]);
+
+  const dayGroups = useMemo(() => {
+    if (baseDayGroups == null) return [];
+    const catIdToAisleDisplay = {};
+    for (const [catId, cat] of Object.entries(categories)) {
+      if (!cat?.aisleId) continue;
+      const aisleName = aisles[cat.aisleId]?.name;
+      if (aisleName != null && String(aisleName).trim() !== '') {
+        catIdToAisleDisplay[catId] = formatAisleNameForDisplay(aisleName);
+      }
+    }
+    const catNameLowerToAisleDisplay = {};
+    for (const cat of Object.values(categories)) {
+      if (!cat?.name || !cat?.aisleId) continue;
+      const aisleName = aisles[cat.aisleId]?.name;
+      if (aisleName == null || String(aisleName).trim() === '') continue;
+      catNameLowerToAisleDisplay[String(cat.name).toLowerCase()] = formatAisleNameForDisplay(aisleName);
+    }
+    const aisleLabelForRow = (row) => {
+      if (row.categoryId && catIdToAisleDisplay[row.categoryId]) {
+        return catIdToAisleDisplay[row.categoryId];
+      }
+      const k = (row.category || '').toLowerCase();
+      if (k && catNameLowerToAisleDisplay[k]) return catNameLowerToAisleDisplay[k];
+      return '';
+    };
+    return baseDayGroups.map((group) => {
+      const items = group.items
+        .map((row) => {
+          const aisleLabel = aisleLabelForRow(row);
+          return { ...row, aisleLabel: aisleLabel || (row.category || '') };
+        })
+        .sort((a, b) => (a.aisleLabel || '').localeCompare(b.aisleLabel || '') || a.name.localeCompare(b.name));
+      return { dateStr: group.dateStr, items };
+    });
+  }, [baseDayGroups, aisles, categories]);
 
   const formatDate = (dateStr) => {
     const [y, m, d] = dateStr.split('-').map(Number);
@@ -1192,7 +1234,9 @@ function PurchaseHistory({ householdId }) {
 
   if (loading) return <div className="max-w-2xl mx-auto px-4"><div className="text-center py-12 text-gray-400">Loading purchase history...</div></div>;
   if (error) return <div className="max-w-2xl mx-auto px-4"><div className="text-center py-12 text-red-500">Error: {error}</div></div>;
-  if (dayGroups.length === 0) return <div className="max-w-2xl mx-auto px-4"><div className="text-center py-12 text-gray-400 text-sm">No purchases yet. Check off items on your shopping list to start tracking.</div></div>;
+  if (baseDayGroups != null && dayGroups.length === 0) {
+    return <div className="max-w-2xl mx-auto px-4"><div className="text-center py-12 text-gray-400 text-sm">No purchases yet. Check off items on your shopping list to start tracking.</div></div>;
+  }
 
   return (
     <div className="max-w-2xl mx-auto px-4">
@@ -1216,7 +1260,7 @@ function PurchaseHistory({ householdId }) {
                         <span className="ml-1 text-gray-400 font-medium">{qtyText}</span>
                       ) : null}
                     </span>
-                    <span className="text-xs text-gray-400 uppercase tracking-wide flex-shrink-0">{item.category}</span>
+                    <span className="text-xs text-gray-400 uppercase tracking-wide flex-shrink-0">{item.aisleLabel}</span>
                   </div>
                 );
               })}
@@ -1252,6 +1296,8 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [localDataLoaded, setLocalDataLoaded] = useState(false);
+  /** Raw taxonomy blob from IndexedDB; applied only when `householdId` matches `blob.householdId`. */
+  const [localTaxonomyV2Blob, setLocalTaxonomyV2Blob] = useState(null);
   const [lastSyncTime, setLastSyncTime] = useState(null);
   const [showHeader, setShowHeader] = useState(true);
   const [isScrolling, setIsScrolling] = useState(false);
@@ -1328,12 +1374,13 @@ export default function App() {
   useEffect(() => {
     if (!Object.keys(aislesV2).length || !Object.keys(categoriesV2).length) return;
     saveTaxonomyV2Locally({
+      ...(householdId ? { householdId } : {}),
       aisles: aislesV2,
       categories: categoriesV2,
       visibleItems: visibleItemsV2,
       library: libraryItemsV2,
     });
-  }, [aislesV2, categoriesV2, visibleItemsV2, libraryItemsV2]);
+  }, [householdId, aislesV2, categoriesV2, visibleItemsV2, libraryItemsV2]);
 
   // Legacy: categories that were "hidden" or lost an aisle are reassigned to the first aisle (merge is how categories are removed now).
   useEffect(() => {
@@ -1341,6 +1388,17 @@ export default function App() {
     const firstAisleId = Object.keys(aislesV2)
       .sort((a, b) => (aislesV2[a]?.order ?? 0) - (aislesV2[b]?.order ?? 0))[0];
     if (!firstAisleId) return;
+    const aisleKeySet = new Set(Object.keys(aislesV2));
+    let categoriesPointingAtKnownAisle = 0;
+    for (const c of Object.values(categoriesV2)) {
+      if (c?.aisleId && aisleKeySet.has(c.aisleId)) categoriesPointingAtKnownAisle++;
+    }
+    const totalCats = Object.keys(categoriesV2).length;
+    // Stale IndexedDB from another household yields ids that match no aisle; without this guard
+    // every category would be moved to aisle #1 (Produce) before Firebase overwrites state.
+    if (totalCats >= 10 && categoriesPointingAtKnownAisle === 0 && aisleKeySet.size >= 3) {
+      return;
+    }
     const base = `households/${householdId}/taxonomy`;
     const updates = {};
     for (const [cid, c] of Object.entries(categoriesV2)) {
@@ -1662,12 +1720,7 @@ export default function App() {
         if (localList !== null && localList !== undefined) {
           setList(localList.map(normalizeListItem));
         }
-        if (localTaxonomyV2) {
-          setAislesV2(localTaxonomyV2.aisles || {});
-          setCategoriesV2(localTaxonomyV2.categories || {});
-          setVisibleItemsV2(localTaxonomyV2.visibleItems || {});
-          setLibraryItemsV2(localTaxonomyV2.library || {});
-        }
+        setLocalTaxonomyV2Blob(localTaxonomyV2 ?? null);
         if (syncTime) {
           setLastSyncTime(syncTime);
         }
@@ -1689,6 +1742,17 @@ export default function App() {
 
     loadLocalData();
   }, []);
+
+  // Offline taxonomy: only merge IndexedDB snapshot when it belongs to this household.
+  useEffect(() => {
+    if (!localDataLoaded || !householdId) return;
+    const blob = localTaxonomyV2Blob;
+    if (!blob || blob.householdId !== householdId) return;
+    setAislesV2(blob.aisles || {});
+    setCategoriesV2(blob.categories || {});
+    setVisibleItemsV2(blob.visibleItems || {});
+    setLibraryItemsV2(blob.library || {});
+  }, [localDataLoaded, householdId, localTaxonomyV2Blob]);
 
   useEffect(() => {
     if (!user || !householdId) {
@@ -3121,7 +3185,7 @@ export default function App() {
         }
       `}</style>
       <div className={`min-h-screen scroll-fade-bg ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: isScrolling ? '#FFFFFF' : '#F7F7F7' }}>
-        {/* Header — mobile: hamburger left, brand center, sync dot right (hides on scroll-down).
+        {/* Header — mobile: hamburger left, brand center, sync pill right (hides on scroll-down).
             Desktop (lg+): brand left, Shop/Add + Clear inline (when on list), nav links, sync pill. Always visible. */}
         <div className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 lg:translate-y-0 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
           <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3">
@@ -3181,7 +3245,7 @@ export default function App() {
                 <button onClick={() => setCurrentPage('account')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'account' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'account' ? { color: '#FF7A7A' } : {}}>Account</button>
               </div>
 
-              <div className={`flex items-center gap-1.5 px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
+              <div className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
                 !isOnline || !isConnected
                   ? 'bg-red-100'
                   : pendingOps > 0
@@ -3191,17 +3255,17 @@ export default function App() {
                 {!isOnline || !isConnected ? (
                   <>
                     <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span className="hidden lg:inline text-xs font-medium text-red-600">Offline</span>
+                    <span className="text-xs font-medium text-red-600">Offline</span>
                   </>
                 ) : pendingOps > 0 ? (
                   <>
                     <Loader2 size={14} className="text-blue-600 animate-spin" />
-                    <span className="hidden lg:inline text-xs font-medium text-blue-600">Syncing</span>
+                    <span className="text-xs font-medium text-blue-600">Syncing</span>
                   </>
                 ) : (
                   <>
                     <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                    <span className="hidden lg:inline text-xs font-medium text-green-600">Online</span>
+                    <span className="text-xs font-medium text-green-600">Online</span>
                   </>
                 )}
               </div>
@@ -3227,8 +3291,8 @@ export default function App() {
 
         <div className={`pt-20 lg:pb-6 ${currentPage === 'list' ? 'pb-32' : 'pb-6'}`}>
           {currentPage === 'account' ? (
-            <div className="max-w-2xl mx-auto px-4">
-              <div className="space-y-3">
+            <div className="max-w-2xl mx-auto px-4 flex min-h-[calc(100dvh-5.5rem)] flex-col">
+              <div className="space-y-3 shrink-0">
                 {householdId && (
                   <button onClick={() => setShowHouseholdInsights(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
                     <BarChart3 size={20} />Household Insights
@@ -3242,6 +3306,8 @@ export default function App() {
                 <button onClick={handleSignOut} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-red-500 hover:bg-red-50 transition-colors">
                   <LogOut size={20} />Sign Out
                 </button>
+              </div>
+              <div className="mt-auto shrink-0 border-t border-gray-200 pt-10 pb-[max(2rem,calc(env(safe-area-inset-bottom,0px)+1.25rem))]">
                 <button onClick={() => setShowDeleteAccount(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-red-400 hover:bg-red-50 transition-colors text-sm">
                   <Trash2 size={18} />Delete Account
                 </button>
@@ -3511,7 +3577,7 @@ export default function App() {
               </div>
             </div>
           ) : currentPage === 'history' ? (
-            <PurchaseHistory householdId={householdId} />
+            <PurchaseHistory householdId={householdId} aisles={aislesV2} categories={categoriesV2} />
           ) : (
             <SuggestionsEditor
               aisles={aislesV2}

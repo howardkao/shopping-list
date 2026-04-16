@@ -20,9 +20,9 @@ import {
 } from 'lucide-react';
 import { formatAisleNameForDisplay } from './aisleDisplay';
 
-const MAX_CATEGORY_PREVIEW_ITEMS = 5;
+const MAX_CATEGORY_PREVIEW_ITEMS = 4;
 
-/** Visible (shortcut) names first, then library-only names; deduped case-insensitively. Shows at most five; ", ..." if there are more. */
+/** Visible (shortcut) names first, then library-only names; deduped case-insensitively. Up to four examples plus ", ..." (always) so the line reads as a sample, not an exhaustive list. */
 function categoryItemsCommaList(visibleItems, libraryItems) {
   const vis = visibleItems || [];
   const lib = libraryItems || [];
@@ -42,9 +42,7 @@ function categoryItemsCommaList(visibleItems, libraryItems) {
   }
   if (names.length === 0) return '';
   const shown = names.slice(0, MAX_CATEGORY_PREVIEW_ITEMS);
-  const line = shown.join(', ');
-  if (names.length > MAX_CATEGORY_PREVIEW_ITEMS) return `${line}, ...`;
-  return line;
+  return `${shown.join(', ')}, ...`;
 }
 
 // SuggestionsEditor

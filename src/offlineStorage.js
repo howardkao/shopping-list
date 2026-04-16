@@ -305,6 +305,8 @@ export async function loadCachedUser() {
 
 /**
  * Save the v2 taxonomy snapshot to local storage.
+ * Include `householdId` on the object so we never hydrate another household's
+ * aisle/category id graph into the wrong account (would orphan every category).
  */
 export async function saveTaxonomyV2Locally(taxonomy) {
   try {
