@@ -11,8 +11,7 @@ export default function Onboarding(props) {
     displayName,
     aisles, categories, visibleItems, libraryItems,
     onRenameAisle, onAddAisle, onDeleteAisle, onReorderAisles,
-    onRenameCategory, onAddCategory, onMoveCategory, onHideCategory,
-    onUnhideCategory, onDeleteCategory,
+    onRenameCategory, onAddCategory, onMoveCategory, onMergeCategory,
     onComplete,
   } = props;
 
@@ -53,13 +52,6 @@ export default function Onboarding(props) {
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#F7F7F7' }}>
       <div className="max-w-3xl mx-auto px-4 py-6">
-        <div className="mb-4">
-          <h1 className="text-2xl font-bold text-gray-800 mb-1">Customize your aisles</h1>
-          <p className="text-sm text-gray-600">
-            Drag aisles into the order you walk your store. Expand an aisle to see each category and
-            its shortcuts and library items. When you're happy, tap <strong>Looks good</strong>.
-          </p>
-        </div>
         <SuggestionsEditor
           aisles={aisles}
           categories={categories}
@@ -72,21 +64,10 @@ export default function Onboarding(props) {
           onRenameCategory={onRenameCategory}
           onAddCategory={onAddCategory}
           onMoveCategory={onMoveCategory}
-          onHideCategory={onHideCategory}
-          onUnhideCategory={onUnhideCategory}
-          onDeleteCategory={onDeleteCategory}
+          onMergeCategory={onMergeCategory}
           onboarding={true}
           onDone={onComplete}
         />
-        <div className="mt-6 flex justify-end">
-          <button
-            onClick={onComplete}
-            className="px-6 py-3 rounded-xl font-bold text-white transition-colors"
-            style={{ backgroundColor: '#FF7A7A' }}
-          >
-            Looks good →
-          </button>
-        </div>
       </div>
     </div>
   );

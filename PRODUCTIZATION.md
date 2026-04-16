@@ -299,6 +299,12 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ### 2026-04-15 — Item detail sheet: spacing before metadata
 - `ItemBottomSheet` (`src/App.jsx`): added `mt-14` between the quantity field and the “Added by” / “Last purchased” block so mobile bottom sheet and desktop modal both have a clearer visual break (roughly one field row of space).
 
+### 2026-04-15 — Taxonomy: merge-only category removal (no hide / no delete category)
+- **Change:** Removed **Hide category**, the hidden-categories section, **Unhide**, and **Delete permanently** for categories. **Merge into…** is the only way to remove a category while keeping suggestions + library data. `App.jsx` drops `taxoHideCategory`, `taxoUnhideCategory`, `taxoDeleteCategory`; `taxoDeleteAisle` no-ops if the aisle still has categories (and no longer nulls category rows locally). One-time migration: categories that were hidden or lost an aisle id are reassigned to the first aisle with `hidden: false`. `CLAUDE.md` taxonomy notes updated.
+
+### 2026-04-15 — Settings Shortcuts: merge category into sibling
+- **Change:** `SuggestionsEditor` category overflow menu adds **Merge into…** (disabled when the aisle has only one category). Bottom sheet lists other categories in the same aisle; choosing one moves all visible + library entries into the target (case-insensitive name dedup with the target kept), reassigns shopping-list rows to the target category, and removes the source category. `App.jsx`: `taxoMergeCategory`. `Onboarding` passes `onMergeCategory` for parity.
+
 ### 2026-04-15 — Post-login navigation: Shop mode (not Account)
 - **Problem:** After sign-out from the Account page, signing back in showed Account again because `currentPage` / `quickAddMode` live in `App` state while `<Login />` is only an early return — state was not cleared.
 - **Change:** `src/App.jsx` — `handleLoginSuccess` sets `currentPage` to `list` and `quickAddMode` to false; same reset on `handleSignOut`; both `<Login />` entry points use `handleLoginSuccess`.
@@ -328,6 +334,49 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ### 2026-04-15 — Shop mode: aisle expand defaults match list grouping
 - **Problem:** `hasItemsInAisle` (used when entering Shop / re-applying defaults) fell back to category **name** even when `categoryId` was set but did not belong to that aisle. Duplicate category names across aisles (or id vs string mismatch) could mark many or all aisles as “having items,” so Add→Shop expanded every aisle despite the UI only showing list rows in the correct aisles.
 - **Change:** `src/App.jsx` — align `hasItemsInAisle` with `organized`’s `aisleListItems` filter: if `getItemCategoryId` returns a value, only `categoryIdSet.has(cid)` counts (no name fallback).
+
+### 2026-04-15 — Shop mode: aisle expansion after switching accounts
+- **Problem:** After signing out, into another household, out again, and back into the original account, Shop showed every aisle collapsed even when aisles had list items. Add→Shop reapplied defaults and fixed it. `shopAisleDefaultsKeyRef` still held the *other* household’s aisle key, so the “aisle set changed” branch merged expansion state and defaulted unknown aisle ids to collapsed instead of re-running the “enter Shop” `hasItemsInAisle` defaults.
+- **Change:** `src/App.jsx` — `shopAisleDefaultsHouseholdIdRef`: when `householdId` changes, reset `shopAisleDefaultsKeyRef` and `prevShopAisleHadItemsRef` so the next sync uses the same full default expansion as first load.
+
+### 2026-04-15 — Settings Shortcuts: category item preview capped at five
+- **Change:** `SuggestionsEditor` category subtitle lists at most five item names (shortcuts first, then library, same dedupe as before); if the category has more, the line ends with `, ...`.
+
+### 2026-04-15 — Onboarding step 2: single header + Done CTA
+- **Change:** Removed duplicate outer title/instructions and the extra bottom button from `Onboarding.jsx` (wizard chrome in `SuggestionsEditor` already provides step label, copy, and primary action). Renamed wizard primary button from “Looks good →” to **Done**.
+
+### 2026-04-15 — Seed catalog: Cheese flavor + form
+- **`src/seedCatalog.js`:** Cheese library expands sliced/shredded/grated lines; drops generic `sliced cheese`; adds fresh mozzarella, grated parmesan, sliced swiss, sliced provolone, shredded Mexican blend (new households only).
+
+### 2026-04-15 — Seed catalog: Plant-based protein trim
+- **`src/seedCatalog.js`:** Removed Beyond burger, Impossible ground, and veggie sausage (new households only).
+
+### 2026-04-15 — Seed catalog: Deli meat naming
+- **`src/seedCatalog.js`:** Renamed `turkey slices` → `sliced turkey`, `ham slices` → `sliced ham` (new households only).
+
+### 2026-04-15 — Seed catalog: Seafood trim
+- **`src/seedCatalog.js`:** Removed tuna steak, crab legs, lobster tails, and calamari from seafood seed (new households only).
+
+### 2026-04-15 — Seed catalog: Seafood shortcuts + library
+- **`src/seedCatalog.js`:** Shrimp promoted to shortcut with salmon; library adds halibut, trout, catfish, mahi mahi, red snapper, scallops, crab legs, lobster tails, mussels, clams, oysters, calamari (new households only).
+
+### 2026-04-15 — Seed catalog: non-pork sausage library
+- **`src/seedCatalog.js`:** Beef: beef sausage, beef franks. Poultry: chicken sausage, turkey sausage, turkey kielbasa. Plant-based protein: plant-based sausage, veggie sausage (new households only).
+
+### 2026-04-15 — Seed catalog: Pork sausage library
+- **`src/seedCatalog.js`:** Keep generic sausage; add Italian sausage, breakfast sausage, bratwurst, chorizo, and kielbasa (new households only).
+
+### 2026-04-15 — Seed catalog: Poultry library
+- **`src/seedCatalog.js`:** Add chicken drumsticks (new households only).
+
+### 2026-04-15 — Seed catalog: Beef shortcuts, library, patties
+- **`src/seedCatalog.js`:** Shortcuts add chuck roast and brisket; library adds flank steak, skirt steak, beef short ribs, and hamburger patties (new households only).
+
+### 2026-04-15 — Seed catalog: Vegetable shortcuts vs library
+- **`src/seedCatalog.js`:** Garlic, bell peppers, spinach, broccoli, and cucumbers demoted to library (new households only).
+
+### 2026-04-15 — Seed catalog: Fruit shortcuts vs library
+- **`src/seedCatalog.js`:** Lemons and avocados demoted to library; oranges promoted to shortcuts (new households only).
 
 ### 2026-04-15 — Account: Household Insights + invite wording
 - **Account page:** “Household Insights” is a first-level action (opens the same modal as before) for any signed-in user with a `householdId`; “Admin Panel” row renamed to **Invite Household Members** (admins only).

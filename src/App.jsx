@@ -664,8 +664,9 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
   const [configSaving, setConfigSaving] = useState(false);
   const [configError, setConfigError] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [promotedConfig, setPromotedConfig] = useState(null);
 
-  const suggestionConfig = item.suggestionConfig || null;
+  const suggestionConfig = promotedConfig || item.suggestionConfig || null;
   const aisleMap = aisles || {};
   const categoryMap = categories || {};
 
@@ -675,16 +676,10 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
 
   const categoriesForAisle = (aisleId) =>
     Object.entries(categoryMap)
-      .filter(([, c]) => c?.aisleId === aisleId && !c?.hidden)
+      .filter(([, c]) => c?.aisleId === aisleId)
       .sort(([, a], [, b]) => (a?.order ?? 0) - (b?.order ?? 0))
       .map(([id, c]) => ({ id, name: c?.name || '' }));
 
-  const currentAisleName = suggestionConfig
-    ? (aisleMap[suggestionConfig.aisleId]?.name || '')
-    : '';
-  const currentCategoryName = suggestionConfig
-    ? (categoryMap[suggestionConfig.categoryId]?.name || item.category || '')
-    : (item.category || '');
   /** Props are a snapshot; compare commits to last persisted values, not stale `item`. */
   const lastCommittedNameRef = useRef(String(item.name ?? ''));
   const lastCommittedQtyRef = useRef(String(item.quantity ?? ''));
@@ -845,35 +840,14 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
               </div>
             </div>
           </div>
-          <div className="mt-14 space-y-3">
+          <div className="mt-8 space-y-1 text-xs text-gray-400">
             {(addedByName || addedAtFormatted) && (
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#FFF0F0' }}>
-                  <Plus size={16} style={{ color: '#FF7A7A' }} />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-700">
-                    {addedByName
-                      ? `Added by ${addedByName}`
-                      : 'Added'}
-                  </p>
-                  {addedAtFormatted && (
-                    <p className="text-sm text-gray-500">{addedAtFormatted}</p>
-                  )}
-                </div>
-              </div>
+              <p>
+                {addedByName ? `Added by ${addedByName}` : 'Added'}
+                {addedAtFormatted ? ` · ${addedAtFormatted}` : ''}
+              </p>
             )}
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#FFF0F0' }}>
-                <History size={16} style={{ color: '#FF7A7A' }} />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-700">Last purchased</p>
-                <p className="text-sm text-gray-500">
-                  {lastPurchasedFormatted || 'Never purchased'}
-                </p>
-              </div>
-            </div>
+            <p>Last purchased: {lastPurchasedFormatted || 'unknown'}</p>
           </div>
           {suggestionConfig && !configOpen && (
             <button
@@ -885,21 +859,32 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
                 setConfirmRemove(false);
                 setConfigOpen(true);
               }}
-              className="mt-6 w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl hover:bg-gray-50 text-left"
+              className="mt-6 w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left"
             >
-              <span className="text-xs font-medium text-gray-400 truncate">
-                {currentAisleName ? `${formatAisleNameForDisplay(currentAisleName)} › ` : ''}
-                <span className="text-gray-500">{currentCategoryName}</span>
-              </span>
-              <Edit2 size={14} className="text-gray-400 flex-shrink-0" />
+              <Settings size={14} className="text-gray-400 flex-shrink-0" />
+              <span className="text-xs font-medium text-gray-500">Shortcut settings</span>
+            </button>
+          )}
+          {!suggestionConfig && item.promoteToShortcut && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const config = await item.promoteToShortcut();
+                  if (config) setPromotedConfig(config);
+                } catch (err) {
+                  /* silently fail */
+                }
+              }}
+              className="mt-6 w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left"
+            >
+              <Plus size={14} className="text-gray-400 flex-shrink-0" />
+              <span className="text-xs font-medium text-gray-500">Add as a permanent shortcut</span>
             </button>
           )}
           {suggestionConfig && configOpen && (
-            <div className="mt-6 rounded-2xl border-2 border-gray-300 bg-gray-50 p-4 space-y-4">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">Advanced</p>
-                <p className="text-xs text-gray-500">Change where this shortcut lives, or remove it from your shortcuts entirely.</p>
-              </div>
+            <div className="mt-6 rounded-xl bg-gray-50 p-4 space-y-4">
+              <p className="text-xs text-gray-500">Change where this shortcut lives, or remove it from your shortcuts. It will still appear in search results.</p>
               <div className="space-y-2">
                 <label className="block text-xs font-semibold uppercase tracking-wide text-gray-400">Aisle</label>
                 <select
@@ -930,24 +915,74 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
                 </select>
               </div>
               {!confirmRemove ? (
-                <button
-                  type="button"
-                  onClick={() => setConfirmRemove(true)}
-                  disabled={configSaving}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-white text-red-600 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
-                >
-                  <Trash2 size={14} />
-                  Remove from shortcuts
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRemove(true)}
+                    disabled={configSaving}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-white text-red-600 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
+                  >
+                    <Trash2 size={14} />
+                    Remove from shortcuts
+                  </button>
+                  {configError && (
+                    <p className="text-xs font-medium text-red-600">{configError}</p>
+                  )}
+                  <div className="flex gap-2 pt-2 border-t border-gray-200">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfigOpen(false);
+                        setConfirmRemove(false);
+                        setConfigError('');
+                      }}
+                      disabled={configSaving}
+                      className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setConfigError('');
+                        const aisleChanged = configAisleId !== suggestionConfig.aisleId;
+                        const catChanged = configCatId !== suggestionConfig.categoryId;
+                        if (!aisleChanged && !catChanged) {
+                          setConfigOpen(false);
+                          return;
+                        }
+                        if (!configCatId) {
+                          setConfigError('Pick a category.');
+                          return;
+                        }
+                        setConfigSaving(true);
+                        try {
+                          await suggestionConfig.onMove(configCatId);
+                        } catch (err) {
+                          setConfigError(err?.message || 'Failed to save');
+                          setConfigSaving(false);
+                        }
+                      }}
+                      disabled={configSaving}
+                      className="flex-1 px-4 py-2.5 rounded-xl text-white font-semibold disabled:opacity-50"
+                      style={{ backgroundColor: '#FF7A7A' }}
+                    >
+                      {configSaving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </>
               ) : (
-                <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-2">
-                  <p className="text-xs font-medium text-red-700">Remove this item from shortcuts entirely?</p>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-red-700">Remove this shortcut? It will still be available via search.</p>
+                  {configError && (
+                    <p className="text-xs font-medium text-red-600">{configError}</p>
+                  )}
                   <div className="flex gap-2">
                     <button
                       type="button"
                       onClick={() => setConfirmRemove(false)}
                       disabled={configSaving}
-                      className="flex-1 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:bg-gray-50"
+                      className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50 disabled:opacity-50"
                     >
                       Keep
                     </button>
@@ -964,58 +999,13 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
                         }
                       }}
                       disabled={configSaving}
-                      className="flex-1 px-3 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-50"
+                      className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
                     >
                       {configSaving ? 'Removing…' : 'Remove'}
                     </button>
                   </div>
                 </div>
               )}
-              {configError && (
-                <p className="text-xs font-medium text-red-600">{configError}</p>
-              )}
-              <div className="flex gap-2 pt-2 border-t border-gray-200">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setConfigOpen(false);
-                    setConfirmRemove(false);
-                    setConfigError('');
-                  }}
-                  disabled={configSaving}
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setConfigError('');
-                    const aisleChanged = configAisleId !== suggestionConfig.aisleId;
-                    const catChanged = configCatId !== suggestionConfig.categoryId;
-                    if (!aisleChanged && !catChanged) {
-                      setConfigOpen(false);
-                      return;
-                    }
-                    if (!configCatId) {
-                      setConfigError('Pick a category.');
-                      return;
-                    }
-                    setConfigSaving(true);
-                    try {
-                      await suggestionConfig.onMove(configCatId);
-                    } catch (err) {
-                      setConfigError(err?.message || 'Failed to save');
-                      setConfigSaving(false);
-                    }
-                  }}
-                  disabled={configSaving}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-white font-semibold disabled:opacity-50"
-                  style={{ backgroundColor: '#FF7A7A' }}
-                >
-                  {configSaving ? 'Saving…' : 'Save'}
-                </button>
-              </div>
             </div>
           )}
         </div>
@@ -1261,6 +1251,8 @@ export default function App() {
   const prevQuickAddMode = useRef(quickAddMode);
   /** Last aisle-id key we applied shop default expansion for (empty = not yet seeded in shop). */
   const shopAisleDefaultsKeyRef = useRef('');
+  /** When this differs from `householdId`, reset shop aisle refs so switching accounts re-applies defaults. */
+  const shopAisleDefaultsHouseholdIdRef = useRef(null);
   /** Shop mode: previous snapshot of whether each aisle had any list items (for auto-collapse when emptied). */
   const prevShopAisleHadItemsRef = useRef({});
   const lastScrollY = useRef(0);
@@ -1286,7 +1278,7 @@ export default function App() {
   for (const [catId, cat] of Object.entries(categoriesV2)) {
     if (!cat) continue;
     v2CategoryNameById[catId] = cat.name;
-    if (!cat.hidden && cat.aisleId && v2CategoriesByAisle[cat.aisleId]) {
+    if (cat.aisleId && v2CategoriesByAisle[cat.aisleId]) {
       v2CategoriesByAisle[cat.aisleId].push(catId);
     }
   }
@@ -1326,6 +1318,31 @@ export default function App() {
       library: libraryItemsV2,
     });
   }, [aislesV2, categoriesV2, visibleItemsV2, libraryItemsV2]);
+
+  // Legacy: categories that were "hidden" or lost an aisle are reassigned to the first aisle (merge is how categories are removed now).
+  useEffect(() => {
+    if (!householdId) return;
+    const firstAisleId = Object.keys(aislesV2)
+      .sort((a, b) => (aislesV2[a]?.order ?? 0) - (aislesV2[b]?.order ?? 0))[0];
+    if (!firstAisleId) return;
+    const base = `households/${householdId}/taxonomy`;
+    const updates = {};
+    for (const [cid, c] of Object.entries(categoriesV2)) {
+      if (!c) continue;
+      const aisleMissing = !c.aisleId || !aislesV2[c.aisleId];
+      if (c.hidden === true || aisleMissing) {
+        updates[`${base}/categories/${cid}`] = stampRecord({
+          ...c,
+          hidden: false,
+          aisleId: firstAisleId,
+        });
+      }
+    }
+    if (Object.keys(updates).length === 0) return;
+    update(ref(database), updates).catch((err) => {
+      logger.error('App', 'taxonomy legacy category migration failed', { error: err.message });
+    });
+  }, [householdId, aislesV2, categoriesV2]);
 
   // Check for debug mode in URL
   useEffect(() => {
@@ -2172,15 +2189,24 @@ export default function App() {
     if (!taxonomyBase || !suggestionId || !catId) return;
     const vis = visibleItemsV2[catId] || [];
     const lib = libraryItemsV2[catId] || [];
-    const nextVis = vis.filter(i => i.id !== suggestionId);
-    const nextLib = lib.filter(i => i.id !== suggestionId);
-    if (nextVis.length === vis.length && nextLib.length === lib.length) return;
-    setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
-    setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
-    await update(ref(database), {
-      [`${taxonomyBase}/visible-items/${catId}`]: nextVis.length > 0 ? nextVis : null,
-      [`${taxonomyBase}/library/${catId}`]: nextLib.length > 0 ? nextLib : null,
-    });
+    const demoted = vis.find(i => i.id === suggestionId);
+    if (demoted) {
+      const nextVis = vis.filter(i => i.id !== suggestionId);
+      const nextLib = lib.some(i => i.id === suggestionId) ? lib : [...lib, demoted];
+      setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
+      setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
+      await update(ref(database), {
+        [`${taxonomyBase}/visible-items/${catId}`]: nextVis.length > 0 ? nextVis : null,
+        [`${taxonomyBase}/library/${catId}`]: nextLib,
+      });
+    } else {
+      const nextLib = lib.filter(i => i.id !== suggestionId);
+      if (nextLib.length === lib.length) return;
+      setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
+      await update(ref(database), {
+        [`${taxonomyBase}/library/${catId}`]: nextLib.length > 0 ? nextLib : null,
+      });
+    }
   };
 
   const updateSuggestionQuantity = (itemKey, qty) => {
@@ -2191,15 +2217,13 @@ export default function App() {
     void persistQuantityDefaults(nextDefaults);
   };
 
-  const findSuggestionForListItem = (item) => {
+  const findShortcutForListItem = (item) => {
     const nameLower = String(item?.name ?? '').trim().toLowerCase();
     if (!nameLower) return null;
     const preferredCatId = getItemCategoryId(item);
     const searchIn = (catId) => {
       const vis = (visibleItemsV2[catId] || []).find(s => s.name.toLowerCase() === nameLower);
       if (vis) return { suggestionId: vis.id, categoryId: catId };
-      const lib = (libraryItemsV2[catId] || []).find(s => s.name.toLowerCase() === nameLower);
-      if (lib) return { suggestionId: lib.id, categoryId: catId };
       return null;
     };
     if (preferredCatId) {
@@ -2218,7 +2242,7 @@ export default function App() {
     const itemKey = getStableItemKey(item);
     const base = { ...item, itemKey, onQuantityChange: updateQuantity, onNameChange: updateItemName };
     if (quickAddMode) {
-      const match = findSuggestionForListItem(item);
+      const match = findShortcutForListItem(item);
       if (match) {
         base.suggestionConfig = {
           categoryId: match.categoryId,
@@ -2244,6 +2268,52 @@ export default function App() {
             setSelectedItem(null);
           },
         };
+      } else {
+        const catId = getItemCategoryId(item);
+        if (catId) {
+          base.promoteToShortcut = async () => {
+            const trimmed = String(item.name || '').trim();
+            if (!trimmed || !taxonomyBase) return null;
+            const vis = visibleItemsV2[catId] || [];
+            const lib = libraryItemsV2[catId] || [];
+            const lower = trimmed.toLowerCase();
+            if (vis.some(i => i.name.toLowerCase() === lower)) return null;
+            const libItem = lib.find(i => i.name.toLowerCase() === lower);
+            const newId = libItem?.id || push(ref(database, `${taxonomyBase}/visible-items/${catId}`)).key;
+            const entry = stampRecord({ id: newId, name: trimmed });
+            const nextVis = [...vis, entry];
+            const nextLib = libItem ? lib.filter(i => i.id !== libItem.id) : lib;
+            setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
+            if (libItem) setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
+            const updates = { [`${taxonomyBase}/visible-items/${catId}`]: nextVis };
+            if (libItem) updates[`${taxonomyBase}/library/${catId}`] = nextLib.length > 0 ? nextLib : null;
+            await update(ref(database), updates);
+            return {
+              categoryId: catId,
+              aisleId: categoriesV2[catId]?.aisleId || null,
+              onMove: async (toCatId) => {
+                await moveSuggestionToCategory(newId, catId, toCatId);
+                const toCategoryName = categoriesV2[toCatId]?.name || '';
+                const targetItemKey = itemKey;
+                setList(prev => {
+                  const next = prev.map(li =>
+                    getStableItemKey(li) === targetItemKey
+                      ? { ...li, categoryId: toCatId, category: toCategoryName }
+                      : li
+                  );
+                  save('shopping-list', next);
+                  saveShoppingListLocally(next);
+                  return next;
+                });
+                setSelectedItem(null);
+              },
+              onRemove: async () => {
+                await removeSuggestionEverywhere(newId, catId);
+                setSelectedItem(null);
+              },
+            };
+          };
+        }
       }
     }
     setSelectedItem(base);
@@ -2437,6 +2507,12 @@ export default function App() {
       nextHadItems[g.aisleId] = hasItemsInAisle(g);
     });
 
+    if (householdId !== shopAisleDefaultsHouseholdIdRef.current) {
+      shopAisleDefaultsHouseholdIdRef.current = householdId;
+      shopAisleDefaultsKeyRef.current = '';
+      prevShopAisleHadItemsRef.current = {};
+    }
+
     // Shop: collapsed by default; expand only when applying defaults (enter shop / first aisle load / aisle set change), not on every list update.
     if (modeChanged) {
       const initial = {};
@@ -2488,7 +2564,7 @@ export default function App() {
     }
 
     prevShopAisleHadItemsRef.current = nextHadItems;
-  }, [quickAddMode, list, aislesV2, categoriesV2]);
+  }, [quickAddMode, list, aislesV2, categoriesV2, householdId]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -2637,19 +2713,11 @@ export default function App() {
   }
   async function taxoDeleteAisle(aisleId) {
     if (!taxonomyBase) return;
-    const removedCategories = Object.entries(categoriesV2)
-      .filter(([, cat]) => cat?.aisleId === aisleId && !cat.hidden)
-      .map(([catId]) => catId);
+    const hasCategories = Object.values(categoriesV2).some((c) => c?.aisleId === aisleId);
+    if (hasCategories) return;
     const nextAisles = { ...aislesV2 };
     delete nextAisles[aisleId];
-    const nextCategories = { ...categoriesV2 };
-    removedCategories.forEach((catId) => {
-      if (nextCategories[catId]) {
-        nextCategories[catId] = stampRecord({ ...nextCategories[catId], aisleId: null });
-      }
-    });
     setAislesV2(nextAisles);
-    setCategoriesV2(nextCategories);
     await remove(ref(database, `${taxonomyBase}/aisles/${aisleId}`));
   }
   async function taxoReorderAisles(orderedIds) {
@@ -2693,47 +2761,91 @@ export default function App() {
     }));
     await update(ref(database, `${taxonomyBase}/categories/${catId}`), payload);
   }
-  async function taxoHideCategory(catId) {
-    if (!taxonomyBase) return;
-    const payload = stampRecord({ hidden: true, aisleId: null });
-    setCategoriesV2(prev => ({
-      ...prev,
-      [catId]: stampRecord({ ...(prev[catId] || {}), hidden: true, aisleId: null }),
-    }));
-    await update(ref(database, `${taxonomyBase}/categories/${catId}`), payload);
-  }
-  async function taxoUnhideCategory(catId, aisleId) {
-    if (!taxonomyBase) return;
-    const payload = stampRecord({ hidden: false, aisleId });
-    setCategoriesV2(prev => ({
-      ...prev,
-      [catId]: stampRecord({ ...(prev[catId] || {}), hidden: false, aisleId }),
-    }));
-    await update(ref(database, `${taxonomyBase}/categories/${catId}`), payload);
-  }
-  async function taxoDeleteCategory(catId) {
-    if (!taxonomyBase) return;
-    setCategoriesV2(prev => {
-      const next = { ...prev };
-      delete next[catId];
-      return next;
-    });
-    setVisibleItemsV2(prev => {
-      const next = { ...prev };
-      delete next[catId];
-      return next;
-    });
-    setLibraryItemsV2(prev => {
-      const next = { ...prev };
-      delete next[catId];
-      return next;
-    });
-    const updates = {
-      [`${taxonomyBase}/categories/${catId}`]: null,
-      [`${taxonomyBase}/visible-items/${catId}`]: null,
-      [`${taxonomyBase}/library/${catId}`]: null,
+  async function taxoMergeCategory(fromCatId, intoCatId) {
+    if (!taxonomyBase || !fromCatId || !intoCatId || fromCatId === intoCatId) return;
+    const fromCat = categoriesV2[fromCatId];
+    const toCat = categoriesV2[intoCatId];
+    if (!fromCat || !toCat) return;
+    if (fromCat.aisleId !== toCat.aisleId || !fromCat.aisleId) return;
+
+    const toVis = [...(visibleItemsV2[intoCatId] || [])];
+    const toLib = [...(libraryItemsV2[intoCatId] || [])];
+    const fromVis = visibleItemsV2[fromCatId] || [];
+    const fromLib = libraryItemsV2[fromCatId] || [];
+
+    const usedIds = new Set([...toVis, ...toLib].map((i) => i.id));
+    const nameSeen = new Set(
+      [...toVis, ...toLib].map((i) => String(i.name ?? '').trim().toLowerCase()),
+    );
+    const allocId = (preferredId) => {
+      if (preferredId && !usedIds.has(preferredId)) {
+        usedIds.add(preferredId);
+        return preferredId;
+      }
+      const nid = push(ref(database, `${taxonomyBase}/visible-items/${intoCatId}`)).key;
+      usedIds.add(nid);
+      return nid;
     };
-    await update(ref(database), updates);
+
+    const nextVis = [...toVis];
+    const nextLib = [...toLib];
+    for (const item of fromVis) {
+      const k = String(item.name ?? '').trim().toLowerCase();
+      if (!k || nameSeen.has(k)) continue;
+      nameSeen.add(k);
+      nextVis.push(stampRecord({ id: allocId(item.id), name: item.name }));
+    }
+    for (const item of fromLib) {
+      const k = String(item.name ?? '').trim().toLowerCase();
+      if (!k || nameSeen.has(k)) continue;
+      nameSeen.add(k);
+      nextLib.push(stampRecord({ id: allocId(item.id), name: item.name }));
+    }
+    nextVis.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    nextLib.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+    const toName = toCat.name || '';
+
+    setCategoriesV2((prev) => {
+      const next = { ...prev };
+      delete next[fromCatId];
+      return next;
+    });
+    setVisibleItemsV2((prev) => {
+      const next = { ...prev };
+      next[intoCatId] = nextVis;
+      delete next[fromCatId];
+      return next;
+    });
+    setLibraryItemsV2((prev) => {
+      const next = { ...prev };
+      next[intoCatId] = nextLib;
+      delete next[fromCatId];
+      return next;
+    });
+
+    setList((prev) => {
+      const mapped = prev.map((li) =>
+        getItemCategoryId(li) === fromCatId
+          ? { ...li, categoryId: intoCatId, category: toName }
+          : li,
+      );
+      save('shopping-list', mapped);
+      saveShoppingListLocally(mapped);
+      return mapped;
+    });
+
+    try {
+      await update(ref(database), {
+        [`${taxonomyBase}/categories/${fromCatId}`]: null,
+        [`${taxonomyBase}/visible-items/${fromCatId}`]: null,
+        [`${taxonomyBase}/library/${fromCatId}`]: null,
+        [`${taxonomyBase}/visible-items/${intoCatId}`]: nextVis.length > 0 ? nextVis : null,
+        [`${taxonomyBase}/library/${intoCatId}`]: nextLib.length > 0 ? nextLib : null,
+      });
+    } catch (err) {
+      logger.error('App', 'taxoMergeCategory failed', { error: err.message });
+    }
   }
   async function taxoRemoveLibraryItem(catId, itemId) {
     if (!taxonomyBase || !catId || !itemId) return;
@@ -2775,9 +2887,7 @@ export default function App() {
         onRenameCategory={taxoRenameCategory}
         onAddCategory={taxoAddCategory}
         onMoveCategory={taxoMoveCategory}
-        onHideCategory={taxoHideCategory}
-        onUnhideCategory={taxoUnhideCategory}
-        onDeleteCategory={taxoDeleteCategory}
+        onMergeCategory={taxoMergeCategory}
         onComplete={completeOnboarding}
       />
     );
@@ -3166,9 +3276,7 @@ export default function App() {
               onRenameCategory={taxoRenameCategory}
               onAddCategory={taxoAddCategory}
               onMoveCategory={taxoMoveCategory}
-              onHideCategory={taxoHideCategory}
-              onUnhideCategory={taxoUnhideCategory}
-              onDeleteCategory={taxoDeleteCategory}
+              onMergeCategory={taxoMergeCategory}
               accordionAisles
             />
           )}
