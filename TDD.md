@@ -413,7 +413,7 @@ All static assets are precached on install:
 1. **Non-blocking** — logging never throws or blocks the UI
 2. **Batched writes** — Firebase writes are batched to reduce API calls
 3. **Dual storage** — IndexedDB (always) + Firebase (when online)
-4. **Self-cleaning** — 30-day retention enforced automatically
+4. **Self-cleaning** — 21-day retention; Firebase cleanup at most weekly per user (`logsLastRemoteCleanupAt`)
 
 ### Architecture
 
@@ -455,8 +455,8 @@ The logger automatically captures (no explicit calls needed):
 ### Retention & Cleanup
 
 - Cleanup runs on user login (10s delay) and every 24 hours
-- IndexedDB: deletes entries older than 30 days via cursor scan
-- Firebase: deletes entire sessions where the oldest log exceeds 30 days
+- IndexedDB: deletes entries older than 21 days via cursor scan (each session after user id is set)
+- Firebase: deletes entire sessions where the oldest log exceeds 21 days; full-tree read gated to at most once per 7 days via `users/{uid}/logsLastRemoteCleanupAt`
 
 ---
 
@@ -478,6 +478,12 @@ The logger automatically captures (no explicit calls needed):
 | `/logs/{uid}` | Owner only | Owner only |
 
 **Key design choice:** Shopping data is readable/writable by any authenticated user because the app serves a single household. There is no per-user data isolation for list data.
+
+### Firebase App Check (web client)
+
+- **Initialization:** `src/firebase.js` calls `initializeAppCheck` with **reCAPTCHA v3** (`ReCaptchaV3Provider`) immediately after `initializeApp` and before Auth/RTDB so pre-auth reads (e.g. invite code lookup) attach tokens.
+- **Env:** `VITE_RECAPTCHA_SITE_KEY` (required in production — runtime throws on load if missing). Dev-only optional `VITE_APPCHECK_DEBUG_TOKEN` (register the same value under Firebase Console → App Check → Debug tokens); if unset in dev, `self.FIREBASE_APPCHECK_DEBUG_TOKEN = true` so the SDK prints a one-time debug token to the browser console.
+- **Enforcement:** toggled in Firebase Console (Realtime Database, optionally Auth) after monitoring verified traffic; **voice-mcp** uses a service account REST path and is unaffected by web App Check enforcement.
 
 ### Firestore (`firestore.rules`)
 
@@ -528,9 +534,11 @@ VITE_FIREBASE_PROJECT_ID
 VITE_FIREBASE_STORAGE_BUCKET
 VITE_FIREBASE_MESSAGING_SENDER_ID
 VITE_FIREBASE_APP_ID
+VITE_RECAPTCHA_SITE_KEY          # App Check (reCAPTCHA v3); required in production
+# VITE_APPCHECK_DEBUG_TOKEN      # optional; dev-only fixed App Check debug token
 ```
 
-These are **not secrets** (Firebase client config is public by design). Security is enforced by Firebase security rules, not by hiding the config.
+These are **not secrets** (Firebase client config is public by design). Security is enforced by Firebase security rules, not by hiding the config. The reCAPTCHA **site key** is also public by design; it is still required for App Check to initialize in production.
 
 ---
 

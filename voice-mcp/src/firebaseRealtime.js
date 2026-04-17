@@ -146,9 +146,18 @@ export const loadShoppingContext = async (env) => {
   };
 };
 
+/** Local calendar month (YYYY-MM); must match web app `itemEventsSharding.eventMonthKey`. */
+const eventMonthKey = (ts = Date.now()) => {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
 const logItemEvents = async (env, items, addedByUid) => {
   if (!items?.length) return;
   const ts = Date.now();
+  const month = eventMonthKey(ts);
+  const monthPath = rtdbPath(env, `item-events-by-month/${month}`);
+  const indexPath = rtdbPath(env, `item-events-index/${month}`);
   await Promise.all(items.map((item) => {
     const qtyStr = item?.quantity != null ? String(item.quantity).trim().slice(0, 100) : '';
     const event = {
@@ -161,11 +170,15 @@ const logItemEvents = async (env, items, addedByUid) => {
       qty: Number(item?.quantity) || 1,
       ...(qtyStr ? { quantityLabel: qtyStr } : {})
     };
-    return firebaseRequest(env, rtdbPath(env, 'item-events'), {
+    return firebaseRequest(env, monthPath, {
       method: 'POST',
       body: JSON.stringify(event)
     }).catch(() => { /* fire-and-forget; never block list writes */ });
   }));
+  await firebaseRequest(env, indexPath, {
+    method: 'PATCH',
+    body: JSON.stringify({ updatedAt: ts })
+  }).catch(() => { /* index is best-effort */ });
 };
 
 export const appendItemsToShoppingList = async (env, items, addedByUid) => {

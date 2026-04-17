@@ -64,6 +64,8 @@ This document tracks the ongoing effort to productize this app for public, multi
 
 ### Must-Have (pre-launch blockers)
 
+> **Public / app-store launch gate:** Do not treat Privacy Policy + ToS as “done” until the **Legal: final Privacy + ToS pass** item below is checked. The in-app documents are a starting point, not substitute for counsel review.
+
 - [x] **Multi-household data isolation** — 2026-04-10
   - Restructure DB paths: `/households/{householdId}/shopping-list`, etc.
   - Update all Firebase reads/writes in App.jsx to be household-scoped
@@ -74,8 +76,9 @@ This document tracks the ongoing effort to productize this app for public, multi
 - [x] **Customizable categories** — stored per-household in Firebase, seeded from code on first setup — 2026-04-10 (UI to add/remove/reorder categories deferred)
 - [x] **Generic default suggestions** — seeded from code constants on first household setup — 2026-04-10
 - [x] **Account deletion + data cleanup** — 2026-04-10
-- [ ] **Privacy Policy + Terms of Service** — required before any public launch or app store submission
-- [ ] **Firebase App Check** — prevent automated account creation and data scraping
+- [x] **Privacy Policy + Terms of Service** — 2026-04-17 (`src/LegalPages.jsx`; linked from login + Account)
+- [ ] **Legal: final Privacy + ToS pass before public or app-store launch** — Counsel reviews `src/LegalPages.jsx`; add real **operator legal name**, **contact email** (and support process), and **governing law / venue**; verify every described practice matches production (Firebase products in use, optional Analytics, log retention and admin visibility, account deletion, data locations). Update in-app copy after review.
+- [x] **Firebase App Check** — client: reCAPTCHA v3 + `initializeAppCheck` in `src/firebase.js` (2026-04-17). **Console:** register web app in App Check, monitor, then enforce RTDB (optionally Auth); register dev debug tokens.
 - [ ] **Google + Apple SSO** — reduces signup friction; Apple SSO required by guideline 4.8 if Google SSO is offered
 - [ ] **Subscription system (RevenueCat)** — Apple IAP + Google Play Billing + Stripe, unified cross-platform
 - [ ] **Cross-platform analytics (Firebase Analytics)** — unified event tracking across web, iOS, Android
@@ -86,11 +89,12 @@ This document tracks the ongoing effort to productize this app for public, multi
 - [ ] **Firebase `.validate` rules for data size** — prevent malicious users from writing arbitrarily large payloads
 - [ ] **Capacitor native apps (iOS + Android)** — see `NATIVE_APP_PLAN.md` for full plan
 - [x] **Generic onboarding flow** — guide new household through setting up aisles/categories and reviewing initial suggestions — 2026-04-14 (welcome + wizard-mode SuggestionsEditor, gated on `taxonomy/onboarding_completed`)
-- [ ] **Taxonomy redesign (aisles + user-editable categories + library)** — see PRD §4–§6 and TDD §3 for the new model. Includes:
-  - Seed catalog (9 aisles, 52 categories, ~300 items with ★ designations)
-  - New Firebase paths (`aisles`, `categories`, `visible-items`, `library`) keyed by category id
-  - Settings → Suggestions editor (replaces current Edit Suggestions page)
-  - Migration script: `common-items` + `less-common-items` + `shopping-history` → `library` + `visible-items`
+- [x] **Taxonomy redesign (aisles + user-editable categories + library)** — shipped in app 2026-04-14–15; legacy taxonomy code + RTDB paths removed from the client and household rules thereafter. PRD §4–§6 and TDD §3 describe the shipped model.
+  - Seed catalog: `src/seedCatalog.js` (as of 2026-04-17: 10 aisles, 54 categories, 353 items; `starred` rows seed visible shortcuts, the rest seed into per-category `library`)
+  - Runtime data: `households/{hid}/taxonomy/{aisles,categories,visible-items,library}` with Firebase push ids (seed slugs are mapped at bootstrap / migration)
+  - Settings + onboarding: `src/SuggestionsEditor.jsx` + `src/Onboarding.jsx`; Shop/Add are aisle-grouped against v2 taxonomy
+  - Historical migration for pre-v2 households: `scripts/migrate-to-taxonomy-v2.cjs` (+ related scripts under `scripts/`); not part of normal operations for new households (`src/householdBootstrap.js`)
+  - **Still open (outside web app):** `voice-mcp/` context reads still point at legacy household paths for suggestions/history — needs a v2 read pass before voice traffic scales (`CLAUDE.md` notes this gap)
 
 ### Nice-to-Have / Post-Launch
 
@@ -133,6 +137,37 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ---
 
 ## Session Log
+
+### 2026-04-17 — Firebase App Check (client)
+- **`src/firebase.js`:** `initializeAppCheck` + `ReCaptchaV3Provider` immediately after `initializeApp`, before Auth/RTDB; production runtime throws if `VITE_RECAPTCHA_SITE_KEY` is missing; dev sets `self.FIREBASE_APPCHECK_DEBUG_TOKEN` (`true` or `VITE_APPCHECK_DEBUG_TOKEN`); skip init in dev when key absent (one `console.info`).
+- **`.env.example`:** `VITE_RECAPTCHA_SITE_KEY`, optional `VITE_APPCHECK_DEBUG_TOKEN` (dev).
+- **`TDD.md`:** App Check subsection + env list.
+- **Ops:** reCAPTCHA v3 key → Firebase App Check → register app → ship → monitor → enforce RTDB (see plan “When to turn on strict checking”).
+
+### 2026-04-17 — PRODUCTIZATION: taxonomy checkbox reconciled
+- Marked **Taxonomy redesign** should-have item as complete; refreshed sub-bullets to match shipped v2 paths, current seed counts, and bootstrap/migration story.
+- Called out **`voice-mcp/`** as the remaining consumer of legacy read paths (separate follow-up, not a second “taxonomy redesign” project).
+
+### 2026-04-17 — Firebase Analytics (SDK)
+- **`src/firebase.js`:** Optional GA4 via `getAnalytics` when `VITE_FIREBASE_MEASUREMENT_ID` is set; `measurementId` merged into web config; initialization gated on `isSupported()`; `analytics` exported for future `logEvent` calls.
+- **Docs:** `.env.example` and `README.md` note the optional measurement ID (Firebase Console → Project settings → Your apps).
+
+### 2026-04-17 — Design review: close out remaining items (2.2 → 10.3)
+- Debated and recorded decisions for every remaining design-review item except the two branding items (2.1a, 2.1b) the user asked to defer. All decisions captured in `DESIGN_REVIEW.md` with discussion, rationale, and implementation notes for the synthesis chat.
+- **Visual hierarchy (2.2 → chose Option A, folds in 3.5):** item names → `text-gray-800`, Shop aisle headers bolded to match Add mode, quick-add tile rows get `#FFF5F5` background + dark name, coral retained only on actionable/stateful surfaces. Tokenize-first refactor deferred to bundle with dark mode. Produced disposable `palette-mockup.html` (A vs B vs Current) to break a text-only impasse — kept in place for synthesis chat reference, delete after merge.
+- **Unified row-tap model (4.2 expanded, closes pencil-icon affordance):** row tap = current mode's primary action (toggle done in Shop / add in Add-tile / remove in Add-list); right-side chevron opens sheet; left-side icon is visual affordance + redundant tap target. Pencil replaced with chevron.
+- **Bottom-sheet per-item affordances (5.2 expanded):** "Shortcut settings" retires. Replaced with two muted rows under metadata — (1) `AISLE › Category` breadcrumb that *is* the move control, (2) state-aware shortcut button ("Add to shortcuts" / "Remove from shortcuts"). Extends to list rows and library items; absorbs the ad-hoc "Add as a shortcut?" CTA paths (A1 promotion card flagged for possible retirement by synthesis chat).
+- **Onboarding trim (6.1 decided, 6.2 rejected):** drop "Step 2 of 2" numbering; the editor already scoped down to aisle customization (shortcut editing removed out-of-band), so 6.2's overwhelm concern is resolved.
+- **Destructive / power affordances removed:** "Reset to defaults" dropped from onboarding *and* Settings (6.3). Floating debug button removed in all envs (10.3) — keyboard shortcut + `?debug=true` remain.
+- **Touch + keyboard hygiene:** checkboxes / pencils / + / X buttons get invisible hit-zone expansion to ≥44×44 without resizing the visible glyph (3.3). Bottom-fixed elements (nav bar + wizard footer) hide when any input is focused (8.2). Autocomplete dropdown flips above its input when space below is limited (4.3). Safe-area audit to be done at implementation time across bottom-fixed elements and top notch (8.1).
+- **Polish:** Shop-mode empty state replaces aisle grid when list is empty (3.1). Checked items stay in place but dim more aggressively — no sort change (3.2). "Online" sync pill hides when online + connected; only renders for offline/syncing/error (3.4). "Last purchased: unknown" → "No purchase history" (5.1). "Name"/"Quantity" labels restyled smaller/lighter — *kept* (accessibility preservation); saved this as a standing `feedback_accessibility.md` memory so future polish sessions don't regress semantic HTML (5.4). Session-expired modal: emoji → Lucide `Lock`, `bg-blue-600` → coral (2.3). Offline banner ⚠️ → Lucide `AlertTriangle` (10.1).
+- **Login:** humanized Firebase auth error mapping with generic fallback; parallel invite-code error copy (7.2). Eye icon toggle added to password + invite code fields (7.1).
+- **Mobile bottom sheet:** both X visible on mobile *and* real swipe-to-dismiss (5.3).
+- **Multi-column layout removed** from large screens — single column at all breakpoints (8.4).
+- **Insights modal** kept in place but all developer-speak trimmed (tier labels, UIDs, internal function/field names) — no rebuild (9.2).
+- **Rejected:** 4.1 (global search — the per-aisle "search" is really add-with-autocomplete; a global field would force an aisle-picker step on every novel item). 4.4 ("No items" copy rewrite — user disagreed). 10.2 (Purchase History sort — alphabetical serves the "when did I last buy X" use case). 6.2 (resolved out-of-band).
+- **Deferred:** 7.3 (invite-code formatting → will be obsoleted by email/SMS URL invites). 8.3 (dark mode → post-launch, bundled with theme-token refactor). 9.1 (Account identity surfaces → wait for household naming).
+- No code changes this session; `DESIGN_REVIEW.md` updated throughout with discussion/decision/implementation notes. `palette-mockup.html` produced and left in place for synthesis chat reference.
 
 ### 2026-04-16 — Header wordmark: Shopping List
 - **`src/App.jsx`:** Top header center label changed from **Tend** back to **Shopping List** (tap still returns to the list page).
@@ -467,6 +502,34 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ### 2026-04-16 — Account: delete action bottom-aligned
 - **`src/App.jsx`:** Account page uses a full-viewport-height column so **Delete Account** sits at the bottom with a top divider and generous bottom padding (including `safe-area-inset-bottom`) to separate it from Sign out and reduce accidental taps near the screen edge.
+
+### 2026-04-17 — Legal launch reminder (PRODUCTIZATION + CLAUDE + source)
+- **`PRODUCTIZATION.md`:** Blockquote under Must-Have + new unchecked **Legal: final Privacy + ToS pass before public or app-store launch** (counsel, contact, entity, governing law, accuracy vs production).
+- **`CLAUDE.md`:** Session-start reminder that this checklist item must be completed before public/app-store launch.
+- **`src/LegalPages.jsx`:** File header comment pointing to the same checklist.
+
+### 2026-04-17 — Privacy Policy + Terms of Service
+- **`src/LegalPages.jsx`:** New in-app **Privacy Policy** and **Terms of Service** (effective date 2026-04-17); covers Firebase Auth/RTDB, optional Analytics, IndexedDB, household sharing, logs, operator/self-host framing.
+- **`src/App.jsx`:** `AuthLoginScreen` wraps login + legal sub-views; `loginLegalView` state; footer on login (“By continuing…”). **Account** page links open the same documents with back to Account.
+
+### 2026-04-17 — Logging: 21-day retention, weekly remote cleanup marker
+- **`src/logger.js`:** `LOG_RETENTION_DAYS` 21; Firebase session cleanup at most every 7 days using `get(users/{uid}/logsLastRemoteCleanupAt)` before any full `get(logs/{uid})`; after cleanup, `set(logsLastRemoteCleanupAt, Date.now())`. IndexedDB still pruned each session.
+- **`database.rules.json`:** `users/{uid}/logsLastRemoteCleanupAt` (number).
+- **`LOGGING.md`**, **`CLAUDE.md`**, **`PRD.md`**, **`TDD.md`**, **`AdminLogViewer.jsx`**, **`LogAnalytics.jsx`:** Copy and date-range options aligned with 21 days.
+
+### 2026-04-17 — Item events: monthly shards + index + live current month
+- **Schema:** `households/{hid}/item-events-by-month/{YYYY-MM}/{pushId}` for new writes; `item-events-index/{YYYY-MM}/updatedAt` for per-month staleness; legacy flat `item-events` still **read** and merged for existing data.
+- **`src/itemEventsSharding.js`:** `pushHouseholdItemEvent`, `getHouseholdItemEventsMerged` (parallel month `get`s + IndexedDB cache when `updatedAt` matches), `eventMonthKey` (local calendar month).
+- **`src/App.jsx`:** `onValue` on current month bucket (rollover interval); Insights, Purchase History, Add-mode analytics, and last-purchased use merged loader with live month snapshot.
+- **`src/offlineStorage.js`:** `loadItemEventsBucketCache` / `saveItemEventsBucketCache` (META store).
+- **`database.rules.json`:** Rules for `item-events-by-month` and `item-events-index`.
+- **`voice-mcp/src/firebaseRealtime.js`:** Voice `added` events POST to monthly path; PATCH index `updatedAt`.
+
+### 2026-04-17 — Auth: minimal RTDB read for admin
+- **`src/App.jsx`:** On sign-in, admin is derived from `get(households/{id}/adminUid)` instead of downloading the entire household subtree (saves duplicate bulk download before per-path listeners attach).
+
+### 2026-04-17 — Firebase: production deploy (hosting + database)
+- **`npm run build`** then **`firebase deploy`** to `kao-family-shopping-list`: shipped current `dist/` (item-events sharding, logging retention/cleanup, adminUid read, etc.) and re-released RTDB rules. Hosting: https://kao-family-shopping-list.web.app
 
 ### 2026-04-16 — Seed catalog: Fruit / Veggies aisles, Asian grocery rows
 - **`src/seedCatalog.js`:** Replaced single **Produce** aisle with **Fruit** and **Veggies**; **Vegetables** display name (slug `vegetable` unchanged); **Fresh herbs** under Veggies. Packaged Foods: merged **East Asian** + **Southeast Asian** into **East & Southeast Asian groceries** (`east-southeast-asian-foods`); added **South Asian groceries** (six library items: basmati rice, ghee, red lentils, tikka masala simmer sauce, garam masala, papadums).

@@ -171,7 +171,7 @@ export default function AdminLogViewer({ userId, onClose }) {
               <option value="1">Last 24 hours</option>
               <option value="7">Last 7 days</option>
               <option value="14">Last 14 days</option>
-              <option value="30">Last 30 days</option>
+              <option value="21">Last 21 days</option>
             </select>
           </div>
 
@@ -239,7 +239,7 @@ export default function AdminLogViewer({ userId, onClose }) {
         <div className="p-3 border-t border-gray-200 bg-gray-50 text-xs text-gray-600">
           <div className="flex items-center justify-between">
             <div>
-              Logs are automatically retained for 30 days and cleaned up daily
+              Logs are retained for 21 days; remote cleanup runs at most weekly per account
             </div>
             <div>
               Session ID: {logger.getSessionId()}

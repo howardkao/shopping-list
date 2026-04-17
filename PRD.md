@@ -426,7 +426,7 @@ Events stay inside the household namespace and are gated by the same household m
 - Logging is always enabled (no opt-in/opt-out)
 - Logs stored in Firebase Realtime Database under `/logs/{userId}/{sessionId}/`
 - Logs also stored locally in IndexedDB for offline access
-- 30-day rolling retention (automatic cleanup runs daily on login)
+- 21-day rolling retention; Firebase log cleanup at most weekly per account; IndexedDB prunes each session
 - Log levels: DEBUG (dev only), INFO, WARN, ERROR
 - In production, only INFO/WARN/ERROR are sent to Firebase
 
@@ -476,7 +476,7 @@ Events stay inside the household namespace and are gated by the same household m
 
 - Shopping list and history: persisted indefinitely
 - Item suggestions: persisted indefinitely
-- Logs: 30-day rolling retention (automatic cleanup)
+- Logs: 21-day rolling retention; remote cleanup at most weekly
 - Invitation codes: persist after use (for audit trail)
 
 ### Browser Support

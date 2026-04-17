@@ -1,10 +1,10 @@
 /**
  * Production-ready centralized logging system
  * Automatically captures client-side logs and stores them in Firebase
- * with 30-day rolling retention
+ * with 21-day rolling retention
  */
 
-import { ref, push, serverTimestamp, query, orderByChild, endAt, get, remove } from 'firebase/database';
+import { ref, push, serverTimestamp, query, orderByChild, endAt, get, remove, set } from 'firebase/database';
 import { database } from './firebase';
 
 const LOG_LEVELS = {
@@ -46,9 +46,11 @@ let localLogsIdbWarned = false;
 let currentUserId = null;
 let logListeners = [];
 
-// Log retention (30 days)
-const LOG_RETENTION_DAYS = 30;
+// Log retention (client + remote session cleanup threshold)
+const LOG_RETENTION_DAYS = 21;
 const LOG_RETENTION_MS = LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+/** Skip the expensive full-tree Firebase read unless this much time has passed (cross-device via RTDB marker). */
+const REMOTE_LOG_CLEANUP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function warnLocalLogsIdbOnce(message, error) {
   if (localLogsIdbWarned) return;
@@ -238,7 +240,7 @@ async function log(level, category, message, data = {}) {
 }
 
 /**
- * Clean up old logs from Firebase (30+ days old)
+ * Full-tree read + delete for remote logs past retention. Caller gates frequency.
  */
 async function cleanupOldFirebaseLogs() {
   if (!currentUserId || !database) {
@@ -286,6 +288,30 @@ async function cleanupOldFirebaseLogs() {
 }
 
 /**
+ * Runs remote log cleanup at most once per `REMOTE_LOG_CLEANUP_INTERVAL_MS`, coordinated via
+ * `users/{uid}/logsLastRemoteCleanupAt` so all devices share the schedule.
+ */
+async function maybeCleanupOldFirebaseLogs() {
+  if (!currentUserId || !database) {
+    return;
+  }
+
+  try {
+    const markerRef = ref(database, `users/${currentUserId}/logsLastRemoteCleanupAt`);
+    const markerSnap = await get(markerRef);
+    const last = markerSnap.val();
+    if (typeof last === 'number' && Date.now() - last < REMOTE_LOG_CLEANUP_INTERVAL_MS) {
+      return;
+    }
+
+    await cleanupOldFirebaseLogs();
+    await set(markerRef, Date.now());
+  } catch (error) {
+    console.error('Failed gated cleanup of old Firebase logs:', error);
+  }
+}
+
+/**
  * Public logging API
  */
 export const logger = {
@@ -310,11 +336,11 @@ export const logger = {
     currentUserId = userId;
     logger.info('Logger', 'User ID set', { userId, sessionId: SESSION_ID });
 
-    // Clean up old logs when user logs in (runs in background)
+    // Remote log cleanup: at most weekly (see `maybeCleanupOldFirebaseLogs`). Local IDB prune every session.
     setTimeout(() => {
-      cleanupOldFirebaseLogs();
+      maybeCleanupOldFirebaseLogs();
       logger.clearOldLogs(LOG_RETENTION_DAYS);
-    }, 10000); // Wait 10 seconds after login
+    }, 10000); // Wait 10 seconds after user id is set
   },
 
   /**
