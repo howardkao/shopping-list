@@ -22,7 +22,7 @@ import { formatAisleNameForDisplay } from './aisleDisplay';
 
 const MAX_CATEGORY_PREVIEW_ITEMS = 4;
 
-/** Visible (shortcut) names first, then library-only names; deduped case-insensitively. Up to four examples plus ", ..." (always) so the line reads as a sample, not an exhaustive list. */
+/** Visible (pinned) names first, then library-only names; deduped case-insensitively. Up to four examples plus ", ..." (always) so the line reads as a sample, not an exhaustive list. */
 function categoryItemsCommaList(visibleItems, libraryItems) {
   const vis = visibleItems || [];
   const lib = libraryItems || [];
@@ -176,7 +176,7 @@ export default function SuggestionsEditor(props) {
 
       {!onboarding && (
         <div className="pt-6 pb-4">
-          <h2 className="text-xl font-semibold">Shortcuts</h2>
+          <h2 className="text-xl font-semibold">Pinned items</h2>
         </div>
       )}
 
@@ -462,7 +462,7 @@ function CategoryRow({
             </button>
           )}
           <div className="text-xs text-gray-500 mt-0.5 break-words">
-            {itemsLine || <span className="italic text-gray-400">No shortcuts or library items</span>}
+            {itemsLine || <span className="italic text-gray-400">No pinned items or library items</span>}
           </div>
         </div>
 
@@ -647,7 +647,7 @@ function MergeCategorySheet({
             Merge {fromCategoryName ? `“${fromCategoryName}”` : 'category'} into…
           </div>
           <div className="text-xs text-gray-500 mt-1">
-            Shortcuts and library items move to the category you pick. This category is removed.
+            Pinned items and library items move to the category you pick. This category is removed.
           </div>
         </div>
         <div className="overflow-auto">

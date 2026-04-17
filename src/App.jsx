@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
   createUserWithEmailAndPassword,
@@ -1187,7 +1187,7 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
         <div className="p-6 space-y-4">
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 font-medium">
             {isAdmin
-              ? 'Your account and all household data will be permanently deleted — including the shopping list, history, and all shortcuts. Other household members will lose access.'
+              ? 'Your account and all household data will be permanently deleted — including the shopping list, history, and all pinned items. Other household members will lose access.'
               : 'Your account will be removed. The household and its data will remain accessible to other members.'}
           </div>
           <div>
@@ -3581,8 +3581,11 @@ export default function App() {
         </div>
 
         {(!isOnline || !isConnected) && (
-          <div className="bg-red-600 text-white px-4 py-2 text-center text-sm font-medium">
-            ⚠️ You're offline. {lastSyncTime ? `Last synced ${formatRelativeTime(lastSyncTime)}.` : ''} Changes will sync when connection is restored.
+          <div className="bg-red-600 text-white px-4 py-2 text-sm font-medium flex items-center justify-center gap-2">
+            <AlertTriangle size={16} className="shrink-0 text-white" aria-hidden />
+            <span>
+              You&apos;re offline. {lastSyncTime ? `Last synced ${formatRelativeTime(lastSyncTime)}.` : ''} Changes will sync when connection is restored.
+            </span>
           </div>
         )}
 
@@ -3942,7 +3945,7 @@ export default function App() {
                           ) : (
                             <div className="px-4 pb-4"><div className="text-center py-6 text-gray-400 text-sm italic">No items</div></div>
                           )}
-                          {/* B1: Dormant shortcuts hint */}
+                          {/* B1: Dormant pins hint */}
                           {quickAddMode && !pinEditMode && (() => {
                             const catIds = g.categoryIdSet || new Set();
                             const aisleDormant = dormantShortcutsCache.filter(d => catIds.has(d.categoryId));
@@ -3954,7 +3957,7 @@ export default function App() {
                             return (
                               <div className="mx-4 mb-3 rounded-xl bg-gray-50 border border-gray-200 px-4 py-3">
                                 <p className="text-xs text-gray-600">
-                                  <span className="font-semibold text-gray-700">{n} shortcut{n === 1 ? '' : 's'}</span>
+                                  <span className="font-semibold text-gray-700">{n} pin{n === 1 ? '' : 's'}</span>
                                   {' '}you haven&apos;t used in 6+ weeks — review?
                                 </p>
                                 <div className="mt-2 flex flex-wrap gap-3">
@@ -4138,16 +4141,6 @@ export default function App() {
       )}
       {showDebugPanel && (
         <DebugPanel onClose={() => setShowDebugPanel(false)} />
-      )}
-      {/* Floating debug button (admins only). Sits above the mobile bottom bar (currentPage='list') so it doesn't overlap. */}
-      {isAdmin && (
-        <button
-          onClick={() => setShowDebugPanel(true)}
-          className={`fixed left-4 lg:bottom-4 ${currentPage === 'list' ? 'bottom-28' : 'bottom-4'} p-3 bg-gray-800 text-white rounded-full shadow-lg hover:bg-gray-700 transition-colors z-40`}
-          title="Open Debug Panel (Ctrl+Shift+D)"
-        >
-          <Bug size={20} />
-        </button>
       )}
       {needsReauth && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">

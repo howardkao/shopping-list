@@ -154,6 +154,15 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **`TDD.md`:** App Check subsection + env list.
 - **Ops:** reCAPTCHA v3 key → Firebase App Check → register app → ship → monitor → enforce RTDB (see plan “When to turn on strict checking”).
 
+### 2026-04-17 — Unified design-review PR: Pass 11, pin copy, documentation sync
+- **`src/App.jsx`:** Offline banner uses Lucide **`AlertTriangle`** instead of the ⚠️ emoji (10.1). Removed the floating admin **Bug** FAB and `bottom-28` positioning; debug panel remains via **`Ctrl+Shift+D`** and **`?debug=true`** (10.3). B1 dormancy card copy uses **pin(s)**; delete-account warning uses **pinned items**.
+- **Deleted:** `palette-mockup.html` (disposable 2.2 comparison artifact after sign-off).
+- **`src/SuggestionsEditor.jsx`:** Settings page heading **Pinned items**; empty/merge helper copy uses pinned terminology.
+- **`src/LegalPages.jsx`:** Privacy policy data-inventory bullet uses **pinned quick-add items** alongside library.
+- **`DESIGN_REVIEW.md`:** Shipped items (2.2–3.5, 4.2, 5.1–5.4, 6.1, 6.3, 7.1–7.2, 8.1–8.2, 8.4, 10.1, 10.3) marked **`implemented`** with pointers here; 7.1 notes invite field has no reveal toggle (plaintext code).
+- **`PRD.md` / `TDD.md`:** Item bottom sheet, Shop/Add row interactions, single-column layout, sync hide-when-healthy, safe-area + debug access, `humanizeAuthError` in **`src/authErrors.js`**.
+- **`CLAUDE.md`:** Debug access line matches no floating bug button.
+
 ### 2026-04-17 — PRODUCTIZATION: taxonomy checkbox reconciled
 - Marked **Taxonomy redesign** should-have item as complete; refreshed sub-bullets to match shipped v2 paths, current seed counts, and bootstrap/migration story.
 - Called out **`voice-mcp/`** as the remaining consumer of legacy read paths (separate follow-up, not a second “taxonomy redesign” project).
@@ -171,7 +180,7 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **Destructive / power affordances removed:** "Reset to defaults" dropped from onboarding *and* Settings (6.3). Floating debug button removed in all envs (10.3) — keyboard shortcut + `?debug=true` remain.
 - **Touch + keyboard hygiene:** checkboxes / pencils / + / X buttons get invisible hit-zone expansion to ≥44×44 without resizing the visible glyph (3.3). Bottom-fixed elements (nav bar + wizard footer) hide when any input is focused (8.2). Autocomplete dropdown flips above its input when space below is limited (4.3). Safe-area audit to be done at implementation time across bottom-fixed elements and top notch (8.1).
 - **Polish:** Shop-mode empty state replaces aisle grid when list is empty (3.1). Checked items stay in place but dim more aggressively — no sort change (3.2). "Online" sync pill hides when online + connected; only renders for offline/syncing/error (3.4). "Last purchased: unknown" → "No purchase history" (5.1). "Name"/"Quantity" labels restyled smaller/lighter — *kept* (accessibility preservation); saved this as a standing `feedback_accessibility.md` memory so future polish sessions don't regress semantic HTML (5.4). Session-expired modal: emoji → Lucide `Lock`, `bg-blue-600` → coral (2.3). Offline banner ⚠️ → Lucide `AlertTriangle` (10.1).
-- **Login:** humanized Firebase auth error mapping with generic fallback; parallel invite-code error copy (7.2). Eye icon toggle added to password + invite code fields (7.1).
+- **Login:** humanized Firebase auth error mapping with generic fallback; parallel invite-code error copy (7.2). Eye icon toggle on **password** fields (7.1); invite code field stayed plaintext (no toggle) in shipped unified PR.
 - **Mobile bottom sheet:** both X visible on mobile *and* real swipe-to-dismiss (5.3).
 - **Multi-column layout removed** from large screens — single column at all breakpoints (8.4).
 - **Insights modal** kept in place but all developer-speak trimmed (tier labels, UIDs, internal function/field names) — no rebuild (9.2).
