@@ -571,11 +571,11 @@ Logged inline from `addItem`, `toggleDone`, and `removeItem` in `App.jsx` via a 
 
 `src/purchaseSemantics.js` defines a **two-hour undo window**: per list identity, an `unchecked` within two hours of the latest unmatched `checked` voids that check (LIFO). Surviving checks are **effective purchases** — used for purchase history, last-purchased UI, and shortcut promote/demote analytics.
 
-Pure functions in `src/itemAnalytics.js`: `buildItemStats`, `topPurchased`, `dormantQuickAddCandidates`, `promotionCandidates`, `userContributions`, `eventSummary`. They consume the raw stream but treat `checked` counts and `lastCheckedTs` as **effective** only (via `computeEffectiveCheckEvents`). All operate on the in-memory event array — no server-side aggregation. At ~10–20 events/day per household this is trivial well past 1 year of history.
+Pure functions in `src/itemAnalytics.js`: `buildItemStats`, `topPurchased`, `dormantShortcuts`, `promotionCandidates`, `userContributions`, `eventSummary` (and legacy `dormantQuickAddCandidates`). They consume the raw stream but treat `checked` counts and `lastCheckedTs` as **effective** only (via `computeEffectiveCheckEvents`). All operate on the in-memory event array — no server-side aggregation. At ~10–20 events/day per household this is trivial well past 1 year of history.
 
 ### Surfacing
 
-Currently exposed via the AdminPanel → "View Household Insights" modal (admin-only). End-user UX surfacing (promote prompts, demote prompts, "due now" strips) is deferred — Tier 0/1 ships as the data foundation; UX comes after we see what real data looks like.
+**Account → Household Insights** (`InsightsModal` in `App.jsx`): read-only summaries for any household member (consumer-facing copy). Add mode also uses `promotionCandidates` / `dormantShortcuts` for inline promote and cleanup cards.
 
 ### Retention
 

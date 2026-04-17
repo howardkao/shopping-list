@@ -274,7 +274,7 @@ A new household is seeded with 9 aisles and 52 categories (defined in the seed c
 ### Flow
 
 1. **Welcome** — short intro framing the app as a tool to align with the user's shopping pattern. Copy: "Let's set up your shopping aisles."
-2. **Aisle & Category Editor** — the same component used in Settings (see §5), with wizard chrome and reorder mode on by default. Framing copy: "Drag aisles into the order you walk your store. You can rearrange or edit anything later in Settings." Primary action: **Looks good →**. Secondary: **Reset to defaults** (enabled only after edits).
+2. **Aisle & Category Editor** — the same component used in Settings (see §5), with wizard chrome and reorder mode on by default. Framing copy: "Drag aisles into the order you walk your store. You can rearrange or edit anything later in Settings." Primary action: **Done** (no numbered steps; no reset-to-defaults — users refine taxonomy in Settings or account deletion for a full slate).
 3. **Land in Shop mode** — the user is dropped into an empty Shop view with a one-time hint pointing at the Add toggle. Building the first list is normal use, not onboarding.
 
 ### Notes
@@ -411,7 +411,7 @@ Capture every list mutation (add / check / uncheck / remove) as a per-household 
 
 ### Admin surface
 
-Admins can open the Admin Panel → "View Household Insights" to see Tier 1 aggregates: top purchased items, promotion candidates, dormant quick-add items, per-user activity, and a summary of the event stream.
+From **Account → Household Insights**, household members see plain-language summaries: top checked-off items, items bought often that are not quick-add tiles yet, quick-add tiles with little recent activity, and per-member add / check-off / remove counts (resolved to display names from the household member directory).
 
 ### Privacy posture
 

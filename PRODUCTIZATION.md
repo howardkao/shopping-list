@@ -138,6 +138,16 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ## Session Log
 
+### 2026-04-17 — Design review 9.2 (Household Insights copy)
+- **`src/App.jsx` (`InsightsModal`):** Removed tier / internal analytics jargon; plain-English section titles and blurbs; member rows use `members` display names (email fallback, then “Unknown member”) instead of truncated UIDs; friendlier error and empty states.
+
+### 2026-04-17 — Design review 4.3 (Add autocomplete flip)
+- **`src/App.jsx`:** Per-aisle Add autocomplete measures space below the input on **open** (`visualViewport.height` fallback `innerHeight`); if space below is under 200px, dropdown uses `bottom-full mb-2` instead of `top-full mt-2`. Flip cleared when the dropdown closes for that aisle.
+
+### 2026-04-17 — Design review 6.1 + 6.3 (Onboarding / SuggestionsEditor)
+- **`src/SuggestionsEditor.jsx`:** Removed onboarding "Step 2 of 2" label (6.1). Removed wizard **Reset to defaults** control and `onReset` / `resetEnabled` props (6.3); wizard footer is **Done** only, right-aligned. No `App.jsx` taxonomy reset handler existed to remove.
+- **`PRD.md`:** §6a flow updated to match shipped onboarding (Done; no reset).
+
 ### 2026-04-17 — Firebase App Check (client)
 - **`src/firebase.js`:** `initializeAppCheck` + `ReCaptchaV3Provider` immediately after `initializeApp`, before Auth/RTDB; production runtime throws if `VITE_RECAPTCHA_SITE_KEY` is missing; dev sets `self.FIREBASE_APPCHECK_DEBUG_TOKEN` (`true` or `VITE_APPCHECK_DEBUG_TOKEN`); skip init in dev when key absent (one `console.info`).
 - **`.env.example`:** `VITE_RECAPTCHA_SITE_KEY`, optional `VITE_APPCHECK_DEBUG_TOKEN` (dev).

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
@@ -26,6 +26,7 @@ import {
   clearCachedUser
 } from './offlineStorage';
 import { logger } from './logger';
+import { humanizeAuthError } from './authErrors';
 import DebugPanel from './DebugPanel';
 import SuggestionsEditor from './SuggestionsEditor';
 import Onboarding from './Onboarding';
@@ -108,6 +109,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
   const [signupType, setSignupType] = useState('create'); // 'create' | 'join'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -125,21 +127,22 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
       logger.error('Auth', 'Sign in failed', { email, error: err.message, code: err.code });
-      setError(err.message);
+      setError(humanizeAuthError(err));
     }
     setLoading(false);
   };
 
   const handleResetPassword = async () => {
-    if (!email) { setError('Please enter your email address'); return; }
+    if (!email) { setError('Please enter your email address.'); return; }
     setLoading(true);
     setError('');
     setSuccess('');
     try {
       await sendPasswordResetEmail(auth, email);
-      setSuccess('Password reset email sent! Check your inbox.');
+      setSuccess('Password reset email sent. Check your inbox.');
     } catch (err) {
-      setError(err.message);
+      logger.error('Auth', 'Password reset failed', { email, error: err.message, code: err.code });
+      setError(humanizeAuthError(err));
     }
     setLoading(false);
   };
@@ -162,16 +165,22 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
 
       if (signupType === 'join') {
         if (!inviteCode) {
-          setError('Please enter your invitation code');
+          setError('Please enter your invitation code.');
           setLoading(false);
           return;
         }
         const code = inviteCode.trim().toUpperCase();
         const codeSnapshot = await get(ref(database, `inviteCodes/${code}`));
         const codeData = codeSnapshot.val();
-        if (!codeData || codeData.used || Date.now() > new Date(codeData.expiresAt).getTime()) {
+        if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
           logger.warn('Auth', 'Sign up failed - invalid/expired invite code');
-          setError('Invalid or expired invitation code');
+          setError("That invite code isn't valid or has expired.");
+          setLoading(false);
+          return;
+        }
+        if (codeData.used) {
+          logger.warn('Auth', 'Sign up failed - invite code already used');
+          setError('That invite code has already been used.');
           setLoading(false);
           return;
         }
@@ -239,7 +248,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
       logger.error('Auth', 'Sign up failed', { email, error: err.message, code: err.code });
-      setError(err.message);
+      setError(humanizeAuthError(err));
     }
     setLoading(false);
   };
@@ -278,7 +287,22 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
             <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
             <div className="relative">
               <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors" onKeyDown={(e) => e.key === 'Enter' && (mode === 'signin' ? handleSignIn() : handleSignUp())} />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
+                onKeyDown={(e) => e.key === 'Enter' && (mode === 'signin' ? handleSignIn() : handleSignUp())}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(s => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-gray-700 rounded-lg"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
           </div>
           {mode === 'signup' && signupType === 'join' && (
@@ -398,7 +422,15 @@ function OfflineReadyToast({ onDismiss }) {
   );
 }
 
-function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose }) {
+function insightsMemberLabel(members, uid) {
+  const m = members?.[uid];
+  const name = m?.displayName?.trim();
+  if (name) return name;
+  if (m?.email) return m.email;
+  return 'Unknown member';
+}
+
+function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, members, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [events, setEvents] = useState([]);
@@ -456,21 +488,27 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose
         <div className="p-6 border-b border-gray-200 flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold text-gray-800">Household Insights</h2>
-            <p className="text-gray-600 font-medium text-sm">Tier 1 — frequency aggregates from item events</p>
+            <p className="text-gray-600 font-medium text-sm">Based on how your household adds, checks off, and removes items.</p>
           </div>
           <button onClick={onClose} className="p-2 text-gray-500 hover:text-gray-800"><X size={22} /></button>
         </div>
         <div className="p-6 flex-1 overflow-y-auto space-y-6 text-sm">
           {loading && <div className="text-gray-500">Loading…</div>}
-          {error && <div className="text-red-600">Error: {error}</div>}
+          {error && (
+            <div className="text-red-600">
+              <p className="font-medium">Could not load insights.</p>
+              <p className="text-xs text-gray-500 mt-1 font-normal">{error}</p>
+            </div>
+          )}
           {!loading && !error && !events.length && (
             <div className="text-gray-500">No item events recorded yet. Add and check off items to start collecting data.</div>
           )}
           {!loading && !error && events.length > 0 && (
             <>
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Top purchased (all-time)</h3>
-                {top.length === 0 ? <div className="text-gray-500">No checkoff events yet.</div> : (
+                <h3 className="font-bold text-gray-800 mb-2">Top items</h3>
+                <p className="text-xs text-gray-500 mb-2">Most often checked off, all time.</p>
+                {top.length === 0 ? <div className="text-gray-500">Nothing checked off yet.</div> : (
                   <div className="space-y-1">
                     {top.map(s => (
                       <div key={s.key} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
@@ -483,8 +521,9 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Promotion candidates <span className="text-xs font-normal text-gray-500">(checked ≥3× in threshold window, not a shortcut)</span></h3>
-                {promote.length === 0 ? <div className="text-gray-500">None.</div> : (
+                <h3 className="font-bold text-gray-800 mb-2">Often bought — not on quick-add</h3>
+                <p className="text-xs text-gray-500 mb-2">Checked off several times recently but not currently a quick-add tile. You may see the same suggestions on the Add screen.</p>
+                {promote.length === 0 ? <div className="text-gray-500">None right now.</div> : (
                   <div className="space-y-1">
                     {promote.map(c => (
                       <div key={`${c.categoryId || c.category}::${c.name}`} className="flex justify-between items-center bg-amber-50 rounded-lg px-3 py-2">
@@ -497,13 +536,14 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Dormant shortcuts <span className="text-xs font-normal text-gray-500">(no use beyond category threshold)</span></h3>
-                {dormant.length === 0 ? <div className="text-gray-500">None.</div> : (
+                <h3 className="font-bold text-gray-800 mb-2">Quiet quick-add tiles</h3>
+                <p className="text-xs text-gray-500 mb-2">Tiles with no recent adds or check-offs; how long counts as recent depends on the category. Same list may appear on the Add screen.</p>
+                {dormant.length === 0 ? <div className="text-gray-500">None right now.</div> : (
                   <div className="space-y-1">
                     {dormant.slice(0, 30).map(d => (
                       <div key={`${d.categoryId}::${d.name}`} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
                         <div><span className="font-semibold">{d.name}</span> <span className="text-gray-500 text-xs">· {d.categoryName}</span></div>
-                        <div className="text-gray-600">{d.daysSinceLastUse == null ? 'never used' : `${d.daysSinceLastUse}d ago`}</div>
+                        <div className="text-gray-600">{d.daysSinceLastUse == null ? 'No activity yet' : `${d.daysSinceLastUse}d since last use`}</div>
                       </div>
                     ))}
                   </div>
@@ -511,15 +551,20 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Per-user activity</h3>
-                <div className="space-y-1">
-                  {users.map(u => (
-                    <div key={u.uid} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
-                      <div className="font-mono text-xs text-gray-700">{u.uid.slice(0, 12)}…</div>
-                      <div className="text-gray-600 text-xs">added {u.added} · checked {u.checked} · removed {u.removed}</div>
-                    </div>
-                  ))}
-                </div>
+                <h3 className="font-bold text-gray-800 mb-2">Household activity</h3>
+                <p className="text-xs text-gray-500 mb-2">Adds, check-offs, and removals per person.</p>
+                {users.length === 0 ? (
+                  <div className="text-gray-500">No member-attributed activity yet.</div>
+                ) : (
+                  <div className="space-y-1">
+                    {users.map(u => (
+                      <div key={u.uid} className="flex justify-between items-center gap-3 bg-gray-50 rounded-lg px-3 py-2">
+                        <div className="font-medium text-gray-800 truncate min-w-0">{insightsMemberLabel(members, u.uid)}</div>
+                        <div className="text-gray-600 text-xs shrink-0">Added {u.added} · Checked off {u.checked} · Removed {u.removed}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
             </>
           )}
@@ -1127,11 +1172,7 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
       onDeleted();
     } catch (err) {
       logger.error('Auth', 'Account deletion failed', { uid: user.uid, error: err.message, code: err.code });
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        setError('Incorrect password. Please try again.');
-      } else {
-        setError(err.message);
-      }
+      setError(humanizeAuthError(err));
       setLoading(false);
     }
   };
@@ -1359,6 +1400,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [pendingOps, setPendingOps] = useState(0);
   const [expandedCategories, setExpandedCategories] = useState({});
+  const [keyboardInputFocused, setKeyboardInputFocused] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [localDataLoaded, setLocalDataLoaded] = useState(false);
@@ -1377,6 +1419,11 @@ export default function App() {
   const shopAisleDefaultsHouseholdIdRef = useRef(null);
   /** Shop mode: previous snapshot of whether each aisle had any list items (for auto-collapse when emptied). */
   const prevShopAisleHadItemsRef = useRef({});
+  /** Per-aisle Add search inputs — measure for autocomplete flip (design review 4.3). */
+  const aisleAddSearchInputRefs = useRef({});
+  const prevAisleAutocompleteOpenRef = useRef({});
+  /** When true, per-aisle autocomplete renders above the input (decided once per open). */
+  const [aisleAutocompleteFlipUp, setAisleAutocompleteFlipUp] = useState({});
 
   // --- A1/B1 suggestion intelligence ---
   const [suggestionDismissals, setSuggestionDismissals] = useState({});
@@ -1505,6 +1552,33 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
+
+  // Track whether a text-input element is focused so bottom-fixed chrome can
+  // hide while the mobile soft keyboard is up (decision 8.2).
+  useEffect(() => {
+    const isTextInput = (el) => {
+      if (!el) return false;
+      const tag = el.tagName;
+      if (tag === 'INPUT') {
+        const t = (el.getAttribute('type') || 'text').toLowerCase();
+        return t !== 'checkbox' && t !== 'radio' && t !== 'button' && t !== 'submit';
+      }
+      return tag === 'TEXTAREA' || el.isContentEditable === true;
+    };
+    const onFocusIn = (e) => { if (isTextInput(e.target)) setKeyboardInputFocused(true); };
+    const onFocusOut = () => {
+      // Defer so the next focusin (if any) fires first.
+      setTimeout(() => {
+        if (!isTextInput(document.activeElement)) setKeyboardInputFocused(false);
+      }, 0);
+    };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+    };
   }, []);
 
   useEffect(() => {
@@ -2668,6 +2742,36 @@ export default function App() {
     return hasExact ? base : [{ name: raw, catId: null, suggestionId: null, fromVisible: false }, ...base];
   };
 
+  const AUTOCOMPLETE_MIN_SPACE_BELOW = 200;
+  useLayoutEffect(() => {
+    const prev = prevAisleAutocompleteOpenRef.current;
+    const nextOpen = {};
+    for (const aisleId of orderedV2AisleIds) {
+      const trimmed = (categorySearches[aisleId] || '').trim();
+      const expanded = Boolean(expandedCategories[aisleId]);
+      const open = Boolean(quickAddMode && expanded && trimmed);
+      nextOpen[aisleId] = open;
+      const wasOpen = Boolean(prev[aisleId]);
+      if (open && !wasOpen) {
+        const el = aisleAddSearchInputRefs.current[aisleId];
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          const vh = window.visualViewport?.height ?? window.innerHeight;
+          const spaceBelow = vh - rect.bottom;
+          setAisleAutocompleteFlipUp((s) => ({ ...s, [aisleId]: spaceBelow < AUTOCOMPLETE_MIN_SPACE_BELOW }));
+        }
+      }
+      if (!open && wasOpen) {
+        setAisleAutocompleteFlipUp((s) => {
+          if (!(aisleId in s)) return s;
+          const { [aisleId]: _removed, ...rest } = s;
+          return rest;
+        });
+      }
+    }
+    prevAisleAutocompleteOpenRef.current = nextOpen;
+  }, [categorySearches, expandedCategories, quickAddMode, aislesV2]);
+
   const organized = orderedV2AisleIds.map((aisleId) => {
     const catIds = v2CategoriesByAisle[aisleId] || [];
     const catIdSet = new Set(catIds);
@@ -3284,7 +3388,10 @@ export default function App() {
       <div className={`min-h-screen scroll-fade-bg ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: isScrolling ? '#FFFFFF' : '#F7F7F7' }}>
         {/* Header — mobile: hamburger left, brand center, sync pill right (hides on scroll-down).
             Desktop (lg+): brand left, Shop/Add + Clear inline (when on list), nav links, sync pill. Always visible. */}
-        <div className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 lg:translate-y-0 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
+        <div
+          className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 lg:translate-y-0 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}
+          style={{ paddingTop: 'env(safe-area-inset-top)' }}
+        >
           <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3">
             <div className="flex items-center gap-2 lg:gap-3">
               <button
@@ -3342,30 +3449,23 @@ export default function App() {
                 <button onClick={() => setCurrentPage('account')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'account' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'account' ? { color: '#FF7A7A' } : {}}>Account</button>
               </div>
 
-              <div className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
-                !isOnline || !isConnected
-                  ? 'bg-red-100'
-                  : pendingOps > 0
-                    ? 'bg-blue-100'
-                    : 'bg-green-100'
-              }`} aria-label={!isOnline || !isConnected ? 'Offline' : pendingOps > 0 ? 'Syncing' : 'Online'}>
-                {!isOnline || !isConnected ? (
-                  <>
-                    <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span className="text-xs font-medium text-red-600">Offline</span>
-                  </>
-                ) : pendingOps > 0 ? (
-                  <>
-                    <Loader2 size={14} className="text-blue-600 animate-spin" />
-                    <span className="text-xs font-medium text-blue-600">Syncing</span>
-                  </>
-                ) : (
-                  <>
-                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                    <span className="text-xs font-medium text-green-600">Online</span>
-                  </>
-                )}
-              </div>
+              {(!isOnline || !isConnected || pendingOps > 0) && (
+                <div className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
+                  !isOnline || !isConnected ? 'bg-red-100' : 'bg-blue-100'
+                }`} aria-label={!isOnline || !isConnected ? 'Offline' : 'Syncing'}>
+                  {!isOnline || !isConnected ? (
+                    <>
+                      <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                      <span className="text-xs font-medium text-red-600">Offline</span>
+                    </>
+                  ) : (
+                    <>
+                      <Loader2 size={14} className="text-blue-600 animate-spin" />
+                      <span className="text-xs font-medium text-blue-600">Syncing</span>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           {showMenu && (
@@ -3386,7 +3486,10 @@ export default function App() {
           </div>
         )}
 
-        <div className={`pt-20 lg:pb-6 ${currentPage === 'list' ? 'pb-32' : 'pb-6'}`}>
+        <div
+          className={`lg:pb-6 ${currentPage === 'list' ? 'pb-32' : 'pb-6'}`}
+          style={{ paddingTop: 'calc(5rem + env(safe-area-inset-top))' }}
+        >
           {currentPage === 'privacy' ? (
             <PrivacyPolicyPage onBack={() => setCurrentPage('account')} />
           ) : currentPage === 'terms' ? (
@@ -3434,9 +3537,26 @@ export default function App() {
               </div>
             </div>
           ) : currentPage === 'list' ? (
-            <div className="max-w-2xl lg:max-w-6xl mx-auto px-4">
+            <div className="max-w-2xl mx-auto px-4">
               {/* Toolbar lives in the desktop header (>=lg) and in the mobile bottom nav bar (<lg).
                   See the fixed bottom-bar block at the bottom of this return for the mobile placement. */}
+              {!quickAddMode && list.length === 0 ? (
+                <div className="mt-12 mx-auto max-w-sm rounded-2xl border border-gray-200 bg-white p-8 text-center">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-4 bg-gray-50">
+                    <ShoppingCart size={24} className="text-gray-400" />
+                  </div>
+                  <p className="text-gray-700 font-semibold mb-1">Your list is empty</p>
+                  <p className="text-sm text-gray-500 mb-5">Tap Add to start building your list.</p>
+                  <button
+                    type="button"
+                    onClick={() => setQuickAddMode(true)}
+                    className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold"
+                    style={{ backgroundColor: '#FF7A7A' }}
+                  >
+                    Add items
+                  </button>
+                </div>
+              ) : (
               <div className="space-y-3">
                 {organized.map(g => {
                   const search = categorySearches[g.aisleId] || '';
@@ -3467,9 +3587,20 @@ export default function App() {
                             <div className={`px-4 pb-3 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
                               <div className="relative">
                                 <Search className="absolute left-3 top-3 text-gray-400" size={18} />
-                                <input type="text" value={search} onChange={(e) => setCategorySearches(prev => ({ ...prev, [g.aisleId]: e.target.value }))} placeholder={`Add to ${g.aisleNameDisplay}...`} className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors" />
+                                <input
+                                  ref={(el) => { aisleAddSearchInputRefs.current[g.aisleId] = el; }}
+                                  type="text"
+                                  value={search}
+                                  onChange={(e) => setCategorySearches(prev => ({ ...prev, [g.aisleId]: e.target.value }))}
+                                  placeholder={`Add to ${g.aisleNameDisplay}...`}
+                                  className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors"
+                                />
                                 {search.trim() && (
-                                  <div className="absolute w-full bg-white border-2 border-gray-200 rounded-xl mt-2 shadow-lg z-10 max-h-60 overflow-y-auto">
+                                  <div
+                                    className={`absolute left-0 right-0 w-full bg-white border-2 border-gray-200 rounded-xl shadow-lg z-10 max-h-60 overflow-y-auto ${
+                                      aisleAutocompleteFlipUp[g.aisleId] ? 'bottom-full mb-2' : 'top-full mt-2'
+                                    }`}
+                                  >
                                     {quickAddDropdown.map((s, i) => {
                                       const showLibraryRemove = Boolean(
                                         s.catId && s.suggestionId && s.fromVisible === false
@@ -3511,7 +3642,7 @@ export default function App() {
                             </div>
                           )}
                           {g.items.length > 0 ? (
-                            <div className="pb-3 md:columns-2 lg:columns-3 md:gap-0">
+                            <div className="pb-3">
                               {g.items.map((item, idx) => {
                                 if (item.type === 'list') {
                                   const li = item.data;
@@ -3526,7 +3657,7 @@ export default function App() {
                                       tabIndex={0}
                                       onClick={handleRowPrimary}
                                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowPrimary(); } }}
-                                      className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 break-inside-avoid scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'opacity-60' : ''}`}
+                                      className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'opacity-60' : ''}`}
                                     >
                                       {quickAddMode ? (
                                         <button
@@ -3582,7 +3713,7 @@ export default function App() {
                                       tabIndex={0}
                                       onClick={handleTileAdd}
                                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTileAdd(); } }}
-                                      className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 break-inside-avoid scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''}`}
+                                      className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''}`}
                                       style={{ backgroundColor: '#FFF5F5' }}
                                     >
                                       <button
@@ -3676,6 +3807,7 @@ export default function App() {
                   );
                 })}
               </div>
+              )}
             </div>
           ) : currentPage === 'history' ? (
             <PurchaseHistory
@@ -3706,7 +3838,7 @@ export default function App() {
 
         {/* Mobile bottom nav bar — Shop/Add primary toggle + contextual Clear chip.
             Only on the list page (Shop/Add modes don't apply elsewhere). Hidden at lg+ where the desktop header carries these controls. */}
-        {currentPage === 'list' && (
+        {currentPage === 'list' && !keyboardInputFocused && (
           <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 px-3 pt-3 pb-safe pointer-events-none">
             {doneCount > 0 && (
               <div className="flex justify-center mb-2 pointer-events-auto relative">
@@ -3759,6 +3891,7 @@ export default function App() {
           householdId={householdId}
           liveBucketMonthKey={itemEventsListenerMonth}
           liveBucketVal={liveItemEventsMonthVal}
+          members={members}
           onClose={() => setShowHouseholdInsights(false)}
         />
       )}
@@ -3816,12 +3949,15 @@ export default function App() {
       {needsReauth && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full text-center">
-            <div className="text-4xl mb-3">🔒</div>
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-3 bg-gray-50">
+              <Lock size={24} className="text-gray-500" />
+            </div>
             <h2 className="text-lg font-bold text-gray-900 mb-2">Session Expired</h2>
             <p className="text-sm text-gray-600 mb-5">Your session has ended. Please sign in again to continue.</p>
             <button
               onClick={() => setShowLoginExplicitly(true)}
-              className="w-full py-3 px-4 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors"
+              className="w-full py-3 px-4 text-white font-semibold rounded-xl transition-colors hover:opacity-90"
+              style={{ backgroundColor: '#FF7A7A' }}
             >
               Sign In
             </button>
