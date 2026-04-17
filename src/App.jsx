@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Settings, History, UserCircle, BarChart3 } from 'lucide-react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
   createUserWithEmailAndPassword,
@@ -669,10 +669,10 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
   const [configOpen, setConfigOpen] = useState(false);
   const [configAisleId, setConfigAisleId] = useState(item.suggestionConfig?.aisleId || '');
   const [configCatId, setConfigCatId] = useState(item.suggestionConfig?.categoryId || '');
-  const [configSaving, setConfigSaving] = useState(false);
-  const [configError, setConfigError] = useState('');
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [pinActionLoading, setPinActionLoading] = useState(false);
   const [promotedConfig, setPromotedConfig] = useState(null);
+  const [translateY, setTranslateY] = useState(0);
+  const dragStartYRef = useRef(null);
 
   const suggestionConfig = promotedConfig || item.suggestionConfig || null;
   const aisleMap = aisles || {};
@@ -705,6 +705,16 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
     lastCommittedNameRef.current = String(item.name ?? '');
     lastCommittedQtyRef.current = String(item.quantity ?? '');
   }, [item.itemKey, item.id, item.name, item.quantity]);
+
+  // Reset picker + drag state when the underlying item changes (sheet reopen).
+  useEffect(() => {
+    setConfigOpen(false);
+    setPromotedConfig(null);
+    setPinActionLoading(false);
+    setTranslateY(0);
+    setConfigAisleId(item.suggestionConfig?.aisleId || '');
+    setConfigCatId(item.suggestionConfig?.categoryId || '');
+  }, [item.itemKey, item.id]);
 
   const commitName = async () => {
     const trimmed = nameDraft.trim();
@@ -767,23 +777,72 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
     ? formatRelativeTime(lastPurchasedTs)
     : null;
 
+  // Swipe-to-dismiss on mobile (handle only, not sheet body — avoids fighting internal scroll).
+  const handleDragStart = (e) => {
+    dragStartYRef.current = e.touches?.[0]?.clientY ?? null;
+  };
+  const handleDragMove = (e) => {
+    if (dragStartYRef.current == null) return;
+    const currentY = e.touches?.[0]?.clientY ?? dragStartYRef.current;
+    const delta = Math.max(0, currentY - dragStartYRef.current);
+    setTranslateY(delta);
+  };
+  const handleDragEnd = () => {
+    if (dragStartYRef.current == null) return;
+    dragStartYRef.current = null;
+    const SHEET_DISMISS_PX = 100;
+    if (translateY >= SHEET_DISMISS_PX) {
+      void handleClose();
+    } else {
+      setTranslateY(0);
+    }
+  };
+
+  // Backdrop fades proportionally with the sheet drag.
+  const backdropOpacity = translateY > 0
+    ? Math.max(0, 1 - translateY / 300)
+    : 1;
+
+  // Breadcrumb (taxonomy position) for the two-row block.
+  const breadcrumbCategoryId = suggestionConfig?.categoryId || item.categoryId || null;
+  const breadcrumbAisleId = suggestionConfig?.aisleId
+    || (breadcrumbCategoryId ? categoryMap[breadcrumbCategoryId]?.aisleId || null : null);
+  const breadcrumbAisleName = breadcrumbAisleId && aisleMap[breadcrumbAisleId]?.name
+    ? formatAisleNameForDisplay(aisleMap[breadcrumbAisleId].name)
+    : null;
+  const breadcrumbCategoryName = breadcrumbCategoryId && categoryMap[breadcrumbCategoryId]?.name
+    ? categoryMap[breadcrumbCategoryId].name
+    : null;
+  const hasBreadcrumb = Boolean(breadcrumbAisleName && breadcrumbCategoryName);
+  const canEditTaxonomy = Boolean(suggestionConfig);
+  const canPinAction = Boolean(suggestionConfig || item.promoteToShortcut);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center md:items-center md:p-4"
       onClick={handleClose}
     >
-      <div className="absolute inset-0 bg-black/40 transition-opacity md:bg-black/50" />
+      <div
+        className="absolute inset-0 bg-black/40 transition-opacity md:bg-black/50"
+        style={{ opacity: backdropOpacity }}
+      />
       <div
         className="relative w-full max-w-lg bg-white rounded-t-3xl shadow-xl animate-slide-up md:max-h-[85vh] md:max-w-md md:overflow-hidden md:rounded-3xl md:border md:border-gray-200 md:animate-none md:shadow-xl md:flex md:flex-col"
         onClick={(e) => e.stopPropagation()}
+        style={{ transform: translateY > 0 ? `translateY(${translateY}px)` : undefined, transition: dragStartYRef.current == null ? 'transform 200ms ease-out' : 'none' }}
       >
-        <div className="flex justify-center pt-3 pb-1 md:hidden">
+        <div
+          className="flex justify-center pt-3 pb-1 md:hidden touch-none"
+          onTouchStart={handleDragStart}
+          onTouchMove={handleDragMove}
+          onTouchEnd={handleDragEnd}
+        >
           <div className="w-10 h-1 rounded-full bg-gray-300" />
         </div>
-        <div className="px-6 pb-6 pt-2 md:flex-1 md:flex md:flex-col md:min-h-0 md:overflow-y-auto md:pt-6 md:pb-6">
+        <div className="px-6 pt-2 md:flex-1 md:flex md:flex-col md:min-h-0 md:overflow-y-auto md:pt-6 md:pb-6" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 1.5rem)' }}>
           <div className="flex items-start justify-between gap-3 mb-4">
             <div className="min-w-0 flex-1 space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Name</p>
+              <p className="text-xs font-medium text-gray-500">Name</p>
               <input
                 type="text"
                 value={nameDraft}
@@ -805,14 +864,14 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
               type="button"
               onClick={handleClose}
               disabled={isSaving}
-              className="hidden md:flex flex-shrink-0 p-2 -mr-2 -mt-1 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100"
+              className="flex flex-shrink-0 p-2 -mr-2 -mt-1 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100"
               aria-label="Close"
             >
               <X size={22} />
             </button>
           </div>
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Quantity</p>
+            <p className="text-xs font-medium text-gray-500">Quantity</p>
             <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
               <div className="flex items-center gap-2">
                 <input
@@ -855,164 +914,137 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
                 {addedAtFormatted ? ` · ${addedAtFormatted}` : ''}
               </p>
             )}
-            <p>Last purchased: {lastPurchasedFormatted || 'unknown'}</p>
+            <p>{lastPurchasedFormatted ? `Last purchased: ${lastPurchasedFormatted}` : 'No purchase history'}</p>
           </div>
-          {suggestionConfig && !configOpen && (
-            <button
-              type="button"
-              onClick={() => {
-                setConfigAisleId(suggestionConfig.aisleId || '');
-                setConfigCatId(suggestionConfig.categoryId || '');
-                setConfigError('');
-                setConfirmRemove(false);
-                setConfigOpen(true);
-              }}
-              className="mt-6 w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left"
-            >
-              <Settings size={14} className="text-gray-400 flex-shrink-0" />
-              <span className="text-xs font-medium text-gray-500">Shortcut settings</span>
-            </button>
+
+          {item.promotionHint && (
+            <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
+              <p className="text-xs text-amber-800">
+                Bought {item.promotionHint.checkedCount}× recently
+              </p>
+            </div>
           )}
-          {!suggestionConfig && item.promoteToShortcut && (
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const config = await item.promoteToShortcut();
-                  if (config) setPromotedConfig(config);
-                } catch (err) {
-                  /* silently fail */
-                }
-              }}
-              className="mt-6 w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left"
-            >
-              <Plus size={14} className="text-gray-400 flex-shrink-0" />
-              <span className="text-xs font-medium text-gray-500">Add as a permanent shortcut</span>
-            </button>
-          )}
-          {suggestionConfig && configOpen && (
-            <div className="mt-6 rounded-xl bg-gray-50 p-4 space-y-4">
-              <p className="text-xs text-gray-500">Change where this shortcut lives, or remove it from your shortcuts. It will still appear in search results.</p>
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold uppercase tracking-wide text-gray-400">Aisle</label>
-                <select
-                  value={configAisleId}
-                  onChange={(e) => {
-                    const nextAisle = e.target.value;
-                    setConfigAisleId(nextAisle);
-                    const opts = categoriesForAisle(nextAisle);
-                    setConfigCatId(opts[0]?.id || '');
-                  }}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
-                >
-                  {orderedAisles.map(a => (
-                    <option key={a.id} value={a.id}>{formatAisleNameForDisplay(a.name)}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold uppercase tracking-wide text-gray-400">Category</label>
-                <select
-                  value={configCatId}
-                  onChange={(e) => setConfigCatId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
-                >
-                  {categoriesForAisle(configAisleId).map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              {!confirmRemove ? (
-                <>
+
+          {(hasBreadcrumb || canPinAction) && (
+            <div className="mt-6 space-y-2">
+              {hasBreadcrumb && (
+                canEditTaxonomy ? (
                   <button
                     type="button"
-                    onClick={() => setConfirmRemove(true)}
-                    disabled={configSaving}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-white text-red-600 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
+                    onClick={() => {
+                      setConfigAisleId(suggestionConfig.aisleId || '');
+                      setConfigCatId(suggestionConfig.categoryId || '');
+                      setConfigOpen(open => !open);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left"
                   >
-                    <Trash2 size={14} />
-                    Remove from shortcuts
+                    <span className="flex-1 text-xs text-gray-500">
+                      <span className="font-semibold tracking-wide">{breadcrumbAisleName}</span>
+                      <span className="mx-1.5 text-gray-300">›</span>
+                      <span>{breadcrumbCategoryName}</span>
+                    </span>
+                    <ChevronRight size={14} className={`text-gray-400 transition-transform ${configOpen ? 'rotate-90' : ''}`} />
                   </button>
-                  {configError && (
-                    <p className="text-xs font-medium text-red-600">{configError}</p>
-                  )}
-                  <div className="flex gap-2 pt-2 border-t border-gray-200">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConfigOpen(false);
-                        setConfirmRemove(false);
-                        setConfigError('');
+                ) : (
+                  <div className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50">
+                    <span className="flex-1 text-xs text-gray-500">
+                      <span className="font-semibold tracking-wide">{breadcrumbAisleName}</span>
+                      <span className="mx-1.5 text-gray-300">›</span>
+                      <span>{breadcrumbCategoryName}</span>
+                    </span>
+                  </div>
+                )
+              )}
+
+              {canEditTaxonomy && configOpen && (
+                <div className="rounded-xl bg-gray-50 p-4 space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-gray-500">Aisle</label>
+                    <select
+                      value={configAisleId}
+                      onChange={(e) => {
+                        const nextAisle = e.target.value;
+                        setConfigAisleId(nextAisle);
+                        const opts = categoriesForAisle(nextAisle);
+                        setConfigCatId(opts[0]?.id || '');
                       }}
-                      disabled={configSaving}
-                      className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50 disabled:opacity-50"
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
                     >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setConfigError('');
-                        const aisleChanged = configAisleId !== suggestionConfig.aisleId;
-                        const catChanged = configCatId !== suggestionConfig.categoryId;
-                        if (!aisleChanged && !catChanged) {
+                      {orderedAisles.map(a => (
+                        <option key={a.id} value={a.id}>{formatAisleNameForDisplay(a.name)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-gray-500">Category</label>
+                    <select
+                      value={configCatId}
+                      onChange={async (e) => {
+                        const nextCat = e.target.value;
+                        setConfigCatId(nextCat);
+                        if (!nextCat) return;
+                        if (nextCat === suggestionConfig.categoryId) {
                           setConfigOpen(false);
                           return;
                         }
-                        if (!configCatId) {
-                          setConfigError('Pick a category.');
-                          return;
-                        }
-                        setConfigSaving(true);
                         try {
-                          await suggestionConfig.onMove(configCatId);
-                        } catch (err) {
-                          setConfigError(err?.message || 'Failed to save');
-                          setConfigSaving(false);
+                          await suggestionConfig.onMove(nextCat);
+                        } catch {
+                          /* silently fail */
                         }
                       }}
-                      disabled={configSaving}
-                      className="flex-1 px-4 py-2.5 rounded-xl text-white font-semibold disabled:opacity-50"
-                      style={{ backgroundColor: '#FF7A7A' }}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
                     >
-                      {configSaving ? 'Saving…' : 'Save'}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-red-700">Remove this shortcut? It will still be available via search.</p>
-                  {configError && (
-                    <p className="text-xs font-medium text-red-600">{configError}</p>
-                  )}
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setConfirmRemove(false)}
-                      disabled={configSaving}
-                      className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Keep
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setConfigError('');
-                        setConfigSaving(true);
-                        try {
-                          await suggestionConfig.onRemove();
-                        } catch (err) {
-                          setConfigError(err?.message || 'Failed to remove');
-                          setConfigSaving(false);
-                        }
-                      }}
-                      disabled={configSaving}
-                      className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
-                    >
-                      {configSaving ? 'Removing…' : 'Remove'}
-                    </button>
+                      {categoriesForAisle(configAisleId).map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
+              )}
+
+              {canPinAction && (
+                canEditTaxonomy ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (pinActionLoading) return;
+                      setPinActionLoading(true);
+                      try {
+                        await suggestionConfig.onRemove();
+                      } catch {
+                        setPinActionLoading(false);
+                      }
+                    }}
+                    disabled={pinActionLoading}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-white text-red-600 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
+                  >
+                    <Pin size={14} />
+                    {pinActionLoading ? 'Unpinning…' : 'Unpin'}
+                  </button>
+                ) : item.promoteToShortcut ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (pinActionLoading) return;
+                      setPinActionLoading(true);
+                      try {
+                        const config = await item.promoteToShortcut();
+                        if (config) setPromotedConfig(config);
+                      } catch {
+                        /* silently fail */
+                      } finally {
+                        setPinActionLoading(false);
+                      }
+                    }}
+                    disabled={pinActionLoading}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border bg-white text-sm font-semibold hover:bg-[#FFF5F5] disabled:opacity-50"
+                    style={{ color: '#FF7A7A', borderColor: 'rgba(255, 122, 122, 0.4)' }}
+                  >
+                    <Pin size={14} fill="currentColor" />
+                    {pinActionLoading ? 'Pinning…' : 'Pin'}
+                  </button>
+                ) : null
               )}
             </div>
           )}
@@ -1316,8 +1348,6 @@ export default function App() {
   const [suggestionDismissals, setSuggestionDismissals] = useState({});
   const [promotionCandidatesCache, setPromotionCandidatesCache] = useState([]);
   const [dormantShortcutsCache, setDormantShortcutsCache] = useState([]);
-  const [activePromotionPrompt, setActivePromotionPrompt] = useState(null);
-  const promotionTimerRef = useRef(null);
   const lastScrollY = useRef(0);
   const lastScrollTime = useRef(Date.now());
   const smoothedVelocity = useRef(0);
@@ -2328,37 +2358,38 @@ export default function App() {
   const openItemSheet = async (item) => {
     const itemKey = getStableItemKey(item);
     const base = { ...item, itemKey, onQuantityChange: updateQuantity, onNameChange: updateItemName };
-    if (quickAddMode) {
-      const match = findShortcutForListItem(item);
-      if (match) {
-        base.suggestionConfig = {
-          categoryId: match.categoryId,
-          aisleId: categoriesV2[match.categoryId]?.aisleId || null,
-          onMove: async (toCatId) => {
-            await moveSuggestionToCategory(match.suggestionId, match.categoryId, toCatId);
-            const toCategoryName = categoriesV2[toCatId]?.name || '';
-            const targetItemKey = itemKey;
-            setList(prev => {
-              const next = prev.map(li =>
-                getStableItemKey(li) === targetItemKey
-                  ? { ...li, categoryId: toCatId, category: toCategoryName }
-                  : li
-              );
-              save('shopping-list', next);
-              saveShoppingListLocally(next);
-              return next;
-            });
-            setSelectedItem(null);
-          },
-          onRemove: async () => {
-            await removeSuggestionEverywhere(match.suggestionId, match.categoryId);
-            setSelectedItem(null);
-          },
-        };
-      } else {
-        const catId = getItemCategoryId(item);
-        if (catId) {
-          base.promoteToShortcut = async () => {
+    // Surface pin/promote affordances in both Shop and Add mode so the sheet's
+    // breadcrumb + Pin button work universally (per Pass 2 / decision 5.2).
+    const match = findShortcutForListItem(item);
+    if (match) {
+      base.suggestionConfig = {
+        categoryId: match.categoryId,
+        aisleId: categoriesV2[match.categoryId]?.aisleId || null,
+        onMove: async (toCatId) => {
+          await moveSuggestionToCategory(match.suggestionId, match.categoryId, toCatId);
+          const toCategoryName = categoriesV2[toCatId]?.name || '';
+          const targetItemKey = itemKey;
+          setList(prev => {
+            const next = prev.map(li =>
+              getStableItemKey(li) === targetItemKey
+                ? { ...li, categoryId: toCatId, category: toCategoryName }
+                : li
+            );
+            save('shopping-list', next);
+            saveShoppingListLocally(next);
+            return next;
+          });
+          setSelectedItem(null);
+        },
+        onRemove: async () => {
+          await removeSuggestionEverywhere(match.suggestionId, match.categoryId);
+          setSelectedItem(null);
+        },
+      };
+    } else {
+      const catId = getItemCategoryId(item);
+      if (catId) {
+        base.promoteToShortcut = async () => {
             const trimmed = String(item.name || '').trim();
             if (!trimmed || !taxonomyBase) return null;
             const vis = visibleItemsV2[catId] || [];
@@ -2402,6 +2433,13 @@ export default function App() {
           };
         }
       }
+    // Promotion hint: only meaningful for items that aren't already pinned.
+    if (!base.suggestionConfig) {
+      const lower = String(item.name || '').toLowerCase();
+      const candidate = promotionCandidatesCache.find(c =>
+        (c.name || '').toLowerCase() === lower
+      );
+      if (candidate) base.promotionHint = candidate;
     }
     setSelectedItem(base);
     setSelectedItemLastPurchased(null);
@@ -2528,7 +2566,6 @@ export default function App() {
     const categoryName = catId ? v2CategoryNameById[catId] : (aislesV2[aisleId]?.name || '');
     addItem(suggestion.name, categoryName, 'typed', generateId(), catId);
     setCategorySearches(prev => ({ ...prev, [aisleId]: '' }));
-    checkPromotionAfterAdd(suggestion.name, categoryName);
   };
 
   const getAisleSuggestions = (aisleId) => {
@@ -2699,7 +2736,6 @@ export default function App() {
   // --- A1/B1: Load events and compute candidates when entering Add mode ---
   useEffect(() => {
     if (!quickAddMode || !householdId) {
-      setActivePromotionPrompt(null);
       return;
     }
     let cancelled = false;
@@ -2767,8 +2803,6 @@ export default function App() {
   };
 
   const handlePromotionAccept = async (candidate) => {
-    setActivePromotionPrompt(null);
-    if (promotionTimerRef.current) clearTimeout(promotionTimerRef.current);
     const catId = candidate.categoryId || categoryIdByName[(candidate.category || '').toLowerCase()];
     if (!catId || !taxonomyBase) return;
     const trimmed = (candidate.name || '').trim();
@@ -2791,8 +2825,6 @@ export default function App() {
   };
 
   const handlePromotionDismiss = (candidate) => {
-    setActivePromotionPrompt(null);
-    if (promotionTimerRef.current) clearTimeout(promotionTimerRef.current);
     const key = `${candidate.categoryId || candidate.category}::${(candidate.name || '').toLowerCase()}::promote`;
     dismissSuggestion(key, 'not-interested');
     setPromotionCandidatesCache(prev => prev.filter(c => c.name !== candidate.name || c.category !== candidate.category));
@@ -2807,23 +2839,6 @@ export default function App() {
     const key = `${item.categoryId}::${(item.name || '').toLowerCase()}::demote`;
     dismissSuggestion(key, 'keep');
     setDormantShortcutsCache(prev => prev.filter(d => !(d.suggestionId === item.suggestionId && d.categoryId === item.categoryId)));
-  };
-
-  // After a typed add, check if the item is a promotion candidate
-  const checkPromotionAfterAdd = (name, category) => {
-    if (promotionTimerRef.current) clearTimeout(promotionTimerRef.current);
-    const lower = (name || '').toLowerCase();
-    const candidate = promotionCandidatesCache.find(c =>
-      (c.name || '').toLowerCase() === lower
-    );
-    if (!candidate) return;
-    setActivePromotionPrompt(candidate);
-    promotionTimerRef.current = setTimeout(() => {
-      setActivePromotionPrompt(prev => {
-        if (prev && (prev.name || '').toLowerCase() === lower) return null;
-        return prev;
-      });
-    }, 8000);
   };
 
   useEffect(() => {
@@ -3338,11 +3353,7 @@ export default function App() {
                         ) : (
                           <ChevronRight size={20} className={`scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${quickAddMode ? "text-gray-600" : "text-gray-400"}`} />
                         )}
-                        <h3 className={`flex-1 text-left uppercase tracking-wide ${
-                          quickAddMode
-                            ? "font-bold text-gray-700 text-base"
-                            : "font-semibold text-gray-500 text-sm"
-                        }`}>{g.aisleNameDisplay}</h3>
+                        <h3 className="flex-1 text-left uppercase tracking-wide font-bold text-gray-700 text-base">{g.aisleNameDisplay}</h3>
                       </button>
 
                       {isExpanded && (
@@ -3399,77 +3410,96 @@ export default function App() {
                               {g.items.map((item, idx) => {
                                 if (item.type === 'list') {
                                   const li = item.data;
+                                  // Row-tap primary action: Shop = toggle done; Add = remove from list.
+                                  const handleRowPrimary = quickAddMode
+                                    ? () => removeItem(li.id)
+                                    : () => toggleDone(li.id);
                                   return (
-                                    <div key={li.id} className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 break-inside-avoid scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                                    <div
+                                      key={li.id}
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={handleRowPrimary}
+                                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowPrimary(); } }}
+                                      className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 break-inside-avoid scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'opacity-60' : ''}`}
+                                    >
                                       {quickAddMode ? (
-                                        li.done ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleDone(li.id)}
-                                            className={`flex-shrink-0 w-6 h-6 rounded-md border-2 border-transparent flex items-center justify-center transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
-                                            style={{ backgroundColor: '#6B7280' }}
-                                            aria-label={`Mark ${li.name} as not done`}
-                                          >
-                                            <Check size={16} className="text-white" strokeWidth={3} />
-                                          </button>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            onClick={() => removeItem(li.id)}
-                                            className={`flex-shrink-0 w-6 h-6 rounded-md border-2 border-gray-200 bg-white flex items-center justify-center text-gray-400 hover:text-gray-600 hover:border-gray-300 transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
-                                            aria-label={`Remove ${li.name} from list`}
-                                          >
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); removeItem(li.id); }}
+                                          className={`flex-shrink-0 p-2.5 -m-2.5 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                          aria-label={`Remove ${li.name} from list`}
+                                        >
+                                          <span className="block w-6 h-6 rounded-md border-2 border-gray-200 bg-white flex items-center justify-center text-gray-400">
                                             <X size={16} strokeWidth={2.5} />
-                                          </button>
-                                        )
+                                          </span>
+                                        </button>
                                       ) : (
                                         <button
                                           type="button"
-                                          onClick={() => toggleDone(li.id)}
-                                          className={`flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'border-transparent' : 'border-gray-300 bg-white'}`}
-                                          style={{ backgroundColor: li.done ? '#FF7A7A' : undefined }}
+                                          onClick={(e) => { e.stopPropagation(); toggleDone(li.id); }}
+                                          className={`flex-shrink-0 p-2.5 -m-2.5 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                          aria-label={li.done ? `Mark ${li.name} as not done` : `Mark ${li.name} as done`}
                                         >
-                                          {li.done && <Check size={16} className="text-white" strokeWidth={3} />}
+                                          <span
+                                            className={`block w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all ${li.done ? 'border-transparent' : 'border-gray-300 bg-white'}`}
+                                            style={{ backgroundColor: li.done ? '#FF7A7A' : undefined }}
+                                          >
+                                            {li.done && <Check size={16} className="text-white" strokeWidth={3} />}
+                                          </span>
                                         </button>
                                       )}
-                                      <button onClick={() => openItemSheet(li)} className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : ''}`} style={{ color: li.done ? undefined : '#FF7A7A' }}>
+                                      <span className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : 'text-gray-800'}`}>
                                         {li.name}
                                         {li.quantity && li.quantity.trim() && (
                                           <span className="ml-1 text-gray-400 font-medium">
                                             {li.quantity}
                                           </span>
                                         )}
-                                      </button>
+                                      </span>
                                       <button
                                         type="button"
-                                        onClick={() => openItemSheet(li)}
-                                        className={`p-2 rounded-full transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'text-gray-300 hover:text-gray-400' : 'text-gray-300 hover:text-gray-500'}`}
-                                        aria-label={`Edit quantity for ${li.name}`}
+                                        onClick={(e) => { e.stopPropagation(); openItemSheet(li); }}
+                                        className={`p-2.5 -m-2.5 rounded-full transition-colors text-gray-300 hover:text-gray-500 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                        aria-label={`Open details for ${li.name}`}
                                       >
-                                        <Edit2 size={14} strokeWidth={1.8} />
+                                        <ChevronRight size={18} strokeWidth={2} />
                                       </button>
                                     </div>
                                   );
                                 } else {
                                   const qi = item.data;
+                                  const handleTileAdd = () => addItem(qi.name, qi.catName || g.aisleName, 'quickAdd', qi.id, qi.catId);
                                   return (
-                                    <div key={`qa-${idx}`} className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-gray-50 transition-colors border-t border-gray-100 break-inside-avoid scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                                    <div
+                                      key={`qa-${idx}`}
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={handleTileAdd}
+                                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTileAdd(); } }}
+                                      className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 break-inside-avoid scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''}`}
+                                      style={{ backgroundColor: '#FFF5F5' }}
+                                    >
                                       <button
                                         type="button"
-                                        onClick={() => addItem(qi.name, qi.catName || g.aisleName, 'quickAdd', qi.id, qi.catId)}
-                                        className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
-                                        style={{ backgroundColor: '#FF7A7A' }}
+                                        onClick={(e) => { e.stopPropagation(); handleTileAdd(); }}
+                                        className={`flex-shrink-0 p-2.5 -m-2.5 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
                                         aria-label={`Add ${qi.name} to list`}
                                       >
-                                        <Plus size={16} className="text-white" strokeWidth={2.5} />
+                                        <span className="block w-6 h-6 rounded-md flex items-center justify-center" style={{ backgroundColor: '#FF7A7A' }}>
+                                          <Plus size={16} className="text-white" strokeWidth={2.5} />
+                                        </span>
                                       </button>
+                                      <span className="flex-1 text-left font-semibold text-sm text-gray-800">
+                                        {qi.name}
+                                      </span>
                                       <button
                                         type="button"
-                                        onClick={() => openSuggestionSheet(qi.catName || g.aisleName, qi)}
-                                        className="flex-1 text-left font-semibold text-sm"
-                                        style={{ color: '#FF7A7A' }}
+                                        onClick={(e) => { e.stopPropagation(); openSuggestionSheet(qi.catName || g.aisleName, qi); }}
+                                        className={`p-2.5 -m-2.5 rounded-full transition-colors text-gray-300 hover:text-gray-500 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                        aria-label={`Open details for ${qi.name}`}
                                       >
-                                        {qi.name}
+                                        <ChevronRight size={18} strokeWidth={2} />
                                       </button>
                                     </div>
                                   );
@@ -3479,40 +3509,6 @@ export default function App() {
                           ) : (
                             <div className="px-4 pb-4"><div className="text-center py-6 text-gray-400 text-sm italic">No items</div></div>
                           )}
-                          {/* A1: Inline promotion prompt */}
-                          {quickAddMode && activePromotionPrompt && (() => {
-                            const promptAisle = categoriesV2[activePromotionPrompt.categoryId]?.aisleId;
-                            const inThisAisle = promptAisle === g.aisleId ||
-                              (!promptAisle && g.categoryIdSet.has(activePromotionPrompt.categoryId));
-                            if (!inThisAisle) return null;
-                            return (
-                              <div className="mx-4 mb-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-center gap-3">
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-amber-900">
-                                    <span className="font-bold">{activePromotionPrompt.name}</span> — add as a shortcut?
-                                  </p>
-                                  <p className="text-xs text-amber-700 mt-0.5">
-                                    Bought {activePromotionPrompt.checkedCount}× recently
-                                  </p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handlePromotionAccept(activePromotionPrompt)}
-                                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold text-white"
-                                  style={{ backgroundColor: '#FF7A7A' }}
-                                >
-                                  Yes
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handlePromotionDismiss(activePromotionPrompt)}
-                                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold text-gray-600 bg-white border border-gray-200"
-                                >
-                                  No thanks
-                                </button>
-                              </div>
-                            );
-                          })()}
                           {/* B1: Dormant shortcuts hint */}
                           {quickAddMode && (() => {
                             const catIds = g.categoryIdSet || new Set();
