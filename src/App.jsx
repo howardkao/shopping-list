@@ -3823,13 +3823,12 @@ export default function App() {
                                   return (
                                     <div
                                       key={`qa-${idx}`}
-                                      className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}
-                                      style={{ backgroundColor: '#FFF5F5' }}
+                                      className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border hover:bg-gray-50 ${isScrolling ? 'is-scrolling' : ''}`}
                                     >
                                       <button
                                         type="button"
                                         onClick={() => void handlePinEditToggle(item)}
-                                        className={`flex-shrink-0 p-2 -m-1 rounded-full transition-colors hover:bg-rose-100 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${showDormantRing ? 'ring-2 ring-amber-300 ring-offset-1' : ''}`}
+                                        className={`flex-shrink-0 p-2 -m-1 rounded-full transition-colors hover:bg-gray-100 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${showDormantRing ? 'ring-2 ring-amber-300 ring-offset-1' : ''}`}
                                         aria-label={`Unpin ${qi.name}`}
                                       >
                                         <Pin
@@ -3839,7 +3838,7 @@ export default function App() {
                                           fill="currentColor"
                                         />
                                       </button>
-                                      <span className="flex-1 text-left font-semibold text-sm text-gray-800">
+                                      <span className="flex-1 text-left font-semibold text-sm" style={{ color: '#FF7A7A' }}>
                                         {qi.name}
                                       </span>
                                     </div>
@@ -3886,7 +3885,10 @@ export default function App() {
                                           </span>
                                         </button>
                                       )}
-                                      <span className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                                      <span
+                                        className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : quickAddMode ? 'text-gray-800' : ''}`}
+                                        style={{ color: li.done || quickAddMode ? undefined : '#FF7A7A' }}
+                                      >
                                         {li.name}
                                         {li.quantity && li.quantity.trim() && (
                                           <span className="ml-1 text-gray-400 font-medium">
@@ -3914,8 +3916,7 @@ export default function App() {
                                     tabIndex={0}
                                     onClick={handleTileAdd}
                                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTileAdd(); } }}
-                                    className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''}`}
-                                    style={{ backgroundColor: '#FFF5F5' }}
+                                    className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border cursor-pointer hover:bg-gray-50 ${isScrolling ? 'is-scrolling' : ''}`}
                                   >
                                     <button
                                       type="button"
@@ -3927,7 +3928,7 @@ export default function App() {
                                         <Plus size={16} className="text-white" strokeWidth={2.5} />
                                       </span>
                                     </button>
-                                    <span className="flex-1 text-left font-semibold text-sm text-gray-800">
+                                    <span className="flex-1 text-left font-semibold text-sm" style={{ color: '#FF7A7A' }}>
                                       {qi.name}
                                     </span>
                                     <button

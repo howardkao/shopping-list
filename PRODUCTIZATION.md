@@ -545,6 +545,9 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **`database.rules.json`:** Rules for `item-events-by-month` and `item-events-index`.
 - **`voice-mcp/src/firebaseRealtime.js`:** Voice `added` events POST to monthly path; PATCH index `updatedAt`.
 
+### 2026-04-17 — List UI: revert coral row tint; Shop names coral again
+- **`src/App.jsx`:** Add-mode quick-add / pin-edit tile rows use `hover:bg-gray-50` instead of a fixed `#FFF5F5` fill; pin icon hover uses gray instead of rose. **Shop** list rows: item names back to `#FF7A7A` when not done (Add-mode list rows stay neutral gray). Quick-add suggestion names use coral again (aligned with `main`).
+
 ### 2026-04-17 — Design review pass 10: pin-edit mode, density nudge, B1 card
 - **`src/App.jsx`:** Add **pin-edit mode** (Edit pins + Done) from Add mode only — replaces Shop/Add chrome on mobile and desktop, hides per-aisle search, same aisle row order as Add with pin-only row chrome (Firebase pin/unpin via shared promote helper + `removeSuggestionEverywhere`). B1 entry highlights dormant shortcuts with an amber ring; **Done** applies implicit **keep** dismissals for still-pinned dormant items. **Density nudge** card when an aisle has more than 12 pinned shortcuts (`density::{aisleId}` dismissals with +4 escalation). **B1** card revised to Review / Not now (batch `not-now` dismissals per dormant item).
 
