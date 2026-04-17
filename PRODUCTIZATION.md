@@ -535,6 +535,9 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **`database.rules.json`:** Rules for `item-events-by-month` and `item-events-index`.
 - **`voice-mcp/src/firebaseRealtime.js`:** Voice `added` events POST to monthly path; PATCH index `updatedAt`.
 
+### 2026-04-17 — Design review pass 10: pin-edit mode, density nudge, B1 card
+- **`src/App.jsx`:** Add **pin-edit mode** (Edit pins + Done) from Add mode only — replaces Shop/Add chrome on mobile and desktop, hides per-aisle search, same aisle row order as Add with pin-only row chrome (Firebase pin/unpin via shared promote helper + `removeSuggestionEverywhere`). B1 entry highlights dormant shortcuts with an amber ring; **Done** applies implicit **keep** dismissals for still-pinned dormant items. **Density nudge** card when an aisle has more than 12 pinned shortcuts (`density::{aisleId}` dismissals with +4 escalation). **B1** card revised to Review / Not now (batch `not-now` dismissals per dormant item).
+
 ### 2026-04-17 — Auth: minimal RTDB read for admin
 - **`src/App.jsx`:** On sign-in, admin is derived from `get(households/{id}/adminUid)` instead of downloading the entire household subtree (saves duplicate bulk download before per-path listeners attach).
 

@@ -1396,6 +1396,11 @@ export default function App() {
   const [libraryItemsV2, setLibraryItemsV2] = useState({});
   const [onboardingCompleted, setOnboardingCompleted] = useState(null);
   const [quickAddMode, setQuickAddMode] = useState(false);
+  /** Bulk pin surface: only entered from Add mode; keeps `quickAddMode` true. */
+  const [pinEditMode, setPinEditMode] = useState(false);
+  const [pinEditTriggerAisleId, setPinEditTriggerAisleId] = useState(null);
+  /** B1 entry only: `${categoryId}::${suggestionId}` keys for amber pin rings. */
+  const [pinEditDormantHighlightSet, setPinEditDormantHighlightSet] = useState(null);
   const [categorySearches, setCategorySearches] = useState({});
   const [loading, setLoading] = useState(true);
   const [pendingOps, setPendingOps] = useState(0);
@@ -1432,6 +1437,7 @@ export default function App() {
   const lastScrollY = useRef(0);
   const lastScrollTime = useRef(Date.now());
   const smoothedVelocity = useRef(0);
+  const pinEditReturnScrollY = useRef(0);
   const [showUpdateToast, setShowUpdateToast] = useState(false);
   const [showOfflineToast, setShowOfflineToast] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState(null);
@@ -2459,6 +2465,28 @@ export default function App() {
     }
   };
 
+  /** Same DB path as ItemBottomSheet Pin / `promoteToShortcut` — list row → visible-items. */
+  const promoteListItemToVisibleShortcut = async (item) => {
+    const catId = getItemCategoryId(item);
+    const trimmed = String(item.name || '').trim();
+    if (!catId || !trimmed || !taxonomyBase) return null;
+    const vis = visibleItemsV2[catId] || [];
+    const lib = libraryItemsV2[catId] || [];
+    const lower = trimmed.toLowerCase();
+    if (vis.some(i => i.name.toLowerCase() === lower)) return null;
+    const libItem = lib.find(i => i.name.toLowerCase() === lower);
+    const newId = libItem?.id || push(ref(database, `${taxonomyBase}/visible-items/${catId}`)).key;
+    const entry = stampRecord({ id: newId, name: trimmed, createdAt: libItem?.createdAt || Date.now() });
+    const nextVis = [...vis, entry];
+    const nextLib = libItem ? lib.filter(i => i.id !== libItem.id) : lib;
+    setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
+    if (libItem) setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
+    const updates = { [`${taxonomyBase}/visible-items/${catId}`]: nextVis };
+    if (libItem) updates[`${taxonomyBase}/library/${catId}`] = nextLib.length > 0 ? nextLib : null;
+    await update(ref(database), updates);
+    return { newId, catId };
+  };
+
   const updateSuggestionQuantity = (itemKey, qty) => {
     const nextDefaults = { ...quantityDefaults };
     const t = String(qty ?? '').trim();
@@ -2523,49 +2551,36 @@ export default function App() {
       const catId = getItemCategoryId(item);
       if (catId) {
         base.promoteToShortcut = async () => {
-            const trimmed = String(item.name || '').trim();
-            if (!trimmed || !taxonomyBase) return null;
-            const vis = visibleItemsV2[catId] || [];
-            const lib = libraryItemsV2[catId] || [];
-            const lower = trimmed.toLowerCase();
-            if (vis.some(i => i.name.toLowerCase() === lower)) return null;
-            const libItem = lib.find(i => i.name.toLowerCase() === lower);
-            const newId = libItem?.id || push(ref(database, `${taxonomyBase}/visible-items/${catId}`)).key;
-            const entry = stampRecord({ id: newId, name: trimmed, createdAt: libItem?.createdAt || Date.now() });
-            const nextVis = [...vis, entry];
-            const nextLib = libItem ? lib.filter(i => i.id !== libItem.id) : lib;
-            setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
-            if (libItem) setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
-            const updates = { [`${taxonomyBase}/visible-items/${catId}`]: nextVis };
-            if (libItem) updates[`${taxonomyBase}/library/${catId}`] = nextLib.length > 0 ? nextLib : null;
-            await update(ref(database), updates);
-            return {
-              categoryId: catId,
-              aisleId: categoriesV2[catId]?.aisleId || null,
-              onMove: async (toCatId) => {
-                await moveSuggestionToCategory(newId, catId, toCatId);
-                const toCategoryName = categoriesV2[toCatId]?.name || '';
-                const targetItemKey = itemKey;
-                setList(prev => {
-                  const next = prev.map(li =>
-                    getStableItemKey(li) === targetItemKey
-                      ? { ...li, categoryId: toCatId, category: toCategoryName }
-                      : li
-                  );
-                  save('shopping-list', next);
-                  saveShoppingListLocally(next);
-                  return next;
-                });
-                setSelectedItem(null);
-              },
-              onRemove: async () => {
-                await removeSuggestionEverywhere(newId, catId);
-                setSelectedItem(null);
-              },
-            };
+          const promoted = await promoteListItemToVisibleShortcut(item);
+          if (!promoted) return null;
+          const { newId, catId: pinnedCatId } = promoted;
+          return {
+            categoryId: pinnedCatId,
+            aisleId: categoriesV2[pinnedCatId]?.aisleId || null,
+            onMove: async (toCatId) => {
+              await moveSuggestionToCategory(newId, pinnedCatId, toCatId);
+              const toCategoryName = categoriesV2[toCatId]?.name || '';
+              const targetItemKey = itemKey;
+              setList(prev => {
+                const next = prev.map(li =>
+                  getStableItemKey(li) === targetItemKey
+                    ? { ...li, categoryId: toCatId, category: toCategoryName }
+                    : li
+                );
+                save('shopping-list', next);
+                saveShoppingListLocally(next);
+                return next;
+              });
+              setSelectedItem(null);
+            },
+            onRemove: async () => {
+              await removeSuggestionEverywhere(newId, pinnedCatId);
+              setSelectedItem(null);
+            },
           };
-        }
+        };
       }
+    }
     // Promotion hint: only meaningful for items that aren't already pinned.
     if (!base.suggestionConfig) {
       const lower = String(item.name || '').toLowerCase();
@@ -2749,7 +2764,7 @@ export default function App() {
     for (const aisleId of orderedV2AisleIds) {
       const trimmed = (categorySearches[aisleId] || '').trim();
       const expanded = Boolean(expandedCategories[aisleId]);
-      const open = Boolean(quickAddMode && expanded && trimmed);
+      const open = Boolean(quickAddMode && !pinEditMode && expanded && trimmed);
       nextOpen[aisleId] = open;
       const wasOpen = Boolean(prev[aisleId]);
       if (open && !wasOpen) {
@@ -2770,7 +2785,7 @@ export default function App() {
       }
     }
     prevAisleAutocompleteOpenRef.current = nextOpen;
-  }, [categorySearches, expandedCategories, quickAddMode, aislesV2]);
+  }, [categorySearches, expandedCategories, quickAddMode, pinEditMode, aislesV2]);
 
   const organized = orderedV2AisleIds.map((aisleId) => {
     const catIds = v2CategoriesByAisle[aisleId] || [];
@@ -2972,6 +2987,88 @@ export default function App() {
     }
   };
 
+  /** Density nudge: `dismissCount` stores pinned-item threshold at dismiss (resurface when count ≥ threshold + 4). */
+  const recordDensityDismissal = async (aisleId, thresholdAtDismiss) => {
+    if (!householdId) return;
+    const key = `density::${aisleId}`;
+    const record = {
+      action: 'density-dismissed',
+      dismissedAt: Date.now(),
+      resurfaceAfter: null,
+      dismissCount: thresholdAtDismiss,
+    };
+    setSuggestionDismissals(prev => ({ ...prev, [key]: record }));
+    try {
+      await set(ref(database, `households/${householdId}/suggestion-dismissals/${key}`), record);
+    } catch (err) {
+      logger.warn('App', 'density dismissal write failed', { error: err.message, key });
+    }
+  };
+
+  const enterPinEditMode = (aisleId, dormantHighlightSet = null) => {
+    if (typeof window !== 'undefined') pinEditReturnScrollY.current = window.scrollY;
+    setPinEditTriggerAisleId(aisleId);
+    setPinEditDormantHighlightSet(dormantHighlightSet);
+    setPinEditMode(true);
+  };
+
+  const finalizePinEdit = (visibleSnap, dormantSet, scrollY) => {
+    if (dormantSet && dormantSet.size > 0) {
+      dormantSet.forEach((combined) => {
+        const sep = combined.indexOf('::');
+        if (sep < 0) return;
+        const categoryId = combined.slice(0, sep);
+        const suggestionId = combined.slice(sep + 2);
+        const row = (visibleSnap[categoryId] || []).find(s => s.id === suggestionId);
+        if (!row) return;
+        void dismissSuggestion(`${categoryId}::${String(row.name).toLowerCase()}::demote`, 'keep');
+      });
+      setDormantShortcutsCache(prev =>
+        prev.filter(d => !dormantSet.has(`${d.categoryId}::${d.suggestionId}`)),
+      );
+    }
+    setPinEditMode(false);
+    setPinEditTriggerAisleId(null);
+    setPinEditDormantHighlightSet(null);
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: scrollY, left: 0, behavior: 'instant' });
+      });
+    }
+  };
+
+  const exitPinEditMode = () => {
+    finalizePinEdit(visibleItemsV2, pinEditDormantHighlightSet, pinEditReturnScrollY.current);
+  };
+
+  const handlePinEditToggle = async (row) => {
+    if (row.type === 'quick') {
+      const qi = row.data;
+      await removeSuggestionEverywhere(qi.id, qi.catId);
+      return;
+    }
+    const li = row.data;
+    const match = findShortcutForListItem(li);
+    if (match) {
+      await removeSuggestionEverywhere(match.suggestionId, match.categoryId);
+    } else {
+      await promoteListItemToVisibleShortcut(li);
+    }
+  };
+
+  useLayoutEffect(() => {
+    if (!pinEditMode || !pinEditTriggerAisleId) return;
+    const id = `pin-edit-aisle-${pinEditTriggerAisleId}`;
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'instant' });
+    });
+  }, [pinEditMode, pinEditTriggerAisleId]);
+
+  useEffect(() => {
+    if (quickAddMode || !pinEditMode) return;
+    finalizePinEdit(visibleItemsV2, pinEditDormantHighlightSet, pinEditReturnScrollY.current);
+  }, [quickAddMode, pinEditMode]);
+
   const handlePromotionAccept = async (candidate) => {
     const catId = candidate.categoryId || categoryIdByName[(candidate.category || '').toLowerCase()];
     if (!catId || !taxonomyBase) return;
@@ -2998,17 +3095,6 @@ export default function App() {
     const key = `${candidate.categoryId || candidate.category}::${(candidate.name || '').toLowerCase()}::promote`;
     dismissSuggestion(key, 'not-interested');
     setPromotionCandidatesCache(prev => prev.filter(c => c.name !== candidate.name || c.category !== candidate.category));
-  };
-
-  const handleDormantDemote = async (item) => {
-    await removeSuggestionEverywhere(item.suggestionId, item.categoryId);
-    setDormantShortcutsCache(prev => prev.filter(d => !(d.suggestionId === item.suggestionId && d.categoryId === item.categoryId)));
-  };
-
-  const handleDormantKeep = (item) => {
-    const key = `${item.categoryId}::${(item.name || '').toLowerCase()}::demote`;
-    dismissSuggestion(key, 'keep');
-    setDormantShortcutsCache(prev => prev.filter(d => !(d.suggestionId === item.suggestionId && d.categoryId === item.categoryId)));
   };
 
   useEffect(() => {
@@ -3411,24 +3497,38 @@ export default function App() {
               </button>
 
               {currentPage === 'list' && (
-                <div className="hidden lg:flex bg-gray-100 rounded-xl p-1 gap-1 ml-4">
-                  <button
-                    onClick={() => setQuickAddMode(false)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
-                    style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
-                  >
-                    <ShoppingCart size={16} strokeWidth={2.5} />
-                    Shop
-                  </button>
-                  <button
-                    onClick={() => setQuickAddMode(true)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
-                    style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
-                  >
-                    <ClipboardList size={16} strokeWidth={2.5} />
-                    Add
-                  </button>
-                </div>
+                pinEditMode ? (
+                  <div className="hidden lg:flex bg-gray-100 rounded-xl p-1 ml-4 min-w-[220px] items-center justify-between gap-2">
+                    <span className="flex-1 text-center font-bold text-sm text-gray-800 py-2">Edit pins</span>
+                    <button
+                      type="button"
+                      onClick={exitPinEditMode}
+                      className="shrink-0 px-4 py-2 rounded-lg font-bold text-sm text-white"
+                      style={{ backgroundColor: '#FF7A7A' }}
+                    >
+                      Done
+                    </button>
+                  </div>
+                ) : (
+                  <div className="hidden lg:flex bg-gray-100 rounded-xl p-1 gap-1 ml-4">
+                    <button
+                      onClick={() => setQuickAddMode(false)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
+                      style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
+                    >
+                      <ShoppingCart size={16} strokeWidth={2.5} />
+                      Shop
+                    </button>
+                    <button
+                      onClick={() => setQuickAddMode(true)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
+                      style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
+                    >
+                      <ClipboardList size={16} strokeWidth={2.5} />
+                      Add
+                    </button>
+                  </div>
+                )
               )}
 
               {currentPage === 'list' && doneCount > 0 && (
@@ -3564,7 +3664,11 @@ export default function App() {
                   const isExpanded = expandedCategories[g.aisleId];
 
                   return (
-                    <div key={g.aisleId} className={`space-y-2 bg-white border border-gray-200 rounded-2xl overflow-hidden scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                    <div
+                      key={g.aisleId}
+                      id={`pin-edit-aisle-${g.aisleId}`}
+                      className={`space-y-2 bg-white border border-gray-200 rounded-2xl overflow-hidden scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}
+                    >
                       <button
                         onClick={() => toggleCategory(g.aisleId)}
                         className={`w-full py-4 px-4 flex items-center gap-3 transition-colors ${
@@ -3583,7 +3687,42 @@ export default function App() {
 
                       {isExpanded && (
                         <>
-                          {quickAddMode && (
+                          {quickAddMode && !pinEditMode && (() => {
+                            const pinCount = Array.from(g.categoryIdSet || []).reduce(
+                              (n, cid) => n + (visibleItemsV2[cid] || []).length,
+                              0,
+                            );
+                            const densityDismiss = suggestionDismissals[`density::${g.aisleId}`];
+                            const showDensityNudge = pinCount > 12
+                              && (!densityDismiss || densityDismiss.action !== 'density-dismissed'
+                                || pinCount >= (Number(densityDismiss.dismissCount) + 4));
+                            if (!showDensityNudge) return null;
+                            return (
+                              <div className="mx-4 mb-2 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5">
+                                <p className="text-xs text-gray-700">
+                                  Lots of pinned items here — trim for faster scanning?
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-3">
+                                  <button
+                                    type="button"
+                                    className="text-xs font-bold"
+                                    style={{ color: '#FF7A7A' }}
+                                    onClick={() => enterPinEditMode(g.aisleId, null)}
+                                  >
+                                    Trim
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-xs font-bold text-gray-600"
+                                    onClick={() => void recordDensityDismissal(g.aisleId, pinCount)}
+                                  >
+                                    Dismiss
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {quickAddMode && !pinEditMode && (
                             <div className={`px-4 pb-3 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
                               <div className="relative">
                                 <Search className="absolute left-3 top-3 text-gray-400" size={18} />
@@ -3644,6 +3783,65 @@ export default function App() {
                           {g.items.length > 0 ? (
                             <div className="pb-3">
                               {g.items.map((item, idx) => {
+                                if (pinEditMode && quickAddMode) {
+                                  if (item.type === 'list') {
+                                    const li = item.data;
+                                    const match = findShortcutForListItem(li);
+                                    const isPinned = Boolean(match);
+                                    const hlKey = match ? `${match.categoryId}::${match.suggestionId}` : null;
+                                    const showDormantRing = Boolean(hlKey && pinEditDormantHighlightSet?.has(hlKey));
+                                    return (
+                                      <div
+                                        key={li.id}
+                                        className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 scroll-fade-border ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'opacity-60' : ''}`}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() => void handlePinEditToggle(item)}
+                                          className={`flex-shrink-0 p-2 -m-1 rounded-full transition-colors hover:bg-gray-100 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${showDormantRing ? 'ring-2 ring-amber-300 ring-offset-1' : ''}`}
+                                          aria-label={isPinned ? `Unpin ${li.name}` : `Pin ${li.name}`}
+                                        >
+                                          <Pin
+                                            size={20}
+                                            strokeWidth={2}
+                                            className={isPinned ? 'text-[#FF7A7A]' : 'text-gray-400'}
+                                            fill={isPinned ? 'currentColor' : 'none'}
+                                          />
+                                        </button>
+                                        <span className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                                          {li.name}
+                                        </span>
+                                      </div>
+                                    );
+                                  }
+                                  const qi = item.data;
+                                  const hlKey = `${qi.catId}::${qi.id}`;
+                                  const showDormantRing = Boolean(pinEditDormantHighlightSet?.has(hlKey));
+                                  return (
+                                    <div
+                                      key={`qa-${idx}`}
+                                      className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}
+                                      style={{ backgroundColor: '#FFF5F5' }}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => void handlePinEditToggle(item)}
+                                        className={`flex-shrink-0 p-2 -m-1 rounded-full transition-colors hover:bg-rose-100 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${showDormantRing ? 'ring-2 ring-amber-300 ring-offset-1' : ''}`}
+                                        aria-label={`Unpin ${qi.name}`}
+                                      >
+                                        <Pin
+                                          size={20}
+                                          strokeWidth={2}
+                                          className="text-[#FF7A7A]"
+                                          fill="currentColor"
+                                        />
+                                      </button>
+                                      <span className="flex-1 text-left font-semibold text-sm text-gray-800">
+                                        {qi.name}
+                                      </span>
+                                    </div>
+                                  );
+                                }
                                 if (item.type === 'list') {
                                   const li = item.data;
                                   // Row-tap primary action: Shop = toggle done; Add = remove from list.
@@ -3703,101 +3901,90 @@ export default function App() {
                                       </button>
                                     </div>
                                   );
-                                } else {
-                                  const qi = item.data;
-                                  const handleTileAdd = () => addItem(qi.name, qi.catName || g.aisleName, 'quickAdd', qi.id, qi.catId);
-                                  return (
-                                    <div
-                                      key={`qa-${idx}`}
-                                      role="button"
-                                      tabIndex={0}
-                                      onClick={handleTileAdd}
-                                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTileAdd(); } }}
-                                      className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''}`}
-                                      style={{ backgroundColor: '#FFF5F5' }}
-                                    >
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); handleTileAdd(); }}
-                                        className={`flex-shrink-0 p-2.5 -m-2.5 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
-                                        aria-label={`Add ${qi.name} to list`}
-                                      >
-                                        <span className="block w-6 h-6 rounded-md flex items-center justify-center" style={{ backgroundColor: '#FF7A7A' }}>
-                                          <Plus size={16} className="text-white" strokeWidth={2.5} />
-                                        </span>
-                                      </button>
-                                      <span className="flex-1 text-left font-semibold text-sm text-gray-800">
-                                        {qi.name}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); openSuggestionSheet(qi.catName || g.aisleName, qi); }}
-                                        className={`p-2.5 -m-2.5 rounded-full transition-colors text-gray-300 hover:text-gray-500 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
-                                        aria-label={`Open details for ${qi.name}`}
-                                      >
-                                        <ChevronRight size={18} strokeWidth={2} />
-                                      </button>
-                                    </div>
-                                  );
                                 }
+                                const qi = item.data;
+                                const handleTileAdd = () => addItem(qi.name, qi.catName || g.aisleName, 'quickAdd', qi.id, qi.catId);
+                                return (
+                                  <div
+                                    key={`qa-${idx}`}
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={handleTileAdd}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTileAdd(); } }}
+                                    className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''}`}
+                                    style={{ backgroundColor: '#FFF5F5' }}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); handleTileAdd(); }}
+                                      className={`flex-shrink-0 p-2.5 -m-2.5 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                      aria-label={`Add ${qi.name} to list`}
+                                    >
+                                      <span className="block w-6 h-6 rounded-md flex items-center justify-center" style={{ backgroundColor: '#FF7A7A' }}>
+                                        <Plus size={16} className="text-white" strokeWidth={2.5} />
+                                      </span>
+                                    </button>
+                                    <span className="flex-1 text-left font-semibold text-sm text-gray-800">
+                                      {qi.name}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); openSuggestionSheet(qi.catName || g.aisleName, qi); }}
+                                      className={`p-2.5 -m-2.5 rounded-full transition-colors text-gray-300 hover:text-gray-500 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                      aria-label={`Open details for ${qi.name}`}
+                                    >
+                                      <ChevronRight size={18} strokeWidth={2} />
+                                    </button>
+                                  </div>
+                                );
                               })}
                             </div>
                           ) : (
                             <div className="px-4 pb-4"><div className="text-center py-6 text-gray-400 text-sm italic">No items</div></div>
                           )}
                           {/* B1: Dormant shortcuts hint */}
-                          {quickAddMode && (() => {
+                          {quickAddMode && !pinEditMode && (() => {
                             const catIds = g.categoryIdSet || new Set();
                             const aisleDormant = dormantShortcutsCache.filter(d => catIds.has(d.categoryId));
                             if (aisleDormant.length === 0) return null;
-                            const [showCleanup, setShowCleanup] = [
-                              expandedCategories[`cleanup-${g.aisleId}`],
-                              (v) => setExpandedCategories(prev => ({ ...prev, [`cleanup-${g.aisleId}`]: v })),
-                            ];
+                            const n = aisleDormant.length;
+                            const dormantKeySet = new Set(
+                              aisleDormant.map(d => `${d.categoryId}::${d.suggestionId}`),
+                            );
                             return (
                               <div className="mx-4 mb-3 rounded-xl bg-gray-50 border border-gray-200 px-4 py-3">
-                                <p className="text-xs text-gray-500">
-                                  {aisleDormant.length === 1
-                                    ? <><span className="font-semibold text-gray-600">{aisleDormant[0].name}</span> hasn't been used in a while and may be cluttering your shortcuts.</>
-                                    : <><span className="font-semibold text-gray-600">{aisleDormant.length} shortcuts</span> in this aisle haven't been used in a while.</>}
-                                  {' '}
+                                <p className="text-xs text-gray-600">
+                                  <span className="font-semibold text-gray-700">{n} shortcut{n === 1 ? '' : 's'}</span>
+                                  {' '}you haven&apos;t used in 6+ weeks — review?
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-3">
                                   <button
                                     type="button"
-                                    onClick={() => setShowCleanup(!showCleanup)}
-                                    className="text-xs font-semibold underline underline-offset-2"
+                                    className="text-xs font-bold"
                                     style={{ color: '#FF7A7A' }}
+                                    onClick={() => enterPinEditMode(g.aisleId, dormantKeySet)}
                                   >
-                                    {showCleanup ? 'Hide' : 'Manage cleanup'}
+                                    Review
                                   </button>
-                                </p>
-                                {showCleanup && (
-                                  <div className="mt-3 space-y-1.5">
-                                    {aisleDormant.map(d => (
-                                      <div key={`${d.categoryId}-${d.suggestionId}`} className="flex items-center gap-2 rounded-lg bg-white border border-gray-200 px-3 py-2">
-                                        <div className="flex-1 min-w-0">
-                                          <span className="text-sm font-medium text-gray-700">{d.name}</span>
-                                          <span className="text-xs text-gray-400 ml-1.5">
-                                            {d.daysSinceLastUse == null ? 'never used' : `${d.daysSinceLastUse}d ago`}
-                                          </span>
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDormantDemote(d)}
-                                          className="flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100"
-                                        >
-                                          Remove
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDormantKeep(d)}
-                                          className="flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-bold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
-                                        >
-                                          Keep
-                                        </button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                                  <button
+                                    type="button"
+                                    className="text-xs font-bold text-gray-600"
+                                    onClick={() => {
+                                      const skip = new Set(
+                                        aisleDormant.map(d => `${d.categoryId}::${d.suggestionId}`),
+                                      );
+                                      aisleDormant.forEach((d) => {
+                                        const key = `${d.categoryId}::${(d.name || '').toLowerCase()}::demote`;
+                                        dismissSuggestion(key, 'not-now');
+                                      });
+                                      setDormantShortcutsCache(prev =>
+                                        prev.filter(d => !skip.has(`${d.categoryId}::${d.suggestionId}`)),
+                                      );
+                                    }}
+                                  >
+                                    Not now
+                                  </button>
+                                </div>
                               </div>
                             );
                           })()}
@@ -3863,25 +4050,41 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-1.5 flex gap-1 pointer-events-auto">
-              <button
-                onClick={() => setQuickAddMode(false)}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600'}`}
-                style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
-                aria-pressed={!quickAddMode}
-              >
-                <ShoppingCart size={18} strokeWidth={2.5} />
-                Shop
-              </button>
-              <button
-                onClick={() => setQuickAddMode(true)}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
-                style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
-                aria-pressed={quickAddMode}
-              >
-                <ClipboardList size={18} strokeWidth={2.5} />
-                Add
-              </button>
+            <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-1.5 flex gap-1 pointer-events-auto items-center">
+              {pinEditMode ? (
+                <>
+                  <div className="flex-1 text-center font-bold text-sm text-gray-800 py-3">Edit pins</div>
+                  <button
+                    type="button"
+                    onClick={exitPinEditMode}
+                    className="shrink-0 px-5 py-3 rounded-xl font-bold text-sm text-white"
+                    style={{ backgroundColor: '#FF7A7A' }}
+                  >
+                    Done
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setQuickAddMode(false)}
+                    className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                    style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
+                    aria-pressed={!quickAddMode}
+                  >
+                    <ShoppingCart size={18} strokeWidth={2.5} />
+                    Shop
+                  </button>
+                  <button
+                    onClick={() => setQuickAddMode(true)}
+                    className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                    style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
+                    aria-pressed={quickAddMode}
+                  >
+                    <ClipboardList size={18} strokeWidth={2.5} />
+                    Add
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
