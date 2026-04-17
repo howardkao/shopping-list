@@ -893,7 +893,9 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
     : null;
   const hasBreadcrumb = Boolean(breadcrumbAisleName && breadcrumbCategoryName);
   const canEditTaxonomy = Boolean(suggestionConfig);
-  const canPinAction = Boolean(suggestionConfig || item.promoteToShortcut);
+  const showUnpin = Boolean(suggestionConfig?.onRemove);
+  const showPin = Boolean(item.promoteToShortcut && !showUnpin);
+  const canPinAction = Boolean(showUnpin || showPin);
 
   return (
     <div
@@ -1082,7 +1084,7 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
               )}
 
               {canPinAction && (
-                canEditTaxonomy ? (
+                showUnpin ? (
                   <button
                     type="button"
                     onClick={async () => {
@@ -1091,6 +1093,8 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
                       try {
                         await suggestionConfig.onRemove();
                       } catch {
+                        /* keep sheet open; button re-enabled in finally */
+                      } finally {
                         setPinActionLoading(false);
                       }
                     }}
@@ -1100,7 +1104,7 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
                     <Pin size={14} />
                     {pinActionLoading ? 'Unpinning…' : 'Unpin'}
                   </button>
-                ) : item.promoteToShortcut ? (
+                ) : showPin ? (
                   <button
                     type="button"
                     onClick={async () => {
@@ -2516,23 +2520,43 @@ export default function App() {
     return null;
   };
 
+  const findLibraryMatchForListItem = (item) => {
+    const nameLower = String(item?.name ?? '').trim().toLowerCase();
+    if (!nameLower) return null;
+    const preferredCatId = getItemCategoryId(item);
+    const searchIn = (catId) => {
+      const lib = (libraryItemsV2[catId] || []).find(s => s.name.toLowerCase() === nameLower);
+      if (lib) return { suggestionId: lib.id, categoryId: catId };
+      return null;
+    };
+    if (preferredCatId) {
+      const hit = searchIn(preferredCatId);
+      if (hit) return hit;
+    }
+    for (const catId of Object.keys(categoriesV2)) {
+      if (catId === preferredCatId) continue;
+      const hit = searchIn(catId);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
   const openItemSheet = async (item) => {
     const itemKey = getStableItemKey(item);
     const base = { ...item, itemKey, onQuantityChange: updateQuantity, onNameChange: updateItemName };
     // Surface pin/promote affordances in both Shop and Add mode so the sheet's
     // breadcrumb + Pin button work universally (per Pass 2 / decision 5.2).
-    const match = findShortcutForListItem(item);
-    if (match) {
-      base.suggestionConfig = {
-        categoryId: match.categoryId,
-        aisleId: categoriesV2[match.categoryId]?.aisleId || null,
+    const makeListItemPinnedSuggestionConfig = (suggestionId, fromCatId, pinOptions = {}) => {
+      const allowUnpin = pinOptions.allowUnpin !== false;
+      const cfg = {
+        categoryId: fromCatId,
+        aisleId: categoriesV2[fromCatId]?.aisleId || null,
         onMove: async (toCatId) => {
-          await moveSuggestionToCategory(match.suggestionId, match.categoryId, toCatId);
+          await moveSuggestionToCategory(suggestionId, fromCatId, toCatId);
           const toCategoryName = categoriesV2[toCatId]?.name || '';
-          const targetItemKey = itemKey;
           setList(prev => {
             const next = prev.map(li =>
-              getStableItemKey(li) === targetItemKey
+              getStableItemKey(li) === itemKey
                 ? { ...li, categoryId: toCatId, category: toCategoryName }
                 : li
             );
@@ -2540,13 +2564,56 @@ export default function App() {
             saveShoppingListLocally(next);
             return next;
           });
-          setSelectedItem(null);
-        },
-        onRemove: async () => {
-          await removeSuggestionEverywhere(match.suggestionId, match.categoryId);
-          setSelectedItem(null);
+          setSelectedItem(prev => {
+            if (!prev || getStableItemKey(prev) !== itemKey) return prev;
+            return {
+              ...prev,
+              categoryId: toCatId,
+              category: toCategoryName,
+              suggestionConfig: makeListItemPinnedSuggestionConfig(suggestionId, toCatId, { allowUnpin }),
+            };
+          });
         },
       };
+      if (allowUnpin) {
+        cfg.onRemove = async () => {
+          await removeSuggestionEverywhere(suggestionId, fromCatId);
+          setSelectedItem(prev => {
+            if (!prev || getStableItemKey(prev) !== itemKey) return prev;
+            const next = { ...prev };
+            delete next.suggestionConfig;
+            const catId = getItemCategoryId(next);
+            if (catId) {
+              next.promoteToShortcut = async () => {
+                const promoted = await promoteListItemToVisibleShortcut(next);
+                if (!promoted) return null;
+                const { newId, catId: pinnedCatId } = promoted;
+                return makeListItemPinnedSuggestionConfig(newId, pinnedCatId);
+              };
+            }
+            return next;
+          });
+        };
+      }
+      return cfg;
+    };
+    const matchVis = findShortcutForListItem(item);
+    const matchLib = matchVis ? null : findLibraryMatchForListItem(item);
+    if (matchVis) {
+      base.suggestionConfig = makeListItemPinnedSuggestionConfig(matchVis.suggestionId, matchVis.categoryId);
+    } else if (matchLib) {
+      base.suggestionConfig = makeListItemPinnedSuggestionConfig(matchLib.suggestionId, matchLib.categoryId, {
+        allowUnpin: false,
+      });
+      const catId = getItemCategoryId(item);
+      if (catId) {
+        base.promoteToShortcut = async () => {
+          const promoted = await promoteListItemToVisibleShortcut(item);
+          if (!promoted) return null;
+          const { newId, catId: pinnedCatId } = promoted;
+          return makeListItemPinnedSuggestionConfig(newId, pinnedCatId);
+        };
+      }
     } else {
       const catId = getItemCategoryId(item);
       if (catId) {
@@ -2554,35 +2621,12 @@ export default function App() {
           const promoted = await promoteListItemToVisibleShortcut(item);
           if (!promoted) return null;
           const { newId, catId: pinnedCatId } = promoted;
-          return {
-            categoryId: pinnedCatId,
-            aisleId: categoriesV2[pinnedCatId]?.aisleId || null,
-            onMove: async (toCatId) => {
-              await moveSuggestionToCategory(newId, pinnedCatId, toCatId);
-              const toCategoryName = categoriesV2[toCatId]?.name || '';
-              const targetItemKey = itemKey;
-              setList(prev => {
-                const next = prev.map(li =>
-                  getStableItemKey(li) === targetItemKey
-                    ? { ...li, categoryId: toCatId, category: toCategoryName }
-                    : li
-                );
-                save('shopping-list', next);
-                saveShoppingListLocally(next);
-                return next;
-              });
-              setSelectedItem(null);
-            },
-            onRemove: async () => {
-              await removeSuggestionEverywhere(newId, pinnedCatId);
-              setSelectedItem(null);
-            },
-          };
+          return makeListItemPinnedSuggestionConfig(newId, pinnedCatId);
         };
       }
     }
-    // Promotion hint: only meaningful for items that aren't already pinned.
-    if (!base.suggestionConfig) {
+    // Promotion hint: only when the name is not already a visible shortcut tile.
+    if (!matchVis) {
       const lower = String(item.name || '').toLowerCase();
       const candidate = promotionCandidatesCache.find(c =>
         (c.name || '').toLowerCase() === lower
@@ -2619,19 +2663,29 @@ export default function App() {
           });
         }
       : undefined;
+    const makeAddSuggestionTaxonomyConfig = (sid, cid) => ({
+      categoryId: cid,
+      aisleId: categoriesV2[cid]?.aisleId || null,
+      onMove: async (toCatId) => {
+        await moveSuggestionToCategory(sid, cid, toCatId);
+        setSelectedItem(prev => {
+          if (!prev || prev.itemKey !== sid) return prev;
+          const catName = categoriesV2[toCatId]?.name || '';
+          return {
+            ...prev,
+            categoryId: toCatId,
+            category: catName,
+            suggestionConfig: makeAddSuggestionTaxonomyConfig(sid, toCatId),
+          };
+        });
+      },
+      onRemove: async () => {
+        await removeSuggestionEverywhere(sid, cid);
+        setSelectedItem(null);
+      },
+    });
     const suggestionConfig = categoryId
-      ? {
-          categoryId,
-          aisleId: categoriesV2[categoryId]?.aisleId || null,
-          onMove: async (toCatId) => {
-            await moveSuggestionToCategory(suggestionId, categoryId, toCatId);
-            setSelectedItem(null);
-          },
-          onRemove: async () => {
-            await removeSuggestionEverywhere(suggestionId, categoryId);
-            setSelectedItem(null);
-          },
-        }
+      ? makeAddSuggestionTaxonomyConfig(suggestionId, categoryId)
       : null;
     const item = {
       ...suggestion,
@@ -3549,23 +3603,26 @@ export default function App() {
                 <button onClick={() => setCurrentPage('account')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'account' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'account' ? { color: '#FF7A7A' } : {}}>Account</button>
               </div>
 
-              {(!isOnline || !isConnected || pendingOps > 0) && (
-                <div className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
-                  !isOnline || !isConnected ? 'bg-red-100' : 'bg-blue-100'
-                }`} aria-label={!isOnline || !isConnected ? 'Offline' : 'Syncing'}>
-                  {!isOnline || !isConnected ? (
-                    <>
-                      <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                      <span className="text-xs font-medium text-red-600">Offline</span>
-                    </>
-                  ) : (
-                    <>
-                      <Loader2 size={14} className="text-blue-600 animate-spin" />
-                      <span className="text-xs font-medium text-blue-600">Syncing</span>
-                    </>
-                  )}
-                </div>
-              )}
+              {/* Reserve mobile width so the centered title does not shift when the pill mounts. */}
+              <div className="flex shrink-0 items-center justify-end min-w-[6.5rem] lg:min-w-0">
+                {(!isOnline || !isConnected || pendingOps > 0) && (
+                  <div className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
+                    !isOnline || !isConnected ? 'bg-red-100' : 'bg-blue-100'
+                  }`} aria-label={!isOnline || !isConnected ? 'Offline' : 'Syncing'}>
+                    {!isOnline || !isConnected ? (
+                      <>
+                        <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                        <span className="text-xs font-medium text-red-600">Offline</span>
+                      </>
+                    ) : (
+                      <>
+                        <Loader2 size={14} className="text-blue-600 animate-spin" />
+                        <span className="text-xs font-medium text-blue-600">Syncing</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           {showMenu && (
@@ -3670,11 +3727,14 @@ export default function App() {
                     <div
                       key={g.aisleId}
                       id={`pin-edit-aisle-${g.aisleId}`}
-                      className={`space-y-2 bg-white border border-gray-200 rounded-2xl overflow-hidden scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}
+                      className={`space-y-2 bg-white border border-gray-200 rounded-2xl scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}
                     >
                       <button
+                        type="button"
                         onClick={() => toggleCategory(g.aisleId)}
                         className={`w-full py-4 px-4 flex items-center gap-3 transition-colors ${
+                          isExpanded ? 'rounded-t-2xl' : 'rounded-2xl'
+                        } ${
                           quickAddMode
                             ? "bg-gray-100 hover:bg-gray-200"
                             : "hover:bg-gray-50"
@@ -3726,7 +3786,7 @@ export default function App() {
                             );
                           })()}
                           {quickAddMode && !pinEditMode && (
-                            <div className={`px-4 pb-3 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
+                            <div className={`relative z-20 px-4 pb-3 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
                               <div className="relative">
                                 <Search className="absolute left-3 top-3 text-gray-400" size={18} />
                                 <input
@@ -3739,7 +3799,7 @@ export default function App() {
                                 />
                                 {search.trim() && (
                                   <div
-                                    className={`absolute left-0 right-0 w-full bg-white border-2 border-gray-200 rounded-xl shadow-lg z-10 max-h-60 overflow-y-auto ${
+                                    className={`absolute left-0 right-0 w-full bg-white border-2 border-gray-200 rounded-xl shadow-lg z-30 max-h-60 overflow-y-auto ${
                                       aisleAutocompleteFlipUp[g.aisleId] ? 'bottom-full mb-2' : 'top-full mt-2'
                                     }`}
                                   >
@@ -3783,6 +3843,7 @@ export default function App() {
                               </div>
                             </div>
                           )}
+                          <div className="overflow-hidden rounded-b-2xl">
                           {g.items.length > 0 ? (
                             <div className="pb-3">
                               {g.items.map((item, idx) => {
@@ -3846,17 +3907,15 @@ export default function App() {
                                 }
                                 if (item.type === 'list') {
                                   const li = item.data;
-                                  // Row-tap primary action: Shop = toggle done; Add = remove from list.
-                                  const handleRowPrimary = quickAddMode
-                                    ? () => removeItem(li.id)
-                                    : () => toggleDone(li.id);
+                                  // Row tap opens the same sheet as the caret; check/remove stay on the left control only.
+                                  const handleRowOpenDetails = () => { void openItemSheet(li); };
                                   return (
                                     <div
                                       key={li.id}
                                       role="button"
                                       tabIndex={0}
-                                      onClick={handleRowPrimary}
-                                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowPrimary(); } }}
+                                      onClick={handleRowOpenDetails}
+                                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowOpenDetails(); } }}
                                       className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'opacity-60' : ''}`}
                                     >
                                       {quickAddMode ? (
@@ -3909,13 +3968,14 @@ export default function App() {
                                 }
                                 const qi = item.data;
                                 const handleTileAdd = () => addItem(qi.name, qi.catName || g.aisleName, 'quickAdd', qi.id, qi.catId);
+                                const handleTileOpenDetails = () => { void openSuggestionSheet(qi.catName || g.aisleName, qi); };
                                 return (
                                   <div
                                     key={`qa-${idx}`}
                                     role="button"
                                     tabIndex={0}
-                                    onClick={handleTileAdd}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTileAdd(); } }}
+                                    onClick={handleTileOpenDetails}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTileOpenDetails(); } }}
                                     className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border cursor-pointer hover:bg-gray-50 ${isScrolling ? 'is-scrolling' : ''}`}
                                   >
                                     <button
@@ -3992,6 +4052,7 @@ export default function App() {
                               </div>
                             );
                           })()}
+                          </div>
                         </>
                       )}
                     </div>

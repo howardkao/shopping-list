@@ -557,6 +557,21 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ### 2026-04-17 — Firebase: production deploy (hosting + database)
 - **`npm run build`** then **`firebase deploy`** to `kao-family-shopping-list`: shipped current `dist/` (item-events sharding, logging retention/cleanup, adminUid read, etc.) and re-released RTDB rules. Hosting: https://kao-family-shopping-list.web.app
 
+### 2026-04-17 — Shop/Add list rows: tap opens details (caret), not left control
+- **`src/App.jsx`:** Tapping the list row (or quick-add suggestion row) opens the same bottom sheet as the chevron; check/uncheck, remove-from-list, and add-from-tile remain explicit taps on the left control only.
+
+### 2026-04-17 — Item bottom sheet: stay open on taxonomy move / unpin
+- **`src/App.jsx`:** List-item and Add-suggestion `suggestionConfig.onMove` no longer calls `setSelectedItem(null)`; taxonomy handlers rebuild config with the new category id so the sheet stays open. After **Unpin**, the sheet keeps **Pin** via refreshed `promoteToShortcut`. **Unpin** button uses `finally` so loading state clears when the sheet stays mounted.
+
+### 2026-04-17 — List item sheet: edit taxonomy for library-only catalog matches
+- **`src/App.jsx`:** `findLibraryMatchForListItem` mirrors shortcut lookup against `libraryItemsV2`. List rows whose name exists only in a category’s **library** (not visible shortcuts) get the same expandable aisle/category controls as pinned items; **Pin** is shown instead of **Unpin** until promoted. Promotion hint still suppressed only when a **visible** shortcut exists.
+
+### 2026-04-17 — Header: stable title when sync/offline pill appears
+- **`src/App.jsx`:** Mobile header wraps the status pill in a fixed `min-w` slot (`lg:min-w-0` on desktop) so the flex-centered **Shopping List** title no longer shifts when the pill mounts or unmounts.
+
+### 2026-04-17 — Add mode: per-aisle autocomplete not clipped by aisle card
+- **`src/App.jsx`:** Aisle cards no longer use `overflow-hidden` on the outer wrapper (it clipped the absolute-positioned suggestion list). Rounded corners: collapse header uses `rounded-2xl`, expanded header `rounded-t-2xl`; list / empty / dormant block sits in an inner `overflow-hidden rounded-b-2xl` wrapper. Per-aisle search row uses `relative z-20` and the dropdown `z-30` so it stacks above following rows when it overlaps.
+
 ### 2026-04-16 — Seed catalog: Fruit / Veggies aisles, Asian grocery rows
 - **`src/seedCatalog.js`:** Replaced single **Produce** aisle with **Fruit** and **Veggies**; **Vegetables** display name (slug `vegetable` unchanged); **Fresh herbs** under Veggies. Packaged Foods: merged **East Asian** + **Southeast Asian** into **East & Southeast Asian groceries** (`east-southeast-asian-foods`); added **South Asian groceries** (six library items: basmati rice, ghee, red lentils, tikka masala simmer sauce, garam masala, papadums).
 - **`src/categoryClassifier.js`:** Tier map + keyword `veggies` for renames.
