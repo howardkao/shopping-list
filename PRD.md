@@ -71,23 +71,22 @@ Each item on the list has:
 
 #### Shop Mode (default)
 
-- View current list items grouped by category
-- Tap an item to toggle its `done` state (check off / uncheck)
-- Checked-off items show with strikethrough styling
-- Categories with items auto-expand; empty categories collapse
+- View current list items grouped by **aisle** (see §4 Shop / Add layout)
+- **Row tap** toggles `done` (check off / uncheck); the checkbox is a redundant tap target; the **chevron** on the right opens the item bottom sheet for name/quantity edits
+- Checked-off items stay in place with stronger dimming (strikethrough + reduced row opacity); the chevron is de-emphasized when done
+- When the shopping list is empty, Shop shows a dedicated **empty-state** card (aisle grid hidden) with a CTA that switches to Add mode
+- Aisles with items auto-expand on entry; empty aisles stay collapsed until expanded
 - Purpose: use while walking through the store
 
 #### Add Mode
 
 - Switch via toggle button in the toolbar
-- Shows item suggestions organized by category
-- Tap the `+` on a suggestion to instantly add it to the shopping list (with quantity 1)
-- Tap anywhere else on the suggestion row to open the item bottom sheet
-- Items already on the list are visually indicated
-- Existing list checkboxes are disabled in Add Mode so the mode stays focused on building the list
-- Search bar filters suggestions across all categories
-- History-based suggestions: previously added items appear in search results
-- Categories auto-expand to show available suggestions
+- Shows quick-add tiles and list rows organized by aisle
+- **Quick-add tile:** row tap adds at default quantity; the `+` is a redundant tap target; the **chevron** opens the item bottom sheet
+- **List row (already on the list):** row tap **removes** the item; the **X** is a redundant tap target; the **chevron** opens the sheet
+- Items already on the list are visually indicated; list checkboxes are disabled so the mode stays focused on building the list
+- Per-aisle add fields with autocomplete (not a single global search)
+- **Pin-edit mode** (from density nudge or dormant-pin review): temporarily replaces Add chrome with **Edit pins** + **Done**; same aisle rows as Add but with pin toggles only — see unified design-review implementation in `App.jsx`
 - Purpose: quickly build/update the list before or during a shopping trip
 
 ### Quantity Management
@@ -100,22 +99,16 @@ Each item on the list has:
 
 ### Item Detail Bottom Sheet
 
-- Tap an item name to open a slide-up bottom sheet with item metadata
+- Opened from a list-row chevron, a quick-add tile/list chevron, or a library autocomplete row (where supported)
 - Shows "Added by {name} {timestamp}" (who added the item and when)
-- Shows "Last purchased {relative time}" derived from item-events: most recent **effective** purchase (a `checked` event not voided by an `unchecked` within two hours on the same list identity; see `purchaseSemantics.js`)
-- Name and quantity commit on blur and on close; there is no explicit save button on the sheet itself
-- Dismissed by tapping the backdrop
-- Checkbox and quantity tap targets remain unaffected
-
-#### Advanced configuration (Add-mode suggestions only)
-
-- When the sheet is opened for a suggestion tile, a muted breadcrumb row appears below the metadata: `AISLE › Category` with a pencil icon
-- Tapping the breadcrumb row expands an inline advanced-config panel in place (not a separate page)
-- The panel exposes: an aisle dropdown, a category dropdown (filtered by the selected aisle), and a destructive "Remove from suggestions" action with a two-step confirmation
-- The panel has its own explicit **Save** and **Cancel** buttons — advanced edits do not save on blur
-- Save commits a category move (preserving the item's visible-vs-library bucket) and closes the sheet; Cancel (or backdrop tap) discards the advanced draft silently
-- Removing from suggestions deletes the item from both `visible-items` and `library` under its current category and closes the sheet
-- List-item sheets (opened from a shopping-list row) do not show the advanced panel
+- Last-purchase line uses item-events **effective** purchases (a `checked` not voided by an `unchecked` within two hours on the same list identity; see `purchaseSemantics.js`). Never-checked items show **"No purchase history"** instead of an "unknown" placeholder
+- **Name** and **Quantity** use semantic `<label>` elements styled small/light; values commit on blur and on close — no trailing Save for those fields
+- **Close affordances:** backdrop tap (commits edits), **X** visible on mobile and desktop, and **swipe-down on the drag handle** (threshold-based dismiss with snap-back)
+- Below metadata, a muted **two-row block** (all entry points that support taxonomy/pin actions):
+  1. **Breadcrumb** — `AISLE › Category` (aisle segment uses display formatting). Tap expands inline aisle + category pickers; changes commit via the same move path as before (no umbrella "settings" label)
+  2. **Pin row** — state-aware **Pin** (coral) vs **Unpin** (subtle red) for visible-vs-library; single-tap, no extra confirm. List-item sheets resolve category from the row and infer pin state from `taxonomy/visible-items`
+- **Promotion hint:** when analytics flag a frequently bought item that is not yet pinned, an amber **"Bought N× recently"** line can appear under metadata (replaces the old standalone inline promotion card)
+- Pin-edit mode uses pin toggles on rows instead of this sheet — sheet is not opened while in pin-edit mode
 
 ### Real-Time Sync
 
@@ -274,7 +267,7 @@ A new household is seeded with 9 aisles and 52 categories (defined in the seed c
 ### Flow
 
 1. **Welcome** — short intro framing the app as a tool to align with the user's shopping pattern. Copy: "Let's set up your shopping aisles."
-2. **Aisle & Category Editor** — the same component used in Settings (see §5), with wizard chrome and reorder mode on by default. Framing copy: "Drag aisles into the order you walk your store. You can rearrange or edit anything later in Settings." Primary action: **Looks good →**. Secondary: **Reset to defaults** (enabled only after edits).
+2. **Aisle & Category Editor** — the same component used in Settings (see §5), with wizard chrome and reorder mode on by default. Framing copy: "Drag aisles into the order you walk your store. You can rearrange or edit anything later in Settings." Primary action: **Done** (no numbered steps; no reset-to-defaults — users refine taxonomy in Settings or account deletion for a full slate).
 3. **Land in Shop mode** — the user is dropped into an empty Shop view with a one-time hint pointing at the Add toggle. Building the first list is normal use, not onboarding.
 
 ### Notes
@@ -290,16 +283,15 @@ A new household is seeded with 9 aisles and 52 categories (defined in the seed c
 ### Layout
 
 - **Mobile-first** responsive design
-- Single-column on small screens
-- Multi-column on larger screens (2 columns at md breakpoint, 3 at lg)
+- **Single-column list body** at all breakpoints (`max-w-2xl mx-auto`); no CSS multi-column fragmentation for the list
 - Plus Jakarta Sans font family
 
 ### Navigation chrome
 
 The app treats **Shop and Add as co-equal primary modes** of the list page. Other pages (History, Settings, Account) are deliberately tertiary. Navigation chrome adapts to breakpoint:
 
-- **Mobile (< lg):** Top header is minimal — hamburger menu (left), **Shopping List** title (center), small sync dot (right). The header hides on scroll-down to free content space; it reappears on scroll-up. A **fixed bottom nav bar** carries the primary controls: Shop/Add segmented toggle and a contextual Clear chip that appears above the bar when there are checked items. The bottom bar is always visible regardless of scroll. The hamburger menu drops down from the header for tertiary navigation (Shopping List, History, Settings, Account).
-- **Desktop (lg+):** A single always-visible top toolbar carries everything: **Shopping List** title (left), Shop/Add segmented toggle (only on the list page), Clear button (only on the list page when items are checked), nav links (List / History / Settings / Account), and the sync pill (right). The hamburger expands inline because horizontal space is plentiful. No bottom bar.
+- **Mobile (< lg):** Top header is minimal — hamburger menu (left), **Shopping List** title (center), sync indicator area (right — **hidden when online and connected**; only offline / syncing / error states render chrome here). The header hides on scroll-down to free content space; it reappears on scroll-up. A **fixed bottom nav bar** carries the primary controls: Shop/Add segmented toggle and a contextual Clear chip that appears above the bar when there are checked items. The bottom bar **hides while a text input in the list subtree has focus** (keyboard open) and returns on blur. The hamburger menu drops down from the header for tertiary navigation (Shopping List, History, Settings, Account).
+- **Desktop (lg+):** A single always-visible top toolbar carries everything: **Shopping List** title (left), Shop/Add segmented toggle (only on the list page), Clear button (only on the list page when items are checked), nav links (List / History / Settings / Account), and the sync pill (right — same **hide-when-healthy** rule). The hamburger expands inline because horizontal space is plentiful. No bottom bar.
 
 ### Clear chip behavior (mobile)
 
@@ -317,13 +309,17 @@ The app treats **Shop and Add as co-equal primary modes** of the list page. Othe
 
 ### Status Indicators
 
-- **Online/offline indicator** — visual feedback for connectivity state. On mobile, a colored dot in the header. On desktop, a full pill with text label.
-- **Pending sync badge** — shows pending sync state via spinner + "Syncing" label (desktop) or blue dot (mobile).
-- **Last sync time** — relative timestamp (e.g., "2 minutes ago") shown in the offline banner.
+- **Online/offline + sync** — when healthy (online **and** connected), **no** persistent green "Online" pill/dot. The indicator appears only for offline, reconnecting/syncing, or error states so anomalies stand out.
+- **Pending sync** — spinner / "Syncing" / warning styling as implemented in `App.jsx`.
+- **Offline banner** — full-width bar with Lucide **AlertTriangle** (no emoji) plus copy and optional last-sync time.
 
 ### Safe-area insets
 
-Fixed bottom elements (the mobile bottom nav bar) use `padding-bottom: max(env(safe-area-inset-bottom), 0.75rem)` so the iOS home indicator does not overlap the controls.
+Fixed bottom elements (mobile bottom nav, bottom sheets, editor wizard footers, etc.) use `padding-bottom: max(env(safe-area-inset-bottom), …)` (e.g. `.pb-safe` or equivalent) so the iOS home indicator does not overlap controls. Main content top padding accounts for `env(safe-area-inset-top)` under the fixed header.
+
+### Developer debug
+
+- **No floating bug icon** in production or dev UI. Admins open **`src/DebugPanel.jsx`** via **`Ctrl+Shift+D`** or **`?debug=true`** (documented in `CLAUDE.md` / `LOGGING.md`).
 
 ---
 
@@ -404,14 +400,14 @@ Capture every list mutation (add / check / uncheck / remove) as a per-household 
 ### Behavior
 
 - Every time an item is added, checked, unchecked, or removed-while-unchecked, an event is appended to `/households/{hid}/item-events`.
-- Shop-mode `checked` / `unchecked` events may include `itemKey` (stable list identity). **Effective purchases** (used for purchase history, last-purchased, and shortcut intelligence) apply a two-hour rule: an `unchecked` within two hours of the latest still-open `checked` for the same identity voids that check (accidental tap + correction).
+- Shop-mode `checked` / `unchecked` events may include `itemKey` (stable list identity). **Effective purchases** (used for purchase history, last-purchased, and pin/promotion intelligence) apply a two-hour rule: an `unchecked` within two hours of the latest still-open `checked` for the same identity voids that check (accidental tap + correction).
 - Adds carry a `source` flag (`typed` vs `quickAdd`) so we can detect items the user keeps typing that should be promoted to quick-add.
 - Logging is fire-and-forget — never blocks the UI, never breaks a mutation.
 - No end-user UX is built on this data yet. It's collected now so it exists when we want to use it.
 
 ### Admin surface
 
-Admins can open the Admin Panel → "View Household Insights" to see Tier 1 aggregates: top purchased items, promotion candidates, dormant quick-add items, per-user activity, and a summary of the event stream.
+From **Account → Household Insights**, household members see plain-language summaries: top checked-off items, items bought often that are not quick-add tiles yet, quick-add tiles with little recent activity, and per-member add / check-off / remove counts (resolved to display names from the household member directory).
 
 ### Privacy posture
 

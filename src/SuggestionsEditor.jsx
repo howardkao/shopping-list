@@ -22,7 +22,7 @@ import { formatAisleNameForDisplay } from './aisleDisplay';
 
 const MAX_CATEGORY_PREVIEW_ITEMS = 4;
 
-/** Visible (shortcut) names first, then library-only names; deduped case-insensitively. Up to four examples plus ", ..." (always) so the line reads as a sample, not an exhaustive list. */
+/** Visible (pinned) names first, then library-only names; deduped case-insensitively. Up to four examples plus ", ..." (always) so the line reads as a sample, not an exhaustive list. */
 function categoryItemsCommaList(visibleItems, libraryItems) {
   const vis = visibleItems || [];
   const lib = libraryItems || [];
@@ -69,8 +69,6 @@ function categoryItemsCommaList(visibleItems, libraryItems) {
 //
 //   onboarding?     : boolean    -- shows wizard chrome
 //   onDone?         : ()         -- primary CTA in wizard chrome
-//   onReset?        : ()         -- secondary CTA in wizard chrome
-//   resetEnabled?   : boolean
 //   accordionAisles? : boolean   -- if true, only one aisle may be expanded (Settings; onboarding keeps false)
 
 export default function SuggestionsEditor(props) {
@@ -78,7 +76,7 @@ export default function SuggestionsEditor(props) {
     aisles = {}, categories = {}, visibleItems = {}, libraryItems = {},
     onRenameAisle, onAddAisle, onDeleteAisle, onReorderAisles,
     onRenameCategory, onAddCategory, onMoveCategory, onMergeCategory,
-    onboarding = false, onDone, onReset, resetEnabled = false,
+    onboarding = false, onDone,
     accordionAisles = false,
   } = props;
 
@@ -90,6 +88,34 @@ export default function SuggestionsEditor(props) {
   const [moveSheetCatId, setMoveSheetCatId] = useState(null);
   const [mergeSheet, setMergeSheet] = useState(null);     // { fromCatId }
   const [aisleDeleteConfirmId, setAisleDeleteConfirmId] = useState(null); // aisleId
+  const [keyboardInputFocused, setKeyboardInputFocused] = useState(false);
+
+  // Hide the wizard footer while a text input is focused so it doesn't float
+  // above the mobile soft keyboard (decision 8.2).
+  useEffect(() => {
+    if (!onboarding) return undefined;
+    const isTextInput = (el) => {
+      if (!el) return false;
+      const tag = el.tagName;
+      if (tag === 'INPUT') {
+        const t = (el.getAttribute('type') || 'text').toLowerCase();
+        return t !== 'checkbox' && t !== 'radio' && t !== 'button' && t !== 'submit';
+      }
+      return tag === 'TEXTAREA' || el.isContentEditable === true;
+    };
+    const onFocusIn = (e) => { if (isTextInput(e.target)) setKeyboardInputFocused(true); };
+    const onFocusOut = () => {
+      setTimeout(() => {
+        if (!isTextInput(document.activeElement)) setKeyboardInputFocused(false);
+      }, 0);
+    };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+    };
+  }, [onboarding]);
 
   // --- Derived: ordered aisle list + categories by aisle ----------------------
   const orderedAisleIds = useMemo(() => {
@@ -141,8 +167,7 @@ export default function SuggestionsEditor(props) {
     <div className="max-w-2xl mx-auto px-4 pb-32">
       {onboarding && (
         <div className="pt-6 pb-4">
-          <div className="text-xs uppercase tracking-wider text-gray-500">Step 2 of 2</div>
-          <h2 className="text-2xl font-semibold mt-1">Map the app to how you shop</h2>
+          <h2 className="text-2xl font-semibold">Map the app to how you shop</h2>
           <p className="text-gray-600 mt-2">
             Drag aisles into the order you walk your store. You can rearrange or edit anything later in Settings.
           </p>
@@ -151,7 +176,7 @@ export default function SuggestionsEditor(props) {
 
       {!onboarding && (
         <div className="pt-6 pb-4">
-          <h2 className="text-xl font-semibold">Shortcuts</h2>
+          <h2 className="text-xl font-semibold">Pinned items</h2>
         </div>
       )}
 
@@ -207,15 +232,11 @@ export default function SuggestionsEditor(props) {
       </DndContext>
 
       {/* Wizard chrome */}
-      {onboarding && (
-        <div className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 p-4 flex items-center justify-between">
-          <button
-            onClick={onReset}
-            disabled={!resetEnabled}
-            className="text-sm text-gray-600 disabled:text-gray-300"
-          >
-            Reset to defaults
-          </button>
+      {onboarding && !keyboardInputFocused && (
+        <div
+          className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 px-4 pt-4 flex items-center justify-end"
+          style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 1rem)' }}
+        >
           <button
             onClick={onDone}
             className="px-4 py-2 bg-gray-900 text-white rounded-md font-medium"
@@ -441,7 +462,7 @@ function CategoryRow({
             </button>
           )}
           <div className="text-xs text-gray-500 mt-0.5 break-words">
-            {itemsLine || <span className="italic text-gray-400">No shortcuts or library items</span>}
+            {itemsLine || <span className="italic text-gray-400">No pinned items or library items</span>}
           </div>
         </div>
 
@@ -626,7 +647,7 @@ function MergeCategorySheet({
             Merge {fromCategoryName ? `“${fromCategoryName}”` : 'category'} into…
           </div>
           <div className="text-xs text-gray-500 mt-1">
-            Shortcuts and library items move to the category you pick. This category is removed.
+            Pinned items and library items move to the category you pick. This category is removed.
           </div>
         </div>
         <div className="overflow-auto">

@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Bug, Settings, History, UserCircle, BarChart3 } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
   createUserWithEmailAndPassword,
@@ -26,6 +26,7 @@ import {
   clearCachedUser
 } from './offlineStorage';
 import { logger } from './logger';
+import { humanizeAuthError } from './authErrors';
 import DebugPanel from './DebugPanel';
 import SuggestionsEditor from './SuggestionsEditor';
 import Onboarding from './Onboarding';
@@ -108,6 +109,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
   const [signupType, setSignupType] = useState('create'); // 'create' | 'join'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -125,21 +127,22 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
       logger.error('Auth', 'Sign in failed', { email, error: err.message, code: err.code });
-      setError(err.message);
+      setError(humanizeAuthError(err));
     }
     setLoading(false);
   };
 
   const handleResetPassword = async () => {
-    if (!email) { setError('Please enter your email address'); return; }
+    if (!email) { setError('Please enter your email address.'); return; }
     setLoading(true);
     setError('');
     setSuccess('');
     try {
       await sendPasswordResetEmail(auth, email);
-      setSuccess('Password reset email sent! Check your inbox.');
+      setSuccess('Password reset email sent. Check your inbox.');
     } catch (err) {
-      setError(err.message);
+      logger.error('Auth', 'Password reset failed', { email, error: err.message, code: err.code });
+      setError(humanizeAuthError(err));
     }
     setLoading(false);
   };
@@ -162,16 +165,22 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
 
       if (signupType === 'join') {
         if (!inviteCode) {
-          setError('Please enter your invitation code');
+          setError('Please enter your invitation code.');
           setLoading(false);
           return;
         }
         const code = inviteCode.trim().toUpperCase();
         const codeSnapshot = await get(ref(database, `inviteCodes/${code}`));
         const codeData = codeSnapshot.val();
-        if (!codeData || codeData.used || Date.now() > new Date(codeData.expiresAt).getTime()) {
+        if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
           logger.warn('Auth', 'Sign up failed - invalid/expired invite code');
-          setError('Invalid or expired invitation code');
+          setError("That invite code isn't valid or has expired.");
+          setLoading(false);
+          return;
+        }
+        if (codeData.used) {
+          logger.warn('Auth', 'Sign up failed - invite code already used');
+          setError('That invite code has already been used.');
           setLoading(false);
           return;
         }
@@ -239,7 +248,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
       logger.error('Auth', 'Sign up failed', { email, error: err.message, code: err.code });
-      setError(err.message);
+      setError(humanizeAuthError(err));
     }
     setLoading(false);
   };
@@ -278,7 +287,22 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
             <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
             <div className="relative">
               <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors" onKeyDown={(e) => e.key === 'Enter' && (mode === 'signin' ? handleSignIn() : handleSignUp())} />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
+                onKeyDown={(e) => e.key === 'Enter' && (mode === 'signin' ? handleSignIn() : handleSignUp())}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(s => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-gray-700 rounded-lg"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
           </div>
           {mode === 'signup' && signupType === 'join' && (
@@ -398,7 +422,15 @@ function OfflineReadyToast({ onDismiss }) {
   );
 }
 
-function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose }) {
+function insightsMemberLabel(members, uid) {
+  const m = members?.[uid];
+  const name = m?.displayName?.trim();
+  if (name) return name;
+  if (m?.email) return m.email;
+  return 'Unknown member';
+}
+
+function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, members, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [events, setEvents] = useState([]);
@@ -456,21 +488,27 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose
         <div className="p-6 border-b border-gray-200 flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold text-gray-800">Household Insights</h2>
-            <p className="text-gray-600 font-medium text-sm">Tier 1 — frequency aggregates from item events</p>
+            <p className="text-gray-600 font-medium text-sm">Based on how your household adds, checks off, and removes items.</p>
           </div>
           <button onClick={onClose} className="p-2 text-gray-500 hover:text-gray-800"><X size={22} /></button>
         </div>
         <div className="p-6 flex-1 overflow-y-auto space-y-6 text-sm">
           {loading && <div className="text-gray-500">Loading…</div>}
-          {error && <div className="text-red-600">Error: {error}</div>}
+          {error && (
+            <div className="text-red-600">
+              <p className="font-medium">Could not load insights.</p>
+              <p className="text-xs text-gray-500 mt-1 font-normal">{error}</p>
+            </div>
+          )}
           {!loading && !error && !events.length && (
             <div className="text-gray-500">No item events recorded yet. Add and check off items to start collecting data.</div>
           )}
           {!loading && !error && events.length > 0 && (
             <>
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Top purchased (all-time)</h3>
-                {top.length === 0 ? <div className="text-gray-500">No checkoff events yet.</div> : (
+                <h3 className="font-bold text-gray-800 mb-2">Top items</h3>
+                <p className="text-xs text-gray-500 mb-2">Most often checked off, all time.</p>
+                {top.length === 0 ? <div className="text-gray-500">Nothing checked off yet.</div> : (
                   <div className="space-y-1">
                     {top.map(s => (
                       <div key={s.key} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
@@ -483,8 +521,9 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Promotion candidates <span className="text-xs font-normal text-gray-500">(checked ≥3× in threshold window, not a shortcut)</span></h3>
-                {promote.length === 0 ? <div className="text-gray-500">None.</div> : (
+                <h3 className="font-bold text-gray-800 mb-2">Often bought — not on quick-add</h3>
+                <p className="text-xs text-gray-500 mb-2">Checked off several times recently but not currently a quick-add tile. You may see the same suggestions on the Add screen.</p>
+                {promote.length === 0 ? <div className="text-gray-500">None right now.</div> : (
                   <div className="space-y-1">
                     {promote.map(c => (
                       <div key={`${c.categoryId || c.category}::${c.name}`} className="flex justify-between items-center bg-amber-50 rounded-lg px-3 py-2">
@@ -497,13 +536,14 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Dormant shortcuts <span className="text-xs font-normal text-gray-500">(no use beyond category threshold)</span></h3>
-                {dormant.length === 0 ? <div className="text-gray-500">None.</div> : (
+                <h3 className="font-bold text-gray-800 mb-2">Quiet quick-add tiles</h3>
+                <p className="text-xs text-gray-500 mb-2">Tiles with no recent adds or check-offs; how long counts as recent depends on the category. Same list may appear on the Add screen.</p>
+                {dormant.length === 0 ? <div className="text-gray-500">None right now.</div> : (
                   <div className="space-y-1">
                     {dormant.slice(0, 30).map(d => (
                       <div key={`${d.categoryId}::${d.name}`} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
                         <div><span className="font-semibold">{d.name}</span> <span className="text-gray-500 text-xs">· {d.categoryName}</span></div>
-                        <div className="text-gray-600">{d.daysSinceLastUse == null ? 'never used' : `${d.daysSinceLastUse}d ago`}</div>
+                        <div className="text-gray-600">{d.daysSinceLastUse == null ? 'No activity yet' : `${d.daysSinceLastUse}d since last use`}</div>
                       </div>
                     ))}
                   </div>
@@ -511,15 +551,20 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Per-user activity</h3>
-                <div className="space-y-1">
-                  {users.map(u => (
-                    <div key={u.uid} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
-                      <div className="font-mono text-xs text-gray-700">{u.uid.slice(0, 12)}…</div>
-                      <div className="text-gray-600 text-xs">added {u.added} · checked {u.checked} · removed {u.removed}</div>
-                    </div>
-                  ))}
-                </div>
+                <h3 className="font-bold text-gray-800 mb-2">Household activity</h3>
+                <p className="text-xs text-gray-500 mb-2">Adds, check-offs, and removals per person.</p>
+                {users.length === 0 ? (
+                  <div className="text-gray-500">No member-attributed activity yet.</div>
+                ) : (
+                  <div className="space-y-1">
+                    {users.map(u => (
+                      <div key={u.uid} className="flex justify-between items-center gap-3 bg-gray-50 rounded-lg px-3 py-2">
+                        <div className="font-medium text-gray-800 truncate min-w-0">{insightsMemberLabel(members, u.uid)}</div>
+                        <div className="text-gray-600 text-xs shrink-0">Added {u.added} · Checked off {u.checked} · Removed {u.removed}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
             </>
           )}
@@ -702,10 +747,10 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
   const [configOpen, setConfigOpen] = useState(false);
   const [configAisleId, setConfigAisleId] = useState(item.suggestionConfig?.aisleId || '');
   const [configCatId, setConfigCatId] = useState(item.suggestionConfig?.categoryId || '');
-  const [configSaving, setConfigSaving] = useState(false);
-  const [configError, setConfigError] = useState('');
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [pinActionLoading, setPinActionLoading] = useState(false);
   const [promotedConfig, setPromotedConfig] = useState(null);
+  const [translateY, setTranslateY] = useState(0);
+  const dragStartYRef = useRef(null);
 
   const suggestionConfig = promotedConfig || item.suggestionConfig || null;
   const aisleMap = aisles || {};
@@ -738,6 +783,16 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
     lastCommittedNameRef.current = String(item.name ?? '');
     lastCommittedQtyRef.current = String(item.quantity ?? '');
   }, [item.itemKey, item.id, item.name, item.quantity]);
+
+  // Reset picker + drag state when the underlying item changes (sheet reopen).
+  useEffect(() => {
+    setConfigOpen(false);
+    setPromotedConfig(null);
+    setPinActionLoading(false);
+    setTranslateY(0);
+    setConfigAisleId(item.suggestionConfig?.aisleId || '');
+    setConfigCatId(item.suggestionConfig?.categoryId || '');
+  }, [item.itemKey, item.id]);
 
   const commitName = async () => {
     const trimmed = nameDraft.trim();
@@ -800,23 +855,74 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
     ? formatRelativeTime(lastPurchasedTs)
     : null;
 
+  // Swipe-to-dismiss on mobile (handle only, not sheet body — avoids fighting internal scroll).
+  const handleDragStart = (e) => {
+    dragStartYRef.current = e.touches?.[0]?.clientY ?? null;
+  };
+  const handleDragMove = (e) => {
+    if (dragStartYRef.current == null) return;
+    const currentY = e.touches?.[0]?.clientY ?? dragStartYRef.current;
+    const delta = Math.max(0, currentY - dragStartYRef.current);
+    setTranslateY(delta);
+  };
+  const handleDragEnd = () => {
+    if (dragStartYRef.current == null) return;
+    dragStartYRef.current = null;
+    const SHEET_DISMISS_PX = 100;
+    if (translateY >= SHEET_DISMISS_PX) {
+      void handleClose();
+    } else {
+      setTranslateY(0);
+    }
+  };
+
+  // Backdrop fades proportionally with the sheet drag.
+  const backdropOpacity = translateY > 0
+    ? Math.max(0, 1 - translateY / 300)
+    : 1;
+
+  // Breadcrumb (taxonomy position) for the two-row block.
+  const breadcrumbCategoryId = suggestionConfig?.categoryId || item.categoryId || null;
+  const breadcrumbAisleId = suggestionConfig?.aisleId
+    || (breadcrumbCategoryId ? categoryMap[breadcrumbCategoryId]?.aisleId || null : null);
+  const breadcrumbAisleName = breadcrumbAisleId && aisleMap[breadcrumbAisleId]?.name
+    ? formatAisleNameForDisplay(aisleMap[breadcrumbAisleId].name)
+    : null;
+  const breadcrumbCategoryName = breadcrumbCategoryId && categoryMap[breadcrumbCategoryId]?.name
+    ? categoryMap[breadcrumbCategoryId].name
+    : null;
+  const hasBreadcrumb = Boolean(breadcrumbAisleName && breadcrumbCategoryName);
+  const canEditTaxonomy = Boolean(suggestionConfig);
+  const showUnpin = Boolean(suggestionConfig?.onRemove);
+  const showPin = Boolean(item.promoteToShortcut && !showUnpin);
+  const canPinAction = Boolean(showUnpin || showPin);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center md:items-center md:p-4"
       onClick={handleClose}
     >
-      <div className="absolute inset-0 bg-black/40 transition-opacity md:bg-black/50" />
+      <div
+        className="absolute inset-0 bg-black/40 transition-opacity md:bg-black/50"
+        style={{ opacity: backdropOpacity }}
+      />
       <div
         className="relative w-full max-w-lg bg-white rounded-t-3xl shadow-xl animate-slide-up md:max-h-[85vh] md:max-w-md md:overflow-hidden md:rounded-3xl md:border md:border-gray-200 md:animate-none md:shadow-xl md:flex md:flex-col"
         onClick={(e) => e.stopPropagation()}
+        style={{ transform: translateY > 0 ? `translateY(${translateY}px)` : undefined, transition: dragStartYRef.current == null ? 'transform 200ms ease-out' : 'none' }}
       >
-        <div className="flex justify-center pt-3 pb-1 md:hidden">
+        <div
+          className="flex justify-center pt-3 pb-1 md:hidden touch-none"
+          onTouchStart={handleDragStart}
+          onTouchMove={handleDragMove}
+          onTouchEnd={handleDragEnd}
+        >
           <div className="w-10 h-1 rounded-full bg-gray-300" />
         </div>
-        <div className="px-6 pb-6 pt-2 md:flex-1 md:flex md:flex-col md:min-h-0 md:overflow-y-auto md:pt-6 md:pb-6">
+        <div className="px-6 pt-2 md:flex-1 md:flex md:flex-col md:min-h-0 md:overflow-y-auto md:pt-6 md:pb-6" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 1.5rem)' }}>
           <div className="flex items-start justify-between gap-3 mb-4">
             <div className="min-w-0 flex-1 space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Name</p>
+              <p className="text-xs font-medium text-gray-500">Name</p>
               <input
                 type="text"
                 value={nameDraft}
@@ -838,14 +944,14 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
               type="button"
               onClick={handleClose}
               disabled={isSaving}
-              className="hidden md:flex flex-shrink-0 p-2 -mr-2 -mt-1 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100"
+              className="flex flex-shrink-0 p-2 -mr-2 -mt-1 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100"
               aria-label="Close"
             >
               <X size={22} />
             </button>
           </div>
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Quantity</p>
+            <p className="text-xs font-medium text-gray-500">Quantity</p>
             <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
               <div className="flex items-center gap-2">
                 <input
@@ -888,164 +994,145 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
                 {addedAtFormatted ? ` · ${addedAtFormatted}` : ''}
               </p>
             )}
-            <p>Last purchased: {lastPurchasedFormatted || 'unknown'}</p>
+            <p>{lastPurchasedFormatted ? `Last purchased: ${lastPurchasedFormatted}` : 'No purchase history'}</p>
           </div>
-          {suggestionConfig && !configOpen && (
-            <button
-              type="button"
-              onClick={() => {
-                setConfigAisleId(suggestionConfig.aisleId || '');
-                setConfigCatId(suggestionConfig.categoryId || '');
-                setConfigError('');
-                setConfirmRemove(false);
-                setConfigOpen(true);
-              }}
-              className="mt-6 w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left"
-            >
-              <Settings size={14} className="text-gray-400 flex-shrink-0" />
-              <span className="text-xs font-medium text-gray-500">Shortcut settings</span>
-            </button>
+
+          {item.promotionHint && (
+            <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
+              <p className="text-xs text-amber-800">
+                Bought {item.promotionHint.checkedCount}× recently
+              </p>
+            </div>
           )}
-          {!suggestionConfig && item.promoteToShortcut && (
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const config = await item.promoteToShortcut();
-                  if (config) setPromotedConfig(config);
-                } catch (err) {
-                  /* silently fail */
-                }
-              }}
-              className="mt-6 w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left"
-            >
-              <Plus size={14} className="text-gray-400 flex-shrink-0" />
-              <span className="text-xs font-medium text-gray-500">Add as a permanent shortcut</span>
-            </button>
-          )}
-          {suggestionConfig && configOpen && (
-            <div className="mt-6 rounded-xl bg-gray-50 p-4 space-y-4">
-              <p className="text-xs text-gray-500">Change where this shortcut lives, or remove it from your shortcuts. It will still appear in search results.</p>
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold uppercase tracking-wide text-gray-400">Aisle</label>
-                <select
-                  value={configAisleId}
-                  onChange={(e) => {
-                    const nextAisle = e.target.value;
-                    setConfigAisleId(nextAisle);
-                    const opts = categoriesForAisle(nextAisle);
-                    setConfigCatId(opts[0]?.id || '');
-                  }}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
-                >
-                  {orderedAisles.map(a => (
-                    <option key={a.id} value={a.id}>{formatAisleNameForDisplay(a.name)}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold uppercase tracking-wide text-gray-400">Category</label>
-                <select
-                  value={configCatId}
-                  onChange={(e) => setConfigCatId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
-                >
-                  {categoriesForAisle(configAisleId).map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              {!confirmRemove ? (
-                <>
+
+          {(hasBreadcrumb || canPinAction) && (
+            <div className="mt-6 space-y-2">
+              {hasBreadcrumb && (
+                canEditTaxonomy ? (
                   <button
                     type="button"
-                    onClick={() => setConfirmRemove(true)}
-                    disabled={configSaving}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-white text-red-600 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
+                    onClick={() => {
+                      setConfigAisleId(suggestionConfig.aisleId || '');
+                      setConfigCatId(suggestionConfig.categoryId || '');
+                      setConfigOpen(open => !open);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left"
                   >
-                    <Trash2 size={14} />
-                    Remove from shortcuts
+                    <span className="flex-1 text-xs text-gray-500">
+                      <span className="font-semibold tracking-wide">{breadcrumbAisleName}</span>
+                      <span className="mx-1.5 text-gray-300">›</span>
+                      <span>{breadcrumbCategoryName}</span>
+                    </span>
+                    <ChevronRight size={14} className={`text-gray-400 transition-transform ${configOpen ? 'rotate-90' : ''}`} />
                   </button>
-                  {configError && (
-                    <p className="text-xs font-medium text-red-600">{configError}</p>
-                  )}
-                  <div className="flex gap-2 pt-2 border-t border-gray-200">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConfigOpen(false);
-                        setConfirmRemove(false);
-                        setConfigError('');
+                ) : (
+                  <div className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-50">
+                    <span className="flex-1 text-xs text-gray-500">
+                      <span className="font-semibold tracking-wide">{breadcrumbAisleName}</span>
+                      <span className="mx-1.5 text-gray-300">›</span>
+                      <span>{breadcrumbCategoryName}</span>
+                    </span>
+                  </div>
+                )
+              )}
+
+              {canEditTaxonomy && configOpen && (
+                <div className="rounded-xl bg-gray-50 p-4 space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-gray-500">Aisle</label>
+                    <select
+                      value={configAisleId}
+                      onChange={(e) => {
+                        const nextAisle = e.target.value;
+                        setConfigAisleId(nextAisle);
+                        const opts = categoriesForAisle(nextAisle);
+                        setConfigCatId(opts[0]?.id || '');
                       }}
-                      disabled={configSaving}
-                      className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50 disabled:opacity-50"
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
                     >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setConfigError('');
-                        const aisleChanged = configAisleId !== suggestionConfig.aisleId;
-                        const catChanged = configCatId !== suggestionConfig.categoryId;
-                        if (!aisleChanged && !catChanged) {
+                      {orderedAisles.map(a => (
+                        <option key={a.id} value={a.id}>{formatAisleNameForDisplay(a.name)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-gray-500">Category</label>
+                    <select
+                      value={configCatId}
+                      onChange={async (e) => {
+                        const nextCat = e.target.value;
+                        setConfigCatId(nextCat);
+                        if (!nextCat) return;
+                        if (nextCat === suggestionConfig.categoryId) {
                           setConfigOpen(false);
                           return;
                         }
-                        if (!configCatId) {
-                          setConfigError('Pick a category.');
-                          return;
-                        }
-                        setConfigSaving(true);
                         try {
-                          await suggestionConfig.onMove(configCatId);
-                        } catch (err) {
-                          setConfigError(err?.message || 'Failed to save');
-                          setConfigSaving(false);
+                          await suggestionConfig.onMove(nextCat);
+                        } catch {
+                          /* silently fail */
                         }
                       }}
-                      disabled={configSaving}
-                      className="flex-1 px-4 py-2.5 rounded-xl text-white font-semibold disabled:opacity-50"
-                      style={{ backgroundColor: '#FF7A7A' }}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#FF7A7A]/30"
                     >
-                      {configSaving ? 'Saving…' : 'Save'}
-                    </button>
+                      {categoriesForAisle(configAisleId).map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
                   </div>
-                </>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-red-700">Remove this shortcut? It will still be available via search.</p>
-                  {configError && (
-                    <p className="text-xs font-medium text-red-600">{configError}</p>
-                  )}
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setConfirmRemove(false)}
-                      disabled={configSaving}
-                      className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Keep
-                    </button>
+                </div>
+              )}
+
+              {canPinAction && (
+                showUnpin ? (
+                  <div>
                     <button
                       type="button"
                       onClick={async () => {
-                        setConfigError('');
-                        setConfigSaving(true);
+                        if (pinActionLoading) return;
+                        setPinActionLoading(true);
                         try {
                           await suggestionConfig.onRemove();
-                        } catch (err) {
-                          setConfigError(err?.message || 'Failed to remove');
-                          setConfigSaving(false);
+                        } catch {
+                          /* keep sheet open; button re-enabled in finally */
+                        } finally {
+                          setPinActionLoading(false);
                         }
                       }}
-                      disabled={configSaving}
-                      className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+                      disabled={pinActionLoading}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-white text-red-600 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
                     >
-                      {configSaving ? 'Removing…' : 'Remove'}
+                      <Pin size={14} />
+                      {pinActionLoading ? 'Unpinning…' : 'Unpin'}
                     </button>
+                    <p className="text-xs text-gray-400 text-center mt-1.5">Remove from shortcuts</p>
                   </div>
-                </div>
+                ) : showPin ? (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (pinActionLoading) return;
+                        setPinActionLoading(true);
+                        try {
+                          const config = await item.promoteToShortcut();
+                          if (config) setPromotedConfig(config);
+                        } catch {
+                          /* silently fail */
+                        } finally {
+                          setPinActionLoading(false);
+                        }
+                      }}
+                      disabled={pinActionLoading}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border bg-white text-sm font-semibold hover:bg-[#FFF5F5] disabled:opacity-50"
+                      style={{ color: '#FF7A7A', borderColor: 'rgba(255, 122, 122, 0.4)' }}
+                    >
+                      <Pin size={14} fill="currentColor" />
+                      {pinActionLoading ? 'Pinning…' : 'Pin'}
+                    </button>
+                    <p className="text-xs text-gray-400 text-center mt-1.5">Keep as a shortcut in Add mode</p>
+                  </div>
+                ) : null
               )}
             </div>
           )}
@@ -1095,11 +1182,7 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
       onDeleted();
     } catch (err) {
       logger.error('Auth', 'Account deletion failed', { uid: user.uid, error: err.message, code: err.code });
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        setError('Incorrect password. Please try again.');
-      } else {
-        setError(err.message);
-      }
+      setError(humanizeAuthError(err));
       setLoading(false);
     }
   };
@@ -1114,7 +1197,7 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
         <div className="p-6 space-y-4">
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 font-medium">
             {isAdmin
-              ? 'Your account and all household data will be permanently deleted — including the shopping list, history, and all shortcuts. Other household members will lose access.'
+              ? 'Your account and all household data will be permanently deleted — including the shopping list, history, and all pinned items. Other household members will lose access.'
               : 'Your account will be removed. The household and its data will remain accessible to other members.'}
           </div>
           <div>
@@ -1323,10 +1406,16 @@ export default function App() {
   const [libraryItemsV2, setLibraryItemsV2] = useState({});
   const [onboardingCompleted, setOnboardingCompleted] = useState(null);
   const [quickAddMode, setQuickAddMode] = useState(false);
+  /** Bulk pin surface: only entered from Add mode; keeps `quickAddMode` true. */
+  const [pinEditMode, setPinEditMode] = useState(false);
+  const [pinEditTriggerAisleId, setPinEditTriggerAisleId] = useState(null);
+  /** B1 entry only: `${categoryId}::${suggestionId}` keys for amber pin rings. */
+  const [pinEditDormantHighlightSet, setPinEditDormantHighlightSet] = useState(null);
   const [categorySearches, setCategorySearches] = useState({});
   const [loading, setLoading] = useState(true);
   const [pendingOps, setPendingOps] = useState(0);
   const [expandedCategories, setExpandedCategories] = useState({});
+  const [keyboardInputFocused, setKeyboardInputFocused] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [localDataLoaded, setLocalDataLoaded] = useState(false);
@@ -1345,16 +1434,20 @@ export default function App() {
   const shopAisleDefaultsHouseholdIdRef = useRef(null);
   /** Shop mode: previous snapshot of whether each aisle had any list items (for auto-collapse when emptied). */
   const prevShopAisleHadItemsRef = useRef({});
+  /** Per-aisle Add search inputs — measure for autocomplete flip (design review 4.3). */
+  const aisleAddSearchInputRefs = useRef({});
+  const prevAisleAutocompleteOpenRef = useRef({});
+  /** When true, per-aisle autocomplete renders above the input (decided once per open). */
+  const [aisleAutocompleteFlipUp, setAisleAutocompleteFlipUp] = useState({});
 
   // --- A1/B1 suggestion intelligence ---
   const [suggestionDismissals, setSuggestionDismissals] = useState({});
   const [promotionCandidatesCache, setPromotionCandidatesCache] = useState([]);
   const [dormantShortcutsCache, setDormantShortcutsCache] = useState([]);
-  const [activePromotionPrompt, setActivePromotionPrompt] = useState(null);
-  const promotionTimerRef = useRef(null);
   const lastScrollY = useRef(0);
   const lastScrollTime = useRef(Date.now());
   const smoothedVelocity = useRef(0);
+  const pinEditReturnScrollY = useRef(0);
   const [showUpdateToast, setShowUpdateToast] = useState(false);
   const [showOfflineToast, setShowOfflineToast] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState(null);
@@ -1475,6 +1568,33 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
+
+  // Track whether a text-input element is focused so bottom-fixed chrome can
+  // hide while the mobile soft keyboard is up (decision 8.2).
+  useEffect(() => {
+    const isTextInput = (el) => {
+      if (!el) return false;
+      const tag = el.tagName;
+      if (tag === 'INPUT') {
+        const t = (el.getAttribute('type') || 'text').toLowerCase();
+        return t !== 'checkbox' && t !== 'radio' && t !== 'button' && t !== 'submit';
+      }
+      return tag === 'TEXTAREA' || el.isContentEditable === true;
+    };
+    const onFocusIn = (e) => { if (isTextInput(e.target)) setKeyboardInputFocused(true); };
+    const onFocusOut = () => {
+      // Defer so the next focusin (if any) fires first.
+      setTimeout(() => {
+        if (!isTextInput(document.activeElement)) setKeyboardInputFocused(false);
+      }, 0);
+    };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+    };
   }, []);
 
   useEffect(() => {
@@ -2355,6 +2475,28 @@ export default function App() {
     }
   };
 
+  /** Same DB path as ItemBottomSheet Pin / `promoteToShortcut` — list row → visible-items. */
+  const promoteListItemToVisibleShortcut = async (item) => {
+    const catId = getItemCategoryId(item);
+    const trimmed = String(item.name || '').trim();
+    if (!catId || !trimmed || !taxonomyBase) return null;
+    const vis = visibleItemsV2[catId] || [];
+    const lib = libraryItemsV2[catId] || [];
+    const lower = trimmed.toLowerCase();
+    if (vis.some(i => i.name.toLowerCase() === lower)) return null;
+    const libItem = lib.find(i => i.name.toLowerCase() === lower);
+    const newId = libItem?.id || push(ref(database, `${taxonomyBase}/visible-items/${catId}`)).key;
+    const entry = stampRecord({ id: newId, name: trimmed, createdAt: libItem?.createdAt || Date.now() });
+    const nextVis = [...vis, entry];
+    const nextLib = libItem ? lib.filter(i => i.id !== libItem.id) : lib;
+    setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
+    if (libItem) setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
+    const updates = { [`${taxonomyBase}/visible-items/${catId}`]: nextVis };
+    if (libItem) updates[`${taxonomyBase}/library/${catId}`] = nextLib.length > 0 ? nextLib : null;
+    await update(ref(database), updates);
+    return { newId, catId };
+  };
+
   const updateSuggestionQuantity = (itemKey, qty) => {
     const nextDefaults = { ...quantityDefaults };
     const t = String(qty ?? '').trim();
@@ -2384,83 +2526,118 @@ export default function App() {
     return null;
   };
 
+  const findLibraryMatchForListItem = (item) => {
+    const nameLower = String(item?.name ?? '').trim().toLowerCase();
+    if (!nameLower) return null;
+    const preferredCatId = getItemCategoryId(item);
+    const searchIn = (catId) => {
+      const lib = (libraryItemsV2[catId] || []).find(s => s.name.toLowerCase() === nameLower);
+      if (lib) return { suggestionId: lib.id, categoryId: catId };
+      return null;
+    };
+    if (preferredCatId) {
+      const hit = searchIn(preferredCatId);
+      if (hit) return hit;
+    }
+    for (const catId of Object.keys(categoriesV2)) {
+      if (catId === preferredCatId) continue;
+      const hit = searchIn(catId);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
   const openItemSheet = async (item) => {
     const itemKey = getStableItemKey(item);
     const base = { ...item, itemKey, onQuantityChange: updateQuantity, onNameChange: updateItemName };
-    if (quickAddMode) {
-      const match = findShortcutForListItem(item);
-      if (match) {
-        base.suggestionConfig = {
-          categoryId: match.categoryId,
-          aisleId: categoriesV2[match.categoryId]?.aisleId || null,
-          onMove: async (toCatId) => {
-            await moveSuggestionToCategory(match.suggestionId, match.categoryId, toCatId);
-            const toCategoryName = categoriesV2[toCatId]?.name || '';
-            const targetItemKey = itemKey;
-            setList(prev => {
-              const next = prev.map(li =>
-                getStableItemKey(li) === targetItemKey
-                  ? { ...li, categoryId: toCatId, category: toCategoryName }
-                  : li
-              );
-              save('shopping-list', next);
-              saveShoppingListLocally(next);
-              return next;
-            });
-            setSelectedItem(null);
-          },
-          onRemove: async () => {
-            await removeSuggestionEverywhere(match.suggestionId, match.categoryId);
-            setSelectedItem(null);
-          },
-        };
-      } else {
-        const catId = getItemCategoryId(item);
-        if (catId) {
-          base.promoteToShortcut = async () => {
-            const trimmed = String(item.name || '').trim();
-            if (!trimmed || !taxonomyBase) return null;
-            const vis = visibleItemsV2[catId] || [];
-            const lib = libraryItemsV2[catId] || [];
-            const lower = trimmed.toLowerCase();
-            if (vis.some(i => i.name.toLowerCase() === lower)) return null;
-            const libItem = lib.find(i => i.name.toLowerCase() === lower);
-            const newId = libItem?.id || push(ref(database, `${taxonomyBase}/visible-items/${catId}`)).key;
-            const entry = stampRecord({ id: newId, name: trimmed, createdAt: libItem?.createdAt || Date.now() });
-            const nextVis = [...vis, entry];
-            const nextLib = libItem ? lib.filter(i => i.id !== libItem.id) : lib;
-            setVisibleItemsV2(prev => ({ ...prev, [catId]: nextVis }));
-            if (libItem) setLibraryItemsV2(prev => ({ ...prev, [catId]: nextLib }));
-            const updates = { [`${taxonomyBase}/visible-items/${catId}`]: nextVis };
-            if (libItem) updates[`${taxonomyBase}/library/${catId}`] = nextLib.length > 0 ? nextLib : null;
-            await update(ref(database), updates);
+    // Surface pin/promote affordances in both Shop and Add mode so the sheet's
+    // breadcrumb + Pin button work universally (per Pass 2 / decision 5.2).
+    const makeListItemPinnedSuggestionConfig = (suggestionId, fromCatId, pinOptions = {}) => {
+      const allowUnpin = pinOptions.allowUnpin !== false;
+      const cfg = {
+        categoryId: fromCatId,
+        aisleId: categoriesV2[fromCatId]?.aisleId || null,
+        onMove: async (toCatId) => {
+          await moveSuggestionToCategory(suggestionId, fromCatId, toCatId);
+          const toCategoryName = categoriesV2[toCatId]?.name || '';
+          setList(prev => {
+            const next = prev.map(li =>
+              getStableItemKey(li) === itemKey
+                ? { ...li, categoryId: toCatId, category: toCategoryName }
+                : li
+            );
+            save('shopping-list', next);
+            saveShoppingListLocally(next);
+            return next;
+          });
+          setSelectedItem(prev => {
+            if (!prev || getStableItemKey(prev) !== itemKey) return prev;
             return {
-              categoryId: catId,
-              aisleId: categoriesV2[catId]?.aisleId || null,
-              onMove: async (toCatId) => {
-                await moveSuggestionToCategory(newId, catId, toCatId);
-                const toCategoryName = categoriesV2[toCatId]?.name || '';
-                const targetItemKey = itemKey;
-                setList(prev => {
-                  const next = prev.map(li =>
-                    getStableItemKey(li) === targetItemKey
-                      ? { ...li, categoryId: toCatId, category: toCategoryName }
-                      : li
-                  );
-                  save('shopping-list', next);
-                  saveShoppingListLocally(next);
-                  return next;
-                });
-                setSelectedItem(null);
-              },
-              onRemove: async () => {
-                await removeSuggestionEverywhere(newId, catId);
-                setSelectedItem(null);
-              },
+              ...prev,
+              categoryId: toCatId,
+              category: toCategoryName,
+              suggestionConfig: makeListItemPinnedSuggestionConfig(suggestionId, toCatId, { allowUnpin }),
             };
-          };
-        }
+          });
+        },
+      };
+      if (allowUnpin) {
+        cfg.onRemove = async () => {
+          await removeSuggestionEverywhere(suggestionId, fromCatId);
+          setSelectedItem(prev => {
+            if (!prev || getStableItemKey(prev) !== itemKey) return prev;
+            const next = { ...prev };
+            delete next.suggestionConfig;
+            const catId = getItemCategoryId(next);
+            if (catId) {
+              next.promoteToShortcut = async () => {
+                const promoted = await promoteListItemToVisibleShortcut(next);
+                if (!promoted) return null;
+                const { newId, catId: pinnedCatId } = promoted;
+                return makeListItemPinnedSuggestionConfig(newId, pinnedCatId);
+              };
+            }
+            return next;
+          });
+        };
       }
+      return cfg;
+    };
+    const matchVis = findShortcutForListItem(item);
+    const matchLib = matchVis ? null : findLibraryMatchForListItem(item);
+    if (matchVis) {
+      base.suggestionConfig = makeListItemPinnedSuggestionConfig(matchVis.suggestionId, matchVis.categoryId);
+    } else if (matchLib) {
+      base.suggestionConfig = makeListItemPinnedSuggestionConfig(matchLib.suggestionId, matchLib.categoryId, {
+        allowUnpin: false,
+      });
+      const catId = getItemCategoryId(item);
+      if (catId) {
+        base.promoteToShortcut = async () => {
+          const promoted = await promoteListItemToVisibleShortcut(item);
+          if (!promoted) return null;
+          const { newId, catId: pinnedCatId } = promoted;
+          return makeListItemPinnedSuggestionConfig(newId, pinnedCatId);
+        };
+      }
+    } else {
+      const catId = getItemCategoryId(item);
+      if (catId) {
+        base.promoteToShortcut = async () => {
+          const promoted = await promoteListItemToVisibleShortcut(item);
+          if (!promoted) return null;
+          const { newId, catId: pinnedCatId } = promoted;
+          return makeListItemPinnedSuggestionConfig(newId, pinnedCatId);
+        };
+      }
+    }
+    // Promotion hint: only when the name is not already a visible shortcut tile.
+    if (!matchVis) {
+      const lower = String(item.name || '').toLowerCase();
+      const candidate = promotionCandidatesCache.find(c =>
+        (c.name || '').toLowerCase() === lower
+      );
+      if (candidate) base.promotionHint = candidate;
     }
     setSelectedItem(base);
     setSelectedItemLastPurchased(null);
@@ -2492,19 +2669,29 @@ export default function App() {
           });
         }
       : undefined;
+    const makeAddSuggestionTaxonomyConfig = (sid, cid) => ({
+      categoryId: cid,
+      aisleId: categoriesV2[cid]?.aisleId || null,
+      onMove: async (toCatId) => {
+        await moveSuggestionToCategory(sid, cid, toCatId);
+        setSelectedItem(prev => {
+          if (!prev || prev.itemKey !== sid) return prev;
+          const catName = categoriesV2[toCatId]?.name || '';
+          return {
+            ...prev,
+            categoryId: toCatId,
+            category: catName,
+            suggestionConfig: makeAddSuggestionTaxonomyConfig(sid, toCatId),
+          };
+        });
+      },
+      onRemove: async () => {
+        await removeSuggestionEverywhere(sid, cid);
+        setSelectedItem(null);
+      },
+    });
     const suggestionConfig = categoryId
-      ? {
-          categoryId,
-          aisleId: categoriesV2[categoryId]?.aisleId || null,
-          onMove: async (toCatId) => {
-            await moveSuggestionToCategory(suggestionId, categoryId, toCatId);
-            setSelectedItem(null);
-          },
-          onRemove: async () => {
-            await removeSuggestionEverywhere(suggestionId, categoryId);
-            setSelectedItem(null);
-          },
-        }
+      ? makeAddSuggestionTaxonomyConfig(suggestionId, categoryId)
       : null;
     const item = {
       ...suggestion,
@@ -2587,7 +2774,6 @@ export default function App() {
     const categoryName = catId ? v2CategoryNameById[catId] : (aislesV2[aisleId]?.name || '');
     addItem(suggestion.name, categoryName, 'typed', generateId(), catId);
     setCategorySearches(prev => ({ ...prev, [aisleId]: '' }));
-    checkPromotionAfterAdd(suggestion.name, categoryName);
   };
 
   const getAisleSuggestions = (aisleId) => {
@@ -2630,6 +2816,36 @@ export default function App() {
     const hasExact = base.some(s => s.name.toLowerCase() === rawLc);
     return hasExact ? base : [{ name: raw, catId: null, suggestionId: null, fromVisible: false }, ...base];
   };
+
+  const AUTOCOMPLETE_MIN_SPACE_BELOW = 200;
+  useLayoutEffect(() => {
+    const prev = prevAisleAutocompleteOpenRef.current;
+    const nextOpen = {};
+    for (const aisleId of orderedV2AisleIds) {
+      const trimmed = (categorySearches[aisleId] || '').trim();
+      const expanded = Boolean(expandedCategories[aisleId]);
+      const open = Boolean(quickAddMode && !pinEditMode && expanded && trimmed);
+      nextOpen[aisleId] = open;
+      const wasOpen = Boolean(prev[aisleId]);
+      if (open && !wasOpen) {
+        const el = aisleAddSearchInputRefs.current[aisleId];
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          const vh = window.visualViewport?.height ?? window.innerHeight;
+          const spaceBelow = vh - rect.bottom;
+          setAisleAutocompleteFlipUp((s) => ({ ...s, [aisleId]: spaceBelow < AUTOCOMPLETE_MIN_SPACE_BELOW }));
+        }
+      }
+      if (!open && wasOpen) {
+        setAisleAutocompleteFlipUp((s) => {
+          if (!(aisleId in s)) return s;
+          const { [aisleId]: _removed, ...rest } = s;
+          return rest;
+        });
+      }
+    }
+    prevAisleAutocompleteOpenRef.current = nextOpen;
+  }, [categorySearches, expandedCategories, quickAddMode, pinEditMode, aislesV2]);
 
   const organized = orderedV2AisleIds.map((aisleId) => {
     const catIds = v2CategoriesByAisle[aisleId] || [];
@@ -2758,7 +2974,6 @@ export default function App() {
   // --- A1/B1: Load events and compute candidates when entering Add mode ---
   useEffect(() => {
     if (!quickAddMode || !householdId) {
-      setActivePromotionPrompt(null);
       return;
     }
     let cancelled = false;
@@ -2832,9 +3047,89 @@ export default function App() {
     }
   };
 
+  /** Density nudge: `dismissCount` stores pinned-item threshold at dismiss (resurface when count ≥ threshold + 4). */
+  const recordDensityDismissal = async (aisleId, thresholdAtDismiss) => {
+    if (!householdId) return;
+    const key = `density::${aisleId}`;
+    const record = {
+      action: 'density-dismissed',
+      dismissedAt: Date.now(),
+      resurfaceAfter: null,
+      dismissCount: thresholdAtDismiss,
+    };
+    setSuggestionDismissals(prev => ({ ...prev, [key]: record }));
+    try {
+      await set(ref(database, `households/${householdId}/suggestion-dismissals/${key}`), record);
+    } catch (err) {
+      logger.warn('App', 'density dismissal write failed', { error: err.message, key });
+    }
+  };
+
+  const enterPinEditMode = (aisleId, dormantHighlightSet = null) => {
+    if (typeof window !== 'undefined') pinEditReturnScrollY.current = window.scrollY;
+    setPinEditTriggerAisleId(aisleId);
+    setPinEditDormantHighlightSet(dormantHighlightSet);
+    setPinEditMode(true);
+  };
+
+  const finalizePinEdit = (visibleSnap, dormantSet, scrollY) => {
+    if (dormantSet && dormantSet.size > 0) {
+      dormantSet.forEach((combined) => {
+        const sep = combined.indexOf('::');
+        if (sep < 0) return;
+        const categoryId = combined.slice(0, sep);
+        const suggestionId = combined.slice(sep + 2);
+        const row = (visibleSnap[categoryId] || []).find(s => s.id === suggestionId);
+        if (!row) return;
+        void dismissSuggestion(`${categoryId}::${String(row.name).toLowerCase()}::demote`, 'keep');
+      });
+      setDormantShortcutsCache(prev =>
+        prev.filter(d => !dormantSet.has(`${d.categoryId}::${d.suggestionId}`)),
+      );
+    }
+    setPinEditMode(false);
+    setPinEditTriggerAisleId(null);
+    setPinEditDormantHighlightSet(null);
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: scrollY, left: 0, behavior: 'instant' });
+      });
+    }
+  };
+
+  const exitPinEditMode = () => {
+    finalizePinEdit(visibleItemsV2, pinEditDormantHighlightSet, pinEditReturnScrollY.current);
+  };
+
+  const handlePinEditToggle = async (row) => {
+    if (row.type === 'quick') {
+      const qi = row.data;
+      await removeSuggestionEverywhere(qi.id, qi.catId);
+      return;
+    }
+    const li = row.data;
+    const match = findShortcutForListItem(li);
+    if (match) {
+      await removeSuggestionEverywhere(match.suggestionId, match.categoryId);
+    } else {
+      await promoteListItemToVisibleShortcut(li);
+    }
+  };
+
+  useLayoutEffect(() => {
+    if (!pinEditMode || !pinEditTriggerAisleId) return;
+    const id = `pin-edit-aisle-${pinEditTriggerAisleId}`;
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'instant' });
+    });
+  }, [pinEditMode, pinEditTriggerAisleId]);
+
+  useEffect(() => {
+    if (quickAddMode || !pinEditMode) return;
+    finalizePinEdit(visibleItemsV2, pinEditDormantHighlightSet, pinEditReturnScrollY.current);
+  }, [quickAddMode, pinEditMode]);
+
   const handlePromotionAccept = async (candidate) => {
-    setActivePromotionPrompt(null);
-    if (promotionTimerRef.current) clearTimeout(promotionTimerRef.current);
     const catId = candidate.categoryId || categoryIdByName[(candidate.category || '').toLowerCase()];
     if (!catId || !taxonomyBase) return;
     const trimmed = (candidate.name || '').trim();
@@ -2857,39 +3152,9 @@ export default function App() {
   };
 
   const handlePromotionDismiss = (candidate) => {
-    setActivePromotionPrompt(null);
-    if (promotionTimerRef.current) clearTimeout(promotionTimerRef.current);
     const key = `${candidate.categoryId || candidate.category}::${(candidate.name || '').toLowerCase()}::promote`;
     dismissSuggestion(key, 'not-interested');
     setPromotionCandidatesCache(prev => prev.filter(c => c.name !== candidate.name || c.category !== candidate.category));
-  };
-
-  const handleDormantDemote = async (item) => {
-    await removeSuggestionEverywhere(item.suggestionId, item.categoryId);
-    setDormantShortcutsCache(prev => prev.filter(d => !(d.suggestionId === item.suggestionId && d.categoryId === item.categoryId)));
-  };
-
-  const handleDormantKeep = (item) => {
-    const key = `${item.categoryId}::${(item.name || '').toLowerCase()}::demote`;
-    dismissSuggestion(key, 'keep');
-    setDormantShortcutsCache(prev => prev.filter(d => !(d.suggestionId === item.suggestionId && d.categoryId === item.categoryId)));
-  };
-
-  // After a typed add, check if the item is a promotion candidate
-  const checkPromotionAfterAdd = (name, category) => {
-    if (promotionTimerRef.current) clearTimeout(promotionTimerRef.current);
-    const lower = (name || '').toLowerCase();
-    const candidate = promotionCandidatesCache.find(c =>
-      (c.name || '').toLowerCase() === lower
-    );
-    if (!candidate) return;
-    setActivePromotionPrompt(candidate);
-    promotionTimerRef.current = setTimeout(() => {
-      setActivePromotionPrompt(prev => {
-        if (prev && (prev.name || '').toLowerCase() === lower) return null;
-        return prev;
-      });
-    }, 8000);
   };
 
   useEffect(() => {
@@ -3269,7 +3534,10 @@ export default function App() {
       <div className={`min-h-screen scroll-fade-bg ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: isScrolling ? '#FFFFFF' : '#F7F7F7' }}>
         {/* Header — mobile: hamburger left, brand center, sync pill right (hides on scroll-down).
             Desktop (lg+): brand left, Shop/Add + Clear inline (when on list), nav links, sync pill. Always visible. */}
-        <div className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 lg:translate-y-0 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
+        <div
+          className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 lg:translate-y-0 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}
+          style={{ paddingTop: 'env(safe-area-inset-top)' }}
+        >
           <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3">
             <div className="flex items-center gap-2 lg:gap-3">
               <button
@@ -3289,24 +3557,38 @@ export default function App() {
               </button>
 
               {currentPage === 'list' && (
-                <div className="hidden lg:flex bg-gray-100 rounded-xl p-1 gap-1 ml-4">
-                  <button
-                    onClick={() => setQuickAddMode(false)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
-                    style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
-                  >
-                    <ShoppingCart size={16} strokeWidth={2.5} />
-                    Shop
-                  </button>
-                  <button
-                    onClick={() => setQuickAddMode(true)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
-                    style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
-                  >
-                    <ClipboardList size={16} strokeWidth={2.5} />
-                    Add
-                  </button>
-                </div>
+                pinEditMode ? (
+                  <div className="hidden lg:flex bg-gray-100 rounded-xl p-1 ml-4 min-w-[220px] items-center justify-between gap-2">
+                    <span className="flex-1 text-center font-bold text-sm text-gray-800 py-2">Edit pins</span>
+                    <button
+                      type="button"
+                      onClick={exitPinEditMode}
+                      className="shrink-0 px-4 py-2 rounded-lg font-bold text-sm text-white"
+                      style={{ backgroundColor: '#FF7A7A' }}
+                    >
+                      Done
+                    </button>
+                  </div>
+                ) : (
+                  <div className="hidden lg:flex bg-gray-100 rounded-xl p-1 gap-1 ml-4">
+                    <button
+                      onClick={() => setQuickAddMode(false)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
+                      style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
+                    >
+                      <ShoppingCart size={16} strokeWidth={2.5} />
+                      Shop
+                    </button>
+                    <button
+                      onClick={() => setQuickAddMode(true)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
+                      style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
+                    >
+                      <ClipboardList size={16} strokeWidth={2.5} />
+                      Add
+                    </button>
+                  </div>
+                )
               )}
 
               {currentPage === 'list' && doneCount > 0 && (
@@ -3327,28 +3609,24 @@ export default function App() {
                 <button onClick={() => setCurrentPage('account')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'account' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'account' ? { color: '#FF7A7A' } : {}}>Account</button>
               </div>
 
-              <div className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
-                !isOnline || !isConnected
-                  ? 'bg-red-100'
-                  : pendingOps > 0
-                    ? 'bg-blue-100'
-                    : 'bg-green-100'
-              }`} aria-label={!isOnline || !isConnected ? 'Offline' : pendingOps > 0 ? 'Syncing' : 'Online'}>
-                {!isOnline || !isConnected ? (
-                  <>
-                    <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                    <span className="text-xs font-medium text-red-600">Offline</span>
-                  </>
-                ) : pendingOps > 0 ? (
-                  <>
-                    <Loader2 size={14} className="text-blue-600 animate-spin" />
-                    <span className="text-xs font-medium text-blue-600">Syncing</span>
-                  </>
-                ) : (
-                  <>
-                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                    <span className="text-xs font-medium text-green-600">Online</span>
-                  </>
+              {/* Reserve mobile width so the centered title does not shift when the pill mounts. */}
+              <div className="flex shrink-0 items-center justify-end min-w-[6.5rem] lg:min-w-0">
+                {(!isOnline || !isConnected || pendingOps > 0) && (
+                  <div className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
+                    !isOnline || !isConnected ? 'bg-red-100' : 'bg-blue-100'
+                  }`} aria-label={!isOnline || !isConnected ? 'Offline' : 'Syncing'}>
+                    {!isOnline || !isConnected ? (
+                      <>
+                        <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                        <span className="text-xs font-medium text-red-600">Offline</span>
+                      </>
+                    ) : (
+                      <>
+                        <Loader2 size={14} className="text-blue-600 animate-spin" />
+                        <span className="text-xs font-medium text-blue-600">Syncing</span>
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -3366,12 +3644,18 @@ export default function App() {
         </div>
 
         {(!isOnline || !isConnected) && (
-          <div className="bg-red-600 text-white px-4 py-2 text-center text-sm font-medium">
-            ⚠️ You're offline. {lastSyncTime ? `Last synced ${formatRelativeTime(lastSyncTime)}.` : ''} Changes will sync when connection is restored.
+          <div className="bg-red-600 text-white px-4 py-2 text-sm font-medium flex items-center justify-center gap-2">
+            <AlertTriangle size={16} className="shrink-0 text-white" aria-hidden />
+            <span>
+              You&apos;re offline. {lastSyncTime ? `Last synced ${formatRelativeTime(lastSyncTime)}.` : ''} Changes will sync when connection is restored.
+            </span>
           </div>
         )}
 
-        <div className={`pt-20 lg:pb-6 ${currentPage === 'list' ? 'pb-32' : 'pb-6'}`}>
+        <div
+          className={`lg:pb-6 ${currentPage === 'list' ? 'pb-32' : 'pb-6'}`}
+          style={{ paddingTop: 'calc(5rem + env(safe-area-inset-top))' }}
+        >
           {currentPage === 'privacy' ? (
             <PrivacyPolicyPage onBack={() => setCurrentPage('account')} />
           ) : currentPage === 'terms' ? (
@@ -3419,9 +3703,26 @@ export default function App() {
               </div>
             </div>
           ) : currentPage === 'list' ? (
-            <div className="max-w-2xl lg:max-w-6xl mx-auto px-4">
+            <div className="max-w-2xl mx-auto px-4">
               {/* Toolbar lives in the desktop header (>=lg) and in the mobile bottom nav bar (<lg).
                   See the fixed bottom-bar block at the bottom of this return for the mobile placement. */}
+              {!quickAddMode && list.length === 0 ? (
+                <div className="mt-12 mx-auto max-w-sm rounded-2xl border border-gray-200 bg-white p-8 text-center">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-4 bg-gray-50">
+                    <ShoppingCart size={24} className="text-gray-400" />
+                  </div>
+                  <p className="text-gray-700 font-semibold mb-1">Your list is empty</p>
+                  <p className="text-sm text-gray-500 mb-5">Tap Add to start building your list.</p>
+                  <button
+                    type="button"
+                    onClick={() => setQuickAddMode(true)}
+                    className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold"
+                    style={{ backgroundColor: '#FF7A7A' }}
+                  >
+                    Add items
+                  </button>
+                </div>
+              ) : (
               <div className="space-y-3">
                 {organized.map(g => {
                   const search = categorySearches[g.aisleId] || '';
@@ -3429,36 +3730,82 @@ export default function App() {
                   const isExpanded = expandedCategories[g.aisleId];
 
                   return (
-                    <div key={g.aisleId} className={`space-y-2 bg-white border border-gray-200 rounded-2xl overflow-hidden scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                    <div
+                      key={g.aisleId}
+                      id={`pin-edit-aisle-${g.aisleId}`}
+                      className={`space-y-2 bg-white border border-gray-200 rounded-2xl scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}
+                    >
                       <button
+                        type="button"
                         onClick={() => toggleCategory(g.aisleId)}
                         className={`w-full py-4 px-4 flex items-center gap-3 transition-colors ${
-                          quickAddMode
-                            ? "bg-gray-100 hover:bg-gray-200"
-                            : "hover:bg-gray-50"
-                        }`}
+                          isExpanded ? 'rounded-t-2xl' : 'rounded-2xl'
+                        } hover:bg-gray-50`}
+                        style={{ opacity: isScrolling ? 0.12 : 1, transition: 'opacity 0.1s ease-out' }}
                       >
                         {isExpanded ? (
-                          <ChevronDown size={20} className={`scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${quickAddMode ? "text-gray-600" : "text-gray-400"}`} />
+                          <ChevronDown size={20} className="text-gray-400" />
                         ) : (
-                          <ChevronRight size={20} className={`scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${quickAddMode ? "text-gray-600" : "text-gray-400"}`} />
+                          <ChevronRight size={20} className="text-gray-400" />
                         )}
-                        <h3 className={`flex-1 text-left uppercase tracking-wide ${
-                          quickAddMode
-                            ? "font-bold text-gray-700 text-base"
-                            : "font-semibold text-gray-500 text-sm"
-                        }`}>{g.aisleNameDisplay}</h3>
+                        <h3 className="flex-1 text-left uppercase tracking-wide font-bold text-gray-700 text-base">{g.aisleNameDisplay}</h3>
                       </button>
 
                       {isExpanded && (
                         <>
-                          {quickAddMode && (
-                            <div className={`px-4 pb-3 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
+                          {quickAddMode && !pinEditMode && (() => {
+                            const pinCount = Array.from(g.categoryIdSet || []).reduce(
+                              (n, cid) => n + (visibleItemsV2[cid] || []).length,
+                              0,
+                            );
+                            const densityDismiss = suggestionDismissals[`density::${g.aisleId}`];
+                            const showDensityNudge = pinCount > 12
+                              && (!densityDismiss || densityDismiss.action !== 'density-dismissed'
+                                || pinCount >= (Number(densityDismiss.dismissCount) + 4));
+                            if (!showDensityNudge) return null;
+                            return (
+                              <div className="mx-4 mb-2 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5">
+                                <p className="text-xs text-gray-700">
+                                  Lots of pinned items here — trim for faster scanning?
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-3">
+                                  <button
+                                    type="button"
+                                    className="text-xs font-bold"
+                                    style={{ color: '#FF7A7A' }}
+                                    onClick={() => enterPinEditMode(g.aisleId, null)}
+                                  >
+                                    Trim
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-xs font-bold text-gray-600"
+                                    onClick={() => void recordDensityDismissal(g.aisleId, pinCount)}
+                                  >
+                                    Dismiss
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {quickAddMode && !pinEditMode && (
+                            <div className={`relative z-20 px-4 pb-3 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}>
                               <div className="relative">
                                 <Search className="absolute left-3 top-3 text-gray-400" size={18} />
-                                <input type="text" value={search} onChange={(e) => setCategorySearches(prev => ({ ...prev, [g.aisleId]: e.target.value }))} placeholder={`Add to ${g.aisleNameDisplay}...`} className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors" />
+                                <input
+                                  ref={(el) => { aisleAddSearchInputRefs.current[g.aisleId] = el; }}
+                                  type="text"
+                                  value={search}
+                                  onChange={(e) => setCategorySearches(prev => ({ ...prev, [g.aisleId]: e.target.value }))}
+                                  placeholder={`Add to ${g.aisleNameDisplay}...`}
+                                  className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors"
+                                />
                                 {search.trim() && (
-                                  <div className="absolute w-full bg-white border-2 border-gray-200 rounded-xl mt-2 shadow-lg z-10 max-h-60 overflow-y-auto">
+                                  <div
+                                    className={`absolute left-0 right-0 w-full bg-white border-2 border-gray-200 rounded-xl shadow-lg z-30 max-h-60 overflow-y-auto ${
+                                      aisleAutocompleteFlipUp[g.aisleId] ? 'bottom-full mb-2' : 'top-full mt-2'
+                                    }`}
+                                  >
                                     {quickAddDropdown.map((s, i) => {
                                       const showLibraryRemove = Boolean(
                                         s.catId && s.suggestionId && s.fromVisible === false
@@ -3499,187 +3846,223 @@ export default function App() {
                               </div>
                             </div>
                           )}
+                          <div className="overflow-hidden rounded-b-2xl">
                           {g.items.length > 0 ? (
-                            <div className="pb-3 md:columns-2 lg:columns-3 md:gap-0">
+                            <div className="pb-3">
                               {g.items.map((item, idx) => {
+                                if (pinEditMode && quickAddMode) {
+                                  if (item.type === 'list') {
+                                    const li = item.data;
+                                    const match = findShortcutForListItem(li);
+                                    const isPinned = Boolean(match);
+                                    const hlKey = match ? `${match.categoryId}::${match.suggestionId}` : null;
+                                    const showDormantRing = Boolean(hlKey && pinEditDormantHighlightSet?.has(hlKey));
+                                    return (
+                                      <div
+                                        key={li.id}
+                                        className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 scroll-fade-border ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'opacity-60' : ''}`}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() => void handlePinEditToggle(item)}
+                                          className={`flex-shrink-0 p-2 -m-1 rounded-full transition-colors hover:bg-gray-100 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${showDormantRing ? 'ring-2 ring-amber-300 ring-offset-1' : ''}`}
+                                          aria-label={isPinned ? `Unpin ${li.name}` : `Pin ${li.name}`}
+                                        >
+                                          <Pin
+                                            size={20}
+                                            strokeWidth={2}
+                                            className={isPinned ? 'text-[#FF7A7A]' : 'text-gray-400'}
+                                            fill={isPinned ? 'currentColor' : 'none'}
+                                          />
+                                        </button>
+                                        <span className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                                          {li.name}
+                                        </span>
+                                      </div>
+                                    );
+                                  }
+                                  const qi = item.data;
+                                  const hlKey = `${qi.catId}::${qi.id}`;
+                                  const showDormantRing = Boolean(pinEditDormantHighlightSet?.has(hlKey));
+                                  return (
+                                    <div
+                                      key={`qa-${idx}`}
+                                      className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border hover:bg-gray-50 ${isScrolling ? 'is-scrolling' : ''}`}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => void handlePinEditToggle(item)}
+                                        className={`flex-shrink-0 p-2 -m-1 rounded-full transition-colors hover:bg-gray-100 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${showDormantRing ? 'ring-2 ring-amber-300 ring-offset-1' : ''}`}
+                                        aria-label={`Unpin ${qi.name}`}
+                                      >
+                                        <Pin
+                                          size={20}
+                                          strokeWidth={2}
+                                          className="text-[#FF7A7A]"
+                                          fill="currentColor"
+                                        />
+                                      </button>
+                                      <span className="flex-1 text-left font-semibold text-sm" style={{ color: '#FF7A7A' }}>
+                                        {qi.name}
+                                      </span>
+                                    </div>
+                                  );
+                                }
                                 if (item.type === 'list') {
                                   const li = item.data;
+                                  // Row tap opens the same sheet as the caret; check/remove stay on the left control only.
+                                  const handleRowOpenDetails = () => { void openItemSheet(li); };
                                   return (
-                                    <div key={li.id} className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 break-inside-avoid scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
+                                    <div
+                                      key={li.id}
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={handleRowOpenDetails}
+                                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowOpenDetails(); } }}
+                                      className={`flex items-center gap-3 py-3 px-4 border-t border-gray-100 scroll-fade-border cursor-pointer ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'opacity-60' : ''}`}
+                                    >
                                       {quickAddMode ? (
-                                        li.done ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleDone(li.id)}
-                                            className={`flex-shrink-0 w-6 h-6 rounded-md border-2 border-transparent flex items-center justify-center transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
-                                            style={{ backgroundColor: '#6B7280' }}
-                                            aria-label={`Mark ${li.name} as not done`}
-                                          >
-                                            <Check size={16} className="text-white" strokeWidth={3} />
-                                          </button>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            onClick={() => removeItem(li.id)}
-                                            className={`flex-shrink-0 w-6 h-6 rounded-md border-2 border-gray-200 bg-white flex items-center justify-center text-gray-400 hover:text-gray-600 hover:border-gray-300 transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
-                                            aria-label={`Remove ${li.name} from list`}
-                                          >
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); removeItem(li.id); }}
+                                          className={`flex-shrink-0 p-2.5 -m-2.5 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                          aria-label={`Remove ${li.name} from list`}
+                                        >
+                                          <span className="block w-6 h-6 rounded-md border-2 border-gray-200 bg-white flex items-center justify-center text-gray-400">
                                             <X size={16} strokeWidth={2.5} />
-                                          </button>
-                                        )
+                                          </span>
+                                        </button>
                                       ) : (
                                         <button
                                           type="button"
-                                          onClick={() => toggleDone(li.id)}
-                                          className={`flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'border-transparent' : 'border-gray-300 bg-white'}`}
-                                          style={{ backgroundColor: li.done ? '#FF7A7A' : undefined }}
+                                          onClick={(e) => { e.stopPropagation(); toggleDone(li.id); }}
+                                          className={`flex-shrink-0 p-2.5 -m-2.5 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                          aria-label={li.done ? `Mark ${li.name} as not done` : `Mark ${li.name} as done`}
                                         >
-                                          {li.done && <Check size={16} className="text-white" strokeWidth={3} />}
+                                          <span
+                                            className={`block w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all ${li.done ? 'border-transparent' : 'border-gray-300 bg-white'}`}
+                                            style={{ backgroundColor: li.done ? '#FF7A7A' : undefined }}
+                                          >
+                                            {li.done && <Check size={16} className="text-white" strokeWidth={3} />}
+                                          </span>
                                         </button>
                                       )}
-                                      <button onClick={() => openItemSheet(li)} className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : ''}`} style={{ color: li.done ? undefined : '#FF7A7A' }}>
+                                      <span
+                                        className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : ''}`}
+                                        style={{ color: li.done ? undefined : '#FF7A7A' }}
+                                      >
                                         {li.name}
                                         {li.quantity && li.quantity.trim() && (
                                           <span className="ml-1 text-gray-400 font-medium">
                                             {li.quantity}
                                           </span>
                                         )}
-                                      </button>
+                                      </span>
                                       <button
                                         type="button"
-                                        onClick={() => openItemSheet(li)}
-                                        className={`p-2 rounded-full transition-colors scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${li.done ? 'text-gray-300 hover:text-gray-400' : 'text-gray-300 hover:text-gray-500'}`}
-                                        aria-label={`Edit quantity for ${li.name}`}
+                                        onClick={(e) => { e.stopPropagation(); openItemSheet(li); }}
+                                        className={`p-2.5 -m-2.5 rounded-full transition-colors text-gray-300 hover:text-gray-500 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                        aria-label={`Open details for ${li.name}`}
                                       >
-                                        <Edit2 size={14} strokeWidth={1.8} />
-                                      </button>
-                                    </div>
-                                  );
-                                } else {
-                                  const qi = item.data;
-                                  return (
-                                    <div key={`qa-${idx}`} className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-gray-50 transition-colors border-t border-gray-100 break-inside-avoid scroll-fade-border ${isScrolling ? 'is-scrolling' : ''}`}>
-                                      <button
-                                        type="button"
-                                        onClick={() => addItem(qi.name, qi.catName || g.aisleName, 'quickAdd', qi.id, qi.catId)}
-                                        className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
-                                        style={{ backgroundColor: '#FF7A7A' }}
-                                        aria-label={`Add ${qi.name} to list`}
-                                      >
-                                        <Plus size={16} className="text-white" strokeWidth={2.5} />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => openSuggestionSheet(qi.catName || g.aisleName, qi)}
-                                        className="flex-1 text-left font-semibold text-sm"
-                                        style={{ color: '#FF7A7A' }}
-                                      >
-                                        {qi.name}
+                                        <ChevronRight size={18} strokeWidth={2} />
                                       </button>
                                     </div>
                                   );
                                 }
+                                const qi = item.data;
+                                const handleTileAdd = () => addItem(qi.name, qi.catName || g.aisleName, 'quickAdd', qi.id, qi.catId);
+                                const handleTileOpenDetails = () => { void openSuggestionSheet(qi.catName || g.aisleName, qi); };
+                                return (
+                                  <div
+                                    key={`qa-${idx}`}
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={handleTileOpenDetails}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTileOpenDetails(); } }}
+                                    className={`w-full flex items-center gap-3 py-3 px-4 transition-colors border-t border-gray-100 scroll-fade-border cursor-pointer hover:bg-gray-50 ${isScrolling ? 'is-scrolling' : ''}`}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); handleTileAdd(); }}
+                                      className={`flex-shrink-0 p-2.5 -m-2.5 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                      aria-label={`Add ${qi.name} to list`}
+                                    >
+                                      <span className="block w-6 h-6 rounded-md flex items-center justify-center" style={{ backgroundColor: '#FF7A7A' }}>
+                                        <Plus size={16} className="text-white" strokeWidth={2.5} />
+                                      </span>
+                                    </button>
+                                    <span className="flex-1 text-left font-semibold text-sm text-gray-800">
+                                      {qi.name}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); openSuggestionSheet(qi.catName || g.aisleName, qi); }}
+                                      className={`p-2.5 -m-2.5 rounded-full transition-colors text-gray-300 hover:text-gray-500 scroll-fade-full ${isScrolling ? 'is-scrolling' : ''}`}
+                                      aria-label={`Open details for ${qi.name}`}
+                                    >
+                                      <ChevronRight size={18} strokeWidth={2} />
+                                    </button>
+                                  </div>
+                                );
                               })}
                             </div>
                           ) : (
                             <div className="px-4 pb-4"><div className="text-center py-6 text-gray-400 text-sm italic">No items</div></div>
                           )}
-                          {/* A1: Inline promotion prompt */}
-                          {quickAddMode && activePromotionPrompt && (() => {
-                            const promptAisle = categoriesV2[activePromotionPrompt.categoryId]?.aisleId;
-                            const inThisAisle = promptAisle === g.aisleId ||
-                              (!promptAisle && g.categoryIdSet.has(activePromotionPrompt.categoryId));
-                            if (!inThisAisle) return null;
-                            return (
-                              <div className="mx-4 mb-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-center gap-3">
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-amber-900">
-                                    <span className="font-bold">{activePromotionPrompt.name}</span> — add as a shortcut?
-                                  </p>
-                                  <p className="text-xs text-amber-700 mt-0.5">
-                                    Bought {activePromotionPrompt.checkedCount}× recently
-                                  </p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handlePromotionAccept(activePromotionPrompt)}
-                                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold text-white"
-                                  style={{ backgroundColor: '#FF7A7A' }}
-                                >
-                                  Yes
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handlePromotionDismiss(activePromotionPrompt)}
-                                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold text-gray-600 bg-white border border-gray-200"
-                                >
-                                  No thanks
-                                </button>
-                              </div>
-                            );
-                          })()}
-                          {/* B1: Dormant shortcuts hint */}
-                          {quickAddMode && (() => {
+                          {/* B1: Dormant pins hint */}
+                          {quickAddMode && !pinEditMode && (() => {
                             const catIds = g.categoryIdSet || new Set();
                             const aisleDormant = dormantShortcutsCache.filter(d => catIds.has(d.categoryId));
                             if (aisleDormant.length === 0) return null;
-                            const [showCleanup, setShowCleanup] = [
-                              expandedCategories[`cleanup-${g.aisleId}`],
-                              (v) => setExpandedCategories(prev => ({ ...prev, [`cleanup-${g.aisleId}`]: v })),
-                            ];
+                            const n = aisleDormant.length;
+                            const dormantKeySet = new Set(
+                              aisleDormant.map(d => `${d.categoryId}::${d.suggestionId}`),
+                            );
                             return (
                               <div className="mx-4 mb-3 rounded-xl bg-gray-50 border border-gray-200 px-4 py-3">
-                                <p className="text-xs text-gray-500">
-                                  {aisleDormant.length === 1
-                                    ? <><span className="font-semibold text-gray-600">{aisleDormant[0].name}</span> hasn't been used in a while and may be cluttering your shortcuts.</>
-                                    : <><span className="font-semibold text-gray-600">{aisleDormant.length} shortcuts</span> in this aisle haven't been used in a while.</>}
-                                  {' '}
+                                <p className="text-xs text-gray-600">
+                                  <span className="font-semibold text-gray-700">{n} pin{n === 1 ? '' : 's'}</span>
+                                  {' '}you haven&apos;t used in 6+ weeks — review?
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-3">
                                   <button
                                     type="button"
-                                    onClick={() => setShowCleanup(!showCleanup)}
-                                    className="text-xs font-semibold underline underline-offset-2"
+                                    className="text-xs font-bold"
                                     style={{ color: '#FF7A7A' }}
+                                    onClick={() => enterPinEditMode(g.aisleId, dormantKeySet)}
                                   >
-                                    {showCleanup ? 'Hide' : 'Manage cleanup'}
+                                    Review
                                   </button>
-                                </p>
-                                {showCleanup && (
-                                  <div className="mt-3 space-y-1.5">
-                                    {aisleDormant.map(d => (
-                                      <div key={`${d.categoryId}-${d.suggestionId}`} className="flex items-center gap-2 rounded-lg bg-white border border-gray-200 px-3 py-2">
-                                        <div className="flex-1 min-w-0">
-                                          <span className="text-sm font-medium text-gray-700">{d.name}</span>
-                                          <span className="text-xs text-gray-400 ml-1.5">
-                                            {d.daysSinceLastUse == null ? 'never used' : `${d.daysSinceLastUse}d ago`}
-                                          </span>
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDormantDemote(d)}
-                                          className="flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100"
-                                        >
-                                          Remove
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDormantKeep(d)}
-                                          className="flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-bold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
-                                        >
-                                          Keep
-                                        </button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                                  <button
+                                    type="button"
+                                    className="text-xs font-bold text-gray-600"
+                                    onClick={() => {
+                                      const skip = new Set(
+                                        aisleDormant.map(d => `${d.categoryId}::${d.suggestionId}`),
+                                      );
+                                      aisleDormant.forEach((d) => {
+                                        const key = `${d.categoryId}::${(d.name || '').toLowerCase()}::demote`;
+                                        dismissSuggestion(key, 'not-now');
+                                      });
+                                      setDormantShortcutsCache(prev =>
+                                        prev.filter(d => !skip.has(`${d.categoryId}::${d.suggestionId}`)),
+                                      );
+                                    }}
+                                  >
+                                    Not now
+                                  </button>
+                                </div>
                               </div>
                             );
                           })()}
+                          </div>
                         </>
                       )}
                     </div>
                   );
                 })}
               </div>
+              )}
             </div>
           ) : currentPage === 'history' ? (
             <PurchaseHistory
@@ -3710,7 +4093,7 @@ export default function App() {
 
         {/* Mobile bottom nav bar — Shop/Add primary toggle + contextual Clear chip.
             Only on the list page (Shop/Add modes don't apply elsewhere). Hidden at lg+ where the desktop header carries these controls. */}
-        {currentPage === 'list' && (
+        {currentPage === 'list' && !keyboardInputFocused && (
           <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 px-3 pt-3 pb-safe pointer-events-none">
             {doneCount > 0 && (
               <div className="flex justify-center mb-2 pointer-events-auto relative">
@@ -3735,25 +4118,41 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-1.5 flex gap-1 pointer-events-auto">
-              <button
-                onClick={() => setQuickAddMode(false)}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600'}`}
-                style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
-                aria-pressed={!quickAddMode}
-              >
-                <ShoppingCart size={18} strokeWidth={2.5} />
-                Shop
-              </button>
-              <button
-                onClick={() => setQuickAddMode(true)}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
-                style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
-                aria-pressed={quickAddMode}
-              >
-                <ClipboardList size={18} strokeWidth={2.5} />
-                Add
-              </button>
+            <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-1.5 flex gap-1 pointer-events-auto items-center">
+              {pinEditMode ? (
+                <>
+                  <div className="flex-1 text-center font-bold text-sm text-gray-800 py-3">Edit pins</div>
+                  <button
+                    type="button"
+                    onClick={exitPinEditMode}
+                    className="shrink-0 px-5 py-3 rounded-xl font-bold text-sm text-white"
+                    style={{ backgroundColor: '#FF7A7A' }}
+                  >
+                    Done
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setQuickAddMode(false)}
+                    className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                    style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
+                    aria-pressed={!quickAddMode}
+                  >
+                    <ShoppingCart size={18} strokeWidth={2.5} />
+                    Shop
+                  </button>
+                  <button
+                    onClick={() => setQuickAddMode(true)}
+                    className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                    style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
+                    aria-pressed={quickAddMode}
+                  >
+                    <ClipboardList size={18} strokeWidth={2.5} />
+                    Add
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -3763,6 +4162,7 @@ export default function App() {
           householdId={householdId}
           liveBucketMonthKey={itemEventsListenerMonth}
           liveBucketVal={liveItemEventsMonthVal}
+          members={members}
           onClose={() => setShowHouseholdInsights(false)}
         />
       )}
@@ -3807,25 +4207,18 @@ export default function App() {
       {showDebugPanel && (
         <DebugPanel onClose={() => setShowDebugPanel(false)} />
       )}
-      {/* Floating debug button (admins only). Sits above the mobile bottom bar (currentPage='list') so it doesn't overlap. */}
-      {isAdmin && (
-        <button
-          onClick={() => setShowDebugPanel(true)}
-          className={`fixed left-4 lg:bottom-4 ${currentPage === 'list' ? 'bottom-28' : 'bottom-4'} p-3 bg-gray-800 text-white rounded-full shadow-lg hover:bg-gray-700 transition-colors z-40`}
-          title="Open Debug Panel (Ctrl+Shift+D)"
-        >
-          <Bug size={20} />
-        </button>
-      )}
       {needsReauth && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full text-center">
-            <div className="text-4xl mb-3">🔒</div>
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-3 bg-gray-50">
+              <Lock size={24} className="text-gray-500" />
+            </div>
             <h2 className="text-lg font-bold text-gray-900 mb-2">Session Expired</h2>
             <p className="text-sm text-gray-600 mb-5">Your session has ended. Please sign in again to continue.</p>
             <button
               onClick={() => setShowLoginExplicitly(true)}
-              className="w-full py-3 px-4 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors"
+              className="w-full py-3 px-4 text-white font-semibold rounded-xl transition-colors hover:opacity-90"
+              style={{ backgroundColor: '#FF7A7A' }}
             >
               Sign In
             </button>

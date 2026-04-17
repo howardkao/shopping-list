@@ -242,8 +242,12 @@ All state lives in React hooks within the main `App` component. No external stat
 
 ### Add Mode Interaction
 
-- Suggestion rows use a split interaction model: the `+` button adds immediately, while tapping the row body opens the bottom sheet.
-- The bottom sheet for suggestions exposes an explicit add action so users can review the item before adding it.
+- **Unified row model** (Shop + Add): **row tap = mode’s primary action**; **right chevron** opens `ItemBottomSheet`; **left control** (`+`, `X`, checkbox) remains a redundant tap target.
+  - Add **quick-add tile:** row tap adds; `+` adds; chevron opens sheet.
+  - Add **list row:** row tap removes; `X` removes; chevron opens sheet.
+  - Shop **list row:** row tap toggles done; checkbox toggles done; chevron opens sheet.
+- High-frequency buttons use expanded invisible hit zones (`p-2.5 -m-2.5` pattern) toward a ≥44×44 tap target without oversized glyphs.
+- Per-aisle autocomplete dropdown **flips above** the input when space below the field is under ~200px on open (`visualViewport` / `window.innerHeight`), decided once per open.
 
 ### Navigation chrome (responsive)
 
@@ -254,14 +258,15 @@ All state lives in React hooks within the main `App` component. No external stat
 - The Clear control is **contextual** on mobile: a chip rendered conditionally on `doneCount > 0`, with a CSS entry animation (`animate-chip-in`, defined in `src/index.css`). The `key` prop on the chip uses the boolean `hasDone` so React re-mounts (and re-runs the entry animation) on each transition from no-done to has-done.
 - The first-run tooltip is gated by a localStorage flag (`tend.clearChipTooltipSeen.v1`); a `useEffect` keyed on the boolean `hasDone` boundary fires the show/hide logic exactly once per device per fresh-install.
 
-### Item Bottom Sheet: Advanced Suggestion Config
+### Item Bottom Sheet
 
-- `ItemBottomSheet` accepts `aisles` and `categories` props plus a per-open `suggestionConfig` attached to the item (only present when opened via `openSuggestionSheet`).
-- `suggestionConfig` carries `{ categoryId, aisleId, onMove(toCatId), onRemove() }`. Both handlers close the sheet on success.
-- `moveSuggestionToCategory(suggestionId, fromCatId, toCatId)` in `App.jsx` performs a single multi-path RTDB `update()` across `taxonomy/visible-items/{fromCatId}` / `{toCatId}` and `taxonomy/library/{fromCatId}` / `{toCatId}`. The item preserves its visible-vs-library bucket on move. If an item with the same (case-insensitive) name already exists at the destination, the source entry is deleted and no new entry is created at the destination.
-- `removeSuggestionEverywhere(suggestionId, catId)` deletes the item from both `visible-items` and `library` under its current category in a single `update()`.
-- The advanced panel holds draft aisle/category state locally; it does not touch RTDB until Save. Cancel and backdrop tap discard silently.
-- The sheet no longer renders a trailing Save button for name/quantity; those fields commit on blur and on close via existing handlers (`updateItemName`, `updateQuantity`, `renameTaxonomySuggestionById`, `updateSuggestionQuantity`).
+- `ItemBottomSheet` in `App.jsx` accepts `aisles`, `categories`, optional `suggestionConfig`, and list-row items with enough context to resolve taxonomy + pin state.
+- **Breadcrumb + inline pickers:** tapping `AISLE › Category` expands inline aisle/category controls; moves use `moveSuggestionToCategory` / equivalent list-item paths. Draft picker state does not write RTDB until the user commits from the picker flow (same semantics as the retired umbrella "settings" panel).
+- **Pin / Unpin:** visible-item → library uses demotion (`removeSuggestionEverywhere` or unpin path); library → visible uses the shared promote helper (`handlePromotionAccept` / `promoteListItemToVisibleShortcut`). Labels in UI: **Pin** / **Unpin** (user-facing vocabulary).
+- `suggestionConfig` (when present) still carries `{ categoryId, aisleId, onMove(toCatId), onRemove() }` for compatibility with suggestion opens.
+- **Dismiss:** backdrop tap and **X** (mobile + desktop); **swipe-down on the handle only** uses `transform: translateY` with threshold snap/close. Bottom padding respects safe-area (`pb-safe` / max env inset).
+- Name/quantity commit on blur and on close — no separate Save for those fields.
+- Firebase Auth errors shown in the login and delete-account flows are passed through **`humanizeAuthError`** in **`src/authErrors.js`** (raw errors still logged).
 
 ### Item Identity
 
@@ -448,7 +453,7 @@ The logger automatically captures (no explicit calls needed):
 
 | Tool | File | Access |
 |---|---|---|
-| Debug Panel | `src/DebugPanel.jsx` | Bug icon, Ctrl+Shift+D, `?debug=true` |
+| Debug Panel | `src/DebugPanel.jsx` | Ctrl+Shift+D, `?debug=true` (no floating launcher) |
 | Log Viewer | `src/AdminLogViewer.jsx` | Admin Panel → "My Logs (Real-time)" |
 | Log Analytics | `src/LogAnalytics.jsx` | Admin Panel → "Log Analytics (All Users)" |
 
@@ -569,13 +574,13 @@ Logged inline from `addItem`, `toggleDone`, and `removeItem` in `App.jsx` via a 
 
 ### Aggregation
 
-`src/purchaseSemantics.js` defines a **two-hour undo window**: per list identity, an `unchecked` within two hours of the latest unmatched `checked` voids that check (LIFO). Surviving checks are **effective purchases** — used for purchase history, last-purchased UI, and shortcut promote/demote analytics.
+`src/purchaseSemantics.js` defines a **two-hour undo window**: per list identity, an `unchecked` within two hours of the latest unmatched `checked` voids that check (LIFO). Surviving checks are **effective purchases** — used for purchase history, last-purchased UI, and pin/promotion analytics.
 
-Pure functions in `src/itemAnalytics.js`: `buildItemStats`, `topPurchased`, `dormantQuickAddCandidates`, `promotionCandidates`, `userContributions`, `eventSummary`. They consume the raw stream but treat `checked` counts and `lastCheckedTs` as **effective** only (via `computeEffectiveCheckEvents`). All operate on the in-memory event array — no server-side aggregation. At ~10–20 events/day per household this is trivial well past 1 year of history.
+Pure functions in `src/itemAnalytics.js`: `buildItemStats`, `topPurchased`, `dormantShortcuts`, `promotionCandidates`, `userContributions`, `eventSummary` (and legacy `dormantQuickAddCandidates`). They consume the raw stream but treat `checked` counts and `lastCheckedTs` as **effective** only (via `computeEffectiveCheckEvents`). All operate on the in-memory event array — no server-side aggregation. At ~10–20 events/day per household this is trivial well past 1 year of history.
 
 ### Surfacing
 
-Currently exposed via the AdminPanel → "View Household Insights" modal (admin-only). End-user UX surfacing (promote prompts, demote prompts, "due now" strips) is deferred — Tier 0/1 ships as the data foundation; UX comes after we see what real data looks like.
+**Account → Household Insights** (`InsightsModal` in `App.jsx`): read-only summaries for any household member (consumer-facing copy). Add mode also uses `promotionCandidates` / `dormantShortcuts` for inline promote and cleanup cards.
 
 ### Retention
 

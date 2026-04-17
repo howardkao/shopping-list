@@ -68,7 +68,7 @@ export function PrivacyPolicyPage({ onBack }) {
         </li>
         <li>
           <strong>Household and list data.</strong> Shopping list items, purchase-related events,
-          item suggestions and taxonomy (aisles, categories, shortcuts, library), invite codes,
+          item suggestions and taxonomy (aisles, categories, pinned quick-add items, library), invite codes,
           optional notes, and similar content you or your household save in the Service are stored
           in{' '}
           <a

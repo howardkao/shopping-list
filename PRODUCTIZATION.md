@@ -138,11 +138,31 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ## Session Log
 
+### 2026-04-17 — Design review 9.2 (Household Insights copy)
+- **`src/App.jsx` (`InsightsModal`):** Removed tier / internal analytics jargon; plain-English section titles and blurbs; member rows use `members` display names (email fallback, then “Unknown member”) instead of truncated UIDs; friendlier error and empty states.
+
+### 2026-04-17 — Design review 4.3 (Add autocomplete flip)
+- **`src/App.jsx`:** Per-aisle Add autocomplete measures space below the input on **open** (`visualViewport.height` fallback `innerHeight`); if space below is under 200px, dropdown uses `bottom-full mb-2` instead of `top-full mt-2`. Flip cleared when the dropdown closes for that aisle.
+
+### 2026-04-17 — Design review 6.1 + 6.3 (Onboarding / SuggestionsEditor)
+- **`src/SuggestionsEditor.jsx`:** Removed onboarding "Step 2 of 2" label (6.1). Removed wizard **Reset to defaults** control and `onReset` / `resetEnabled` props (6.3); wizard footer is **Done** only, right-aligned. No `App.jsx` taxonomy reset handler existed to remove.
+- **`PRD.md`:** §6a flow updated to match shipped onboarding (Done; no reset).
+
 ### 2026-04-17 — Firebase App Check (client)
 - **`src/firebase.js`:** `initializeAppCheck` + `ReCaptchaV3Provider` immediately after `initializeApp`, before Auth/RTDB; production runtime throws if `VITE_RECAPTCHA_SITE_KEY` is missing; dev sets `self.FIREBASE_APPCHECK_DEBUG_TOKEN` (`true` or `VITE_APPCHECK_DEBUG_TOKEN`); skip init in dev when key absent (one `console.info`).
 - **`.env.example`:** `VITE_RECAPTCHA_SITE_KEY`, optional `VITE_APPCHECK_DEBUG_TOKEN` (dev).
 - **`TDD.md`:** App Check subsection + env list.
 - **Ops:** reCAPTCHA v3 key → Firebase App Check → register app → ship → monitor → enforce RTDB (see plan “When to turn on strict checking”).
+
+### 2026-04-17 — Unified design-review PR: Pass 11, pin copy, documentation sync
+- **Commit:** `88b9e7b` on branch `design-review-pass`.
+- **`src/App.jsx`:** Offline banner uses Lucide **`AlertTriangle`** instead of the ⚠️ emoji (10.1). Removed the floating admin **Bug** FAB and `bottom-28` positioning; debug panel remains via **`Ctrl+Shift+D`** and **`?debug=true`** (10.3). B1 dormancy card copy uses **pin(s)**; delete-account warning uses **pinned items**.
+- **Deleted:** `palette-mockup.html` (disposable 2.2 comparison artifact after sign-off).
+- **`src/SuggestionsEditor.jsx`:** Settings page heading **Pinned items**; empty/merge helper copy uses pinned terminology.
+- **`src/LegalPages.jsx`:** Privacy policy data-inventory bullet uses **pinned quick-add items** alongside library.
+- **`DESIGN_REVIEW.md`:** Shipped items (2.2–3.5, 4.2, 5.1–5.4, 6.1, 6.3, 7.1–7.2, 8.1–8.2, 8.4, 10.1, 10.3) marked **`implemented`** with pointers here; 7.1 notes invite field has no reveal toggle (plaintext code).
+- **`PRD.md` / `TDD.md`:** Item bottom sheet, Shop/Add row interactions, single-column layout, sync hide-when-healthy, safe-area + debug access, `humanizeAuthError` in **`src/authErrors.js`**.
+- **`CLAUDE.md`:** Debug access line matches no floating bug button.
 
 ### 2026-04-17 — PRODUCTIZATION: taxonomy checkbox reconciled
 - Marked **Taxonomy redesign** should-have item as complete; refreshed sub-bullets to match shipped v2 paths, current seed counts, and bootstrap/migration story.
@@ -161,7 +181,7 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **Destructive / power affordances removed:** "Reset to defaults" dropped from onboarding *and* Settings (6.3). Floating debug button removed in all envs (10.3) — keyboard shortcut + `?debug=true` remain.
 - **Touch + keyboard hygiene:** checkboxes / pencils / + / X buttons get invisible hit-zone expansion to ≥44×44 without resizing the visible glyph (3.3). Bottom-fixed elements (nav bar + wizard footer) hide when any input is focused (8.2). Autocomplete dropdown flips above its input when space below is limited (4.3). Safe-area audit to be done at implementation time across bottom-fixed elements and top notch (8.1).
 - **Polish:** Shop-mode empty state replaces aisle grid when list is empty (3.1). Checked items stay in place but dim more aggressively — no sort change (3.2). "Online" sync pill hides when online + connected; only renders for offline/syncing/error (3.4). "Last purchased: unknown" → "No purchase history" (5.1). "Name"/"Quantity" labels restyled smaller/lighter — *kept* (accessibility preservation); saved this as a standing `feedback_accessibility.md` memory so future polish sessions don't regress semantic HTML (5.4). Session-expired modal: emoji → Lucide `Lock`, `bg-blue-600` → coral (2.3). Offline banner ⚠️ → Lucide `AlertTriangle` (10.1).
-- **Login:** humanized Firebase auth error mapping with generic fallback; parallel invite-code error copy (7.2). Eye icon toggle added to password + invite code fields (7.1).
+- **Login:** humanized Firebase auth error mapping with generic fallback; parallel invite-code error copy (7.2). Eye icon toggle on **password** fields (7.1); invite code field stayed plaintext (no toggle) in shipped unified PR.
 - **Mobile bottom sheet:** both X visible on mobile *and* real swipe-to-dismiss (5.3).
 - **Multi-column layout removed** from large screens — single column at all breakpoints (8.4).
 - **Insights modal** kept in place but all developer-speak trimmed (tier labels, UIDs, internal function/field names) — no rebuild (9.2).
@@ -525,11 +545,32 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **`database.rules.json`:** Rules for `item-events-by-month` and `item-events-index`.
 - **`voice-mcp/src/firebaseRealtime.js`:** Voice `added` events POST to monthly path; PATCH index `updatedAt`.
 
+### 2026-04-17 — List UI: revert coral row tint; Shop names coral again
+- **`src/App.jsx`:** Add-mode quick-add / pin-edit tile rows use `hover:bg-gray-50` instead of a fixed `#FFF5F5` fill; pin icon hover uses gray instead of rose. **Shop** list rows: item names back to `#FF7A7A` when not done (Add-mode list rows stay neutral gray). Quick-add suggestion names use coral again (aligned with `main`).
+
+### 2026-04-17 — Design review pass 10: pin-edit mode, density nudge, B1 card
+- **`src/App.jsx`:** Add **pin-edit mode** (Edit pins + Done) from Add mode only — replaces Shop/Add chrome on mobile and desktop, hides per-aisle search, same aisle row order as Add with pin-only row chrome (Firebase pin/unpin via shared promote helper + `removeSuggestionEverywhere`). B1 entry highlights dormant shortcuts with an amber ring; **Done** applies implicit **keep** dismissals for still-pinned dormant items. **Density nudge** card when an aisle has more than 12 pinned shortcuts (`density::{aisleId}` dismissals with +4 escalation). **B1** card revised to Review / Not now (batch `not-now` dismissals per dormant item).
+
 ### 2026-04-17 — Auth: minimal RTDB read for admin
 - **`src/App.jsx`:** On sign-in, admin is derived from `get(households/{id}/adminUid)` instead of downloading the entire household subtree (saves duplicate bulk download before per-path listeners attach).
 
 ### 2026-04-17 — Firebase: production deploy (hosting + database)
 - **`npm run build`** then **`firebase deploy`** to `kao-family-shopping-list`: shipped current `dist/` (item-events sharding, logging retention/cleanup, adminUid read, etc.) and re-released RTDB rules. Hosting: https://kao-family-shopping-list.web.app
+
+### 2026-04-17 — Shop/Add list rows: tap opens details (caret), not left control
+- **`src/App.jsx`:** Tapping the list row (or quick-add suggestion row) opens the same bottom sheet as the chevron; check/uncheck, remove-from-list, and add-from-tile remain explicit taps on the left control only.
+
+### 2026-04-17 — Item bottom sheet: stay open on taxonomy move / unpin
+- **`src/App.jsx`:** List-item and Add-suggestion `suggestionConfig.onMove` no longer calls `setSelectedItem(null)`; taxonomy handlers rebuild config with the new category id so the sheet stays open. After **Unpin**, the sheet keeps **Pin** via refreshed `promoteToShortcut`. **Unpin** button uses `finally` so loading state clears when the sheet stays mounted.
+
+### 2026-04-17 — List item sheet: edit taxonomy for library-only catalog matches
+- **`src/App.jsx`:** `findLibraryMatchForListItem` mirrors shortcut lookup against `libraryItemsV2`. List rows whose name exists only in a category’s **library** (not visible shortcuts) get the same expandable aisle/category controls as pinned items; **Pin** is shown instead of **Unpin** until promoted. Promotion hint still suppressed only when a **visible** shortcut exists.
+
+### 2026-04-17 — Header: stable title when sync/offline pill appears
+- **`src/App.jsx`:** Mobile header wraps the status pill in a fixed `min-w` slot (`lg:min-w-0` on desktop) so the flex-centered **Shopping List** title no longer shifts when the pill mounts or unmounts.
+
+### 2026-04-17 — Add mode: per-aisle autocomplete not clipped by aisle card
+- **`src/App.jsx`:** Aisle cards no longer use `overflow-hidden` on the outer wrapper (it clipped the absolute-positioned suggestion list). Rounded corners: collapse header uses `rounded-2xl`, expanded header `rounded-t-2xl`; list / empty / dormant block sits in an inner `overflow-hidden rounded-b-2xl` wrapper. Per-aisle search row uses `relative z-20` and the dropdown `z-30` so it stacks above following rows when it overlaps.
 
 ### 2026-04-16 — Seed catalog: Fruit / Veggies aisles, Asian grocery rows
 - **`src/seedCatalog.js`:** Replaced single **Produce** aisle with **Fruit** and **Veggies**; **Vegetables** display name (slug `vegetable` unchanged); **Fresh herbs** under Veggies. Packaged Foods: merged **East Asian** + **Southeast Asian** into **East & Southeast Asian groceries** (`east-southeast-asian-foods`); added **South Asian groceries** (six library items: basmati rice, ghee, red lentils, tikka masala simmer sauce, garam masala, papadums).

@@ -22,15 +22,14 @@ const app = initializeApp(firebaseConfig);
 
 const recaptchaSiteKey = (import.meta.env.VITE_RECAPTCHA_SITE_KEY || '').trim();
 
-if (import.meta.env.PROD && !recaptchaSiteKey) {
-  throw new Error(
-    'Missing VITE_RECAPTCHA_SITE_KEY. Firebase App Check is required in production builds; add it to your hosting env (reCAPTCHA v3 site key from Google + registered in Firebase App Check).'
-  );
-}
-
-if (typeof self !== 'undefined' && import.meta.env.DEV) {
+// Enable debug mode for local development or when a debug token is provided
+if (typeof self !== 'undefined') {
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
   const debugToken = (import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || '').trim();
-  self.FIREBASE_APPCHECK_DEBUG_TOKEN = debugToken || true;
+  
+  if (import.meta.env.DEV || isLocal || debugToken) {
+    self.FIREBASE_APPCHECK_DEBUG_TOKEN = debugToken || true;
+  }
 }
 
 if (recaptchaSiteKey) {
