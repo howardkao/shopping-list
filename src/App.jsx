@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, Edit2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
   createUserWithEmailAndPassword,
