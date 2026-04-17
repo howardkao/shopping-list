@@ -1085,47 +1085,53 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
 
               {canPinAction && (
                 showUnpin ? (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (pinActionLoading) return;
-                      setPinActionLoading(true);
-                      try {
-                        await suggestionConfig.onRemove();
-                      } catch {
-                        /* keep sheet open; button re-enabled in finally */
-                      } finally {
-                        setPinActionLoading(false);
-                      }
-                    }}
-                    disabled={pinActionLoading}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-white text-red-600 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
-                  >
-                    <Pin size={14} />
-                    {pinActionLoading ? 'Unpinning…' : 'Unpin'}
-                  </button>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (pinActionLoading) return;
+                        setPinActionLoading(true);
+                        try {
+                          await suggestionConfig.onRemove();
+                        } catch {
+                          /* keep sheet open; button re-enabled in finally */
+                        } finally {
+                          setPinActionLoading(false);
+                        }
+                      }}
+                      disabled={pinActionLoading}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-white text-red-600 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
+                    >
+                      <Pin size={14} />
+                      {pinActionLoading ? 'Unpinning…' : 'Unpin'}
+                    </button>
+                    <p className="text-xs text-gray-400 text-center mt-1.5">Remove from shortcuts</p>
+                  </div>
                 ) : showPin ? (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (pinActionLoading) return;
-                      setPinActionLoading(true);
-                      try {
-                        const config = await item.promoteToShortcut();
-                        if (config) setPromotedConfig(config);
-                      } catch {
-                        /* silently fail */
-                      } finally {
-                        setPinActionLoading(false);
-                      }
-                    }}
-                    disabled={pinActionLoading}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border bg-white text-sm font-semibold hover:bg-[#FFF5F5] disabled:opacity-50"
-                    style={{ color: '#FF7A7A', borderColor: 'rgba(255, 122, 122, 0.4)' }}
-                  >
-                    <Pin size={14} fill="currentColor" />
-                    {pinActionLoading ? 'Pinning…' : 'Pin'}
-                  </button>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (pinActionLoading) return;
+                        setPinActionLoading(true);
+                        try {
+                          const config = await item.promoteToShortcut();
+                          if (config) setPromotedConfig(config);
+                        } catch {
+                          /* silently fail */
+                        } finally {
+                          setPinActionLoading(false);
+                        }
+                      }}
+                      disabled={pinActionLoading}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border bg-white text-sm font-semibold hover:bg-[#FFF5F5] disabled:opacity-50"
+                      style={{ color: '#FF7A7A', borderColor: 'rgba(255, 122, 122, 0.4)' }}
+                    >
+                      <Pin size={14} fill="currentColor" />
+                      {pinActionLoading ? 'Pinning…' : 'Pin'}
+                    </button>
+                    <p className="text-xs text-gray-400 text-center mt-1.5">Keep as a shortcut in Add mode</p>
+                  </div>
                 ) : null
               )}
             </div>
@@ -3734,16 +3740,13 @@ export default function App() {
                         onClick={() => toggleCategory(g.aisleId)}
                         className={`w-full py-4 px-4 flex items-center gap-3 transition-colors ${
                           isExpanded ? 'rounded-t-2xl' : 'rounded-2xl'
-                        } ${
-                          quickAddMode
-                            ? "bg-gray-100 hover:bg-gray-200"
-                            : "hover:bg-gray-50"
-                        }`}
+                        } hover:bg-gray-50`}
+                        style={{ opacity: isScrolling ? 0.12 : 1, transition: 'opacity 0.1s ease-out' }}
                       >
                         {isExpanded ? (
-                          <ChevronDown size={20} className={`scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${quickAddMode ? "text-gray-600" : "text-gray-400"}`} />
+                          <ChevronDown size={20} className="text-gray-400" />
                         ) : (
-                          <ChevronRight size={20} className={`scroll-fade-full ${isScrolling ? 'is-scrolling' : ''} ${quickAddMode ? "text-gray-600" : "text-gray-400"}`} />
+                          <ChevronRight size={20} className="text-gray-400" />
                         )}
                         <h3 className="flex-1 text-left uppercase tracking-wide font-bold text-gray-700 text-base">{g.aisleNameDisplay}</h3>
                       </button>
@@ -3945,8 +3948,8 @@ export default function App() {
                                         </button>
                                       )}
                                       <span
-                                        className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : quickAddMode ? 'text-gray-800' : ''}`}
-                                        style={{ color: li.done || quickAddMode ? undefined : '#FF7A7A' }}
+                                        className={`flex-1 text-left font-semibold text-sm ${li.done ? 'line-through text-gray-400' : ''}`}
+                                        style={{ color: li.done ? undefined : '#FF7A7A' }}
                                       >
                                         {li.name}
                                         {li.quantity && li.quantity.trim() && (
@@ -3988,7 +3991,7 @@ export default function App() {
                                         <Plus size={16} className="text-white" strokeWidth={2.5} />
                                       </span>
                                     </button>
-                                    <span className="flex-1 text-left font-semibold text-sm" style={{ color: '#FF7A7A' }}>
+                                    <span className="flex-1 text-left font-semibold text-sm text-gray-800">
                                       {qi.name}
                                     </span>
                                     <button
