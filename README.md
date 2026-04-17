@@ -50,6 +50,9 @@ VITE_FIREBASE_PROJECT_ID=your-project-id
 VITE_FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
 VITE_FIREBASE_MESSAGING_SENDER_ID=...
 VITE_FIREBASE_APP_ID=...
+# Optional — enables Firebase / Google Analytics (measurement ID from Firebase Console → Project settings)
+# VITE_FIREBASE_MEASUREMENT_ID=G-XXXXXXXXXX
+VITE_RECAPTCHA_SITE_KEY=...   # reCAPTCHA v3 site key; register in Firebase Console → App Check (required for production)
 ```
 
 ### 4. Deploy Firebase security rules

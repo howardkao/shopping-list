@@ -11,6 +11,7 @@
         "displayName": { ".validate": "newData.isString() && newData.val().length <= 100" },
         "householdId": { ".validate": "newData.isString() && newData.val().length <= 50" },
         "createdAt":   { ".validate": "newData.isNumber()" },
+        "logsLastRemoteCleanupAt": { ".validate": "newData.isNumber()" },
         "$other":      { ".validate": false }
       }
     },
@@ -83,6 +84,31 @@
             "qty":        { ".validate": "newData.isNumber()" },
             "quantityLabel": { ".validate": "newData.isString() && newData.val().length <= 100" },
             "$other":     { ".validate": false }
+          }
+        },
+
+        "item-events-by-month": {
+          "$month": {
+            "$eventId": {
+              "ts":       { ".validate": "newData.isNumber()" },
+              "uid":      { ".validate": "newData.isString() && newData.val().length <= 50" },
+              "name":     { ".validate": "newData.isString() && newData.val().length <= 200" },
+              "category":   { ".validate": "newData.isString() && newData.val().length <= 100" },
+              "categoryId": { ".validate": "newData.isString() && newData.val().length <= 50" },
+              "itemKey":    { ".validate": "newData.isString() && newData.val().length <= 80" },
+              "action":     { ".validate": "newData.isString() && newData.val().matches(/^(added|checked|unchecked|removed)$/)" },
+              "source":     { ".validate": "newData.isString() && newData.val().length <= 30" },
+              "qty":        { ".validate": "newData.isNumber()" },
+              "quantityLabel": { ".validate": "newData.isString() && newData.val().length <= 100" },
+              "$other":     { ".validate": false }
+            }
+          }
+        },
+
+        "item-events-index": {
+          "$month": {
+            "updatedAt": { ".validate": "newData.isNumber()" },
+            "$other":    { ".validate": false }
           }
         },
 

@@ -330,6 +330,29 @@ export async function loadTaxonomyV2Locally() {
   }
 }
 
+const itemEventsBucketCacheKey = (householdId, monthKey) => `itemEventsBucket:${householdId}:${monthKey}`;
+
+/** @returns {Promise<{ indexUpdatedAt: number|null, bucketVal: object }|null>} */
+export async function loadItemEventsBucketCache(householdId, monthKey) {
+  try {
+    return (await getFromStore(STORES.META, itemEventsBucketCacheKey(householdId, monthKey))) ?? null;
+  } catch (error) {
+    offlineIdbDisabled = true;
+    warnOfflineIdbOnce(error);
+    return null;
+  }
+}
+
+/** @param {{ indexUpdatedAt: number|null, bucketVal: object }} record */
+export async function saveItemEventsBucketCache(householdId, monthKey, record) {
+  try {
+    await saveToStore(STORES.META, itemEventsBucketCacheKey(householdId, monthKey), record);
+  } catch (error) {
+    offlineIdbDisabled = true;
+    warnOfflineIdbOnce(error);
+  }
+}
+
 /**
  * Clear cached user info (on explicit logout)
  */

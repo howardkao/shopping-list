@@ -29,6 +29,7 @@ import { logger } from './logger';
 import DebugPanel from './DebugPanel';
 import SuggestionsEditor from './SuggestionsEditor';
 import Onboarding from './Onboarding';
+import { PrivacyPolicyPage, TermsOfServicePage } from './LegalPages';
 import { bootstrapHouseholdTaxonomy } from './householdBootstrap';
 import { formatAisleNameForDisplay } from './aisleDisplay';
 import {
@@ -38,6 +39,11 @@ import {
   userContributions,
 } from './itemAnalytics';
 import { computeEffectiveCheckEvents, lastEffectivePurchaseTimestamp } from './purchaseSemantics.js';
+import {
+  eventMonthKey,
+  pushHouseholdItemEvent,
+  getHouseholdItemEventsMerged,
+} from './itemEventsSharding';
 // categoryClassifier is used internally by itemAnalytics
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -97,7 +103,7 @@ const formatLocalDateTimePhrase = (ms) => {
   }
 };
 
-function Login({ onLoginSuccess }) {
+function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
   const [mode, setMode] = useState('signin');
   const [signupType, setSignupType] = useState('create'); // 'create' | 'join'
   const [email, setEmail] = useState('');
@@ -295,8 +301,35 @@ function Login({ onLoginSuccess }) {
             {mode === 'signin' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
           </button>
         </div>
+        <p className="mt-8 pt-6 border-t border-gray-100 text-center text-xs text-gray-500 leading-relaxed">
+          By continuing, you agree to the{' '}
+          <button type="button" onClick={onOpenTerms} className="font-semibold underline decoration-gray-300 hover:decoration-gray-600 text-gray-600">
+            Terms of Service
+          </button>{' '}
+          and{' '}
+          <button type="button" onClick={onOpenPrivacy} className="font-semibold underline decoration-gray-300 hover:decoration-gray-600 text-gray-600">
+            Privacy Policy
+          </button>
+          .
+        </p>
       </div>
     </div>
+  );
+}
+
+function AuthLoginScreen({ onLoginSuccess, legalView, onLegalViewChange }) {
+  if (legalView === 'privacy') {
+    return <PrivacyPolicyPage onBack={() => onLegalViewChange(null)} />;
+  }
+  if (legalView === 'terms') {
+    return <TermsOfServicePage onBack={() => onLegalViewChange(null)} />;
+  }
+  return (
+    <Login
+      onLoginSuccess={onLoginSuccess}
+      onOpenPrivacy={() => onLegalViewChange('privacy')}
+      onOpenTerms={() => onLegalViewChange('terms')}
+    />
   );
 }
 
@@ -365,7 +398,7 @@ function OfflineReadyToast({ onDismiss }) {
   );
 }
 
-function InsightsModal({ householdId, onClose }) {
+function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [events, setEvents] = useState([]);
@@ -377,15 +410,15 @@ function InsightsModal({ householdId, onClose }) {
     let cancelled = false;
     (async () => {
       try {
-        const [evSnap, visSnap, catSnap] = await Promise.all([
-          get(ref(database, `households/${householdId}/item-events`)),
+        const [evList, visSnap, catSnap] = await Promise.all([
+          getHouseholdItemEventsMerged(database, householdId, {
+            liveBucketMonthKey,
+            liveBucketVal,
+          }),
           get(ref(database, `households/${householdId}/taxonomy/visible-items`)),
           get(ref(database, `households/${householdId}/taxonomy/categories`)),
         ]);
         if (cancelled) return;
-        const evRaw = evSnap.val() || {};
-        const evList = Object.values(evRaw).filter(e => e && typeof e.ts === 'number');
-        evList.sort((a, b) => a.ts - b.ts);
         const visRaw = visSnap.val() || {};
         const catRaw = catSnap.val() || {};
         // Build visibleItemsByCategoryId (keyed by catId) for new analytics API
@@ -410,7 +443,7 @@ function InsightsModal({ householdId, onClose }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [householdId]);
+  }, [householdId, liveBucketMonthKey, liveBucketVal]);
 
   const top = events.length ? topPurchased(events, { limit: 15 }) : [];
   const promote = events.length ? promotionCandidates(events, visibleByCatId, categoriesV2) : [];
@@ -1117,7 +1150,7 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
   );
 }
 
-function PurchaseHistory({ householdId, aisles = {}, categories = {} }) {
+function PurchaseHistory({ householdId, liveBucketMonthKey, liveBucketVal, aisles = {}, categories = {} }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   /** Raw groups from Firebase (no aisle labels); `null` until first fetch completes for this household. */
@@ -1130,10 +1163,11 @@ function PurchaseHistory({ householdId, aisles = {}, categories = {} }) {
     setBaseDayGroups(null);
     (async () => {
       try {
-        const snap = await get(ref(database, `households/${householdId}/item-events`));
+        const events = await getHouseholdItemEventsMerged(database, householdId, {
+          liveBucketMonthKey,
+          liveBucketVal,
+        });
         if (cancelled) return;
-        const raw = snap.val() || {};
-        const events = Object.values(raw).filter(e => e && typeof e.ts === 'number');
 
         // Effective purchases only (see purchaseSemantics.js — uncheck within 2h voids prior check)
         const dayMap = new Map(); // dateStr -> Map(rowKey -> { name, category, categoryId?, qty, count, quantityLabel })
@@ -1183,7 +1217,7 @@ function PurchaseHistory({ householdId, aisles = {}, categories = {} }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [householdId]);
+  }, [householdId, liveBucketMonthKey, liveBucketVal]);
 
   const dayGroups = useMemo(() => {
     if (baseDayGroups == null) return [];
@@ -1326,9 +1360,14 @@ export default function App() {
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showLoginExplicitly, setShowLoginExplicitly] = useState(false);
+  const [loginLegalView, setLoginLegalView] = useState(null);
   const [needsDisplayName, setNeedsDisplayName] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState('');
   const [members, setMembers] = useState({});
+  /** Calendar month for RTDB `onValue` on `item-events-by-month/{month}` (rollover ~45s). */
+  const [itemEventsListenerMonth, setItemEventsListenerMonth] = useState(() => eventMonthKey(Date.now()));
+  /** Live snapshot for `itemEventsListenerMonth`; null until first listener callback. */
+  const [liveItemEventsMonthVal, setLiveItemEventsMonthVal] = useState(null);
 
   const orderedV2AisleIds = Object.keys(aislesV2)
     .sort((a, b) => (aislesV2[a]?.order ?? 0) - (aislesV2[b]?.order ?? 0));
@@ -1499,8 +1538,8 @@ export default function App() {
             setNeedsDisplayName(true);
           }
           if (userHouseholdId) {
-            const household = await get(ref(database, `households/${userHouseholdId}`));
-            isAdminUser = household.val()?.adminUid === firebaseUser.uid;
+            const adminSnap = await get(ref(database, `households/${userHouseholdId}/adminUid`));
+            isAdminUser = adminSnap.val() === firebaseUser.uid;
           }
         } catch (err) {
           logger.error('Auth', 'Failed to load household/admin status, using cached value', {
@@ -1753,6 +1792,28 @@ export default function App() {
     setVisibleItemsV2(blob.visibleItems || {});
     setLibraryItemsV2(blob.library || {});
   }, [localDataLoaded, householdId, localTaxonomyV2Blob]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const n = eventMonthKey(Date.now());
+      setItemEventsListenerMonth((prev) => (prev !== n ? n : prev));
+    }, 45000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!user || !householdId) {
+      setLiveItemEventsMonthVal(null);
+      return undefined;
+    }
+    const r = ref(database, `households/${householdId}/item-events-by-month/${itemEventsListenerMonth}`);
+    const unsub = onValue(r, (snap) => {
+      setLiveItemEventsMonthVal(snap.val() || {});
+    });
+    return () => {
+      unsub();
+    };
+  }, [user?.uid, householdId, itemEventsListenerMonth]);
 
   useEffect(() => {
     if (!user || !householdId) {
@@ -2017,12 +2078,9 @@ export default function App() {
       ? String(event.quantityLabel).trim().slice(0, 100)
       : '';
     if (qLabel) payload.quantityLabel = qLabel;
-    try {
-      push(ref(database, `households/${householdId}/item-events`), payload)
-        .catch(err => logger.warn('App', 'item-event write failed', { error: err.message, action: payload.action }));
-    } catch (err) {
-      logger.warn('App', 'item-event push threw', { error: err.message });
-    }
+    pushHouseholdItemEvent(database, householdId, payload).catch((err) => {
+      logger.warn('App', 'item-event write failed', { error: err.message, action: payload.action });
+    });
   };
 
   const addItem = (name, category, source = 'quickAdd', itemKey = generateId(), categoryIdOverride = null) => {
@@ -2107,13 +2165,14 @@ export default function App() {
       return;
     }
     try {
-      const eventsSnap = await get(ref(database, `households/${householdId}/item-events`));
-      const raw = eventsSnap.val();
-      if (!raw) {
+      const all = await getHouseholdItemEventsMerged(database, householdId, {
+        liveBucketMonthKey: itemEventsListenerMonth,
+        liveBucketVal: liveItemEventsMonthVal,
+      });
+      if (!all.length) {
         setSelectedItemLastPurchased(null);
         return;
       }
-      const all = Object.values(raw);
       setSelectedItemLastPurchased(lastEffectivePurchaseTimestamp(all, query, {}));
     } catch (err) {
       logger.warn('App', 'Failed to fetch last purchased for item', { error: err.message });
@@ -2705,14 +2764,14 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const [evSnap, dismissSnap] = await Promise.all([
-          get(ref(database, `households/${householdId}/item-events`)),
+        const [evList, dismissSnap] = await Promise.all([
+          getHouseholdItemEventsMerged(database, householdId, {
+            liveBucketMonthKey: itemEventsListenerMonth,
+            liveBucketVal: liveItemEventsMonthVal,
+          }),
           get(ref(database, `households/${householdId}/suggestion-dismissals`)),
         ]);
         if (cancelled) return;
-        const evRaw = evSnap.val() || {};
-        const evList = Object.values(evRaw).filter(e => e && typeof e.ts === 'number');
-        evList.sort((a, b) => a.ts - b.ts);
 
         const dismissRaw = dismissSnap.val() || {};
         setSuggestionDismissals(dismissRaw);
@@ -2745,7 +2804,14 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [quickAddMode, householdId]);
+  }, [
+    quickAddMode,
+    householdId,
+    itemEventsListenerMonth,
+    liveItemEventsMonthVal,
+    visibleItemsV2,
+    categoriesV2,
+  ]);
 
   const dismissSuggestion = async (key, action) => {
     if (!householdId) return;
@@ -2878,6 +2944,7 @@ export default function App() {
 
   const handleLoginSuccess = useCallback(() => {
     setShowLoginExplicitly(false);
+    setLoginLegalView(null);
     // Login is an early return in this component; list/Shop state would otherwise persist (e.g. Account page).
     setCurrentPage('list');
     setQuickAddMode(false);
@@ -2898,6 +2965,7 @@ export default function App() {
       setIsAdmin(false);
       setHouseholdId(null);
       setShowLoginExplicitly(true);
+      setLoginLegalView(null);
       logger.info('Auth', 'Sign out successful, cached user cleared');
     } catch (error) {
       logger.error('Auth', 'Sign out failed', {
@@ -2924,7 +2992,13 @@ export default function App() {
   const showLogin = showLoginExplicitly || (!hasCachedData && !authLoading && !user);
 
   if (showLogin) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <AuthLoginScreen
+        onLoginSuccess={handleLoginSuccess}
+        legalView={loginLegalView}
+        onLegalViewChange={setLoginLegalView}
+      />
+    );
   }
 
   // If we have cached data, show the app regardless of auth state (unless explicitly signing in)
@@ -2933,7 +3007,15 @@ export default function App() {
   } else {
     // No cached data, need to check auth
     if (authLoading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
-    if (!user) return <Login onLoginSuccess={handleLoginSuccess} />;
+    if (!user) {
+      return (
+        <AuthLoginScreen
+          onLoginSuccess={handleLoginSuccess}
+          legalView={loginLegalView}
+          onLegalViewChange={setLoginLegalView}
+        />
+      );
+    }
     if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#F7F7F7' }}><div className="text-gray-600 font-semibold">Loading...</div></div>;
   }
 
@@ -3290,7 +3372,11 @@ export default function App() {
         )}
 
         <div className={`pt-20 lg:pb-6 ${currentPage === 'list' ? 'pb-32' : 'pb-6'}`}>
-          {currentPage === 'account' ? (
+          {currentPage === 'privacy' ? (
+            <PrivacyPolicyPage onBack={() => setCurrentPage('account')} />
+          ) : currentPage === 'terms' ? (
+            <TermsOfServicePage onBack={() => setCurrentPage('account')} />
+          ) : currentPage === 'account' ? (
             <div className="max-w-2xl mx-auto px-4 flex min-h-[calc(100dvh-5.5rem)] flex-col">
               <div className="space-y-3 shrink-0">
                 {householdId && (
@@ -3305,6 +3391,25 @@ export default function App() {
                 )}
                 <button onClick={handleSignOut} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-red-500 hover:bg-red-50 transition-colors">
                   <LogOut size={20} />Sign Out
+                </button>
+              </div>
+              <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs text-gray-500 pt-6 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => { setCurrentPage('privacy'); setShowMenu(false); }}
+                  className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
+                >
+                  Privacy Policy
+                </button>
+                <span className="text-gray-300 select-none" aria-hidden="true">
+                  ·
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setCurrentPage('terms'); setShowMenu(false); }}
+                  className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
+                >
+                  Terms of Service
                 </button>
               </div>
               <div className="mt-auto shrink-0 border-t border-gray-200 pt-10 pb-[max(2rem,calc(env(safe-area-inset-bottom,0px)+1.25rem))]">
@@ -3577,7 +3682,13 @@ export default function App() {
               </div>
             </div>
           ) : currentPage === 'history' ? (
-            <PurchaseHistory householdId={householdId} aisles={aislesV2} categories={categoriesV2} />
+            <PurchaseHistory
+              householdId={householdId}
+              liveBucketMonthKey={itemEventsListenerMonth}
+              liveBucketVal={liveItemEventsMonthVal}
+              aisles={aislesV2}
+              categories={categoriesV2}
+            />
           ) : (
             <SuggestionsEditor
               aisles={aislesV2}
@@ -3648,7 +3759,12 @@ export default function App() {
         )}
       </div>
       {showHouseholdInsights && householdId && (
-        <InsightsModal householdId={householdId} onClose={() => setShowHouseholdInsights(false)} />
+        <InsightsModal
+          householdId={householdId}
+          liveBucketMonthKey={itemEventsListenerMonth}
+          liveBucketVal={liveItemEventsMonthVal}
+          onClose={() => setShowHouseholdInsights(false)}
+        />
       )}
       {showAdmin && isAdmin && <AdminPanel householdId={householdId} onClose={() => setShowAdmin(false)} />}
       {showDeleteAccount && user && (

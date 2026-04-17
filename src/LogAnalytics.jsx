@@ -227,7 +227,7 @@ export default function LogAnalytics({ onClose }) {
               <option value="1">Last 24 hours</option>
               <option value="7">Last 7 days</option>
               <option value="14">Last 14 days</option>
-              <option value="30">Last 30 days</option>
+              <option value="21">Last 21 days</option>
             </select>
             <button
               onClick={loadAllLogs}
