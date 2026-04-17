@@ -155,6 +155,7 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **Ops:** reCAPTCHA v3 key → Firebase App Check → register app → ship → monitor → enforce RTDB (see plan “When to turn on strict checking”).
 
 ### 2026-04-17 — Unified design-review PR: Pass 11, pin copy, documentation sync
+- **Commit:** `88b9e7b` on branch `design-review-pass`.
 - **`src/App.jsx`:** Offline banner uses Lucide **`AlertTriangle`** instead of the ⚠️ emoji (10.1). Removed the floating admin **Bug** FAB and `bottom-28` positioning; debug panel remains via **`Ctrl+Shift+D`** and **`?debug=true`** (10.3). B1 dormancy card copy uses **pin(s)**; delete-account warning uses **pinned items**.
 - **Deleted:** `palette-mockup.html` (disposable 2.2 comparison artifact after sign-off).
 - **`src/SuggestionsEditor.jsx`:** Settings page heading **Pinned items**; empty/merge helper copy uses pinned terminology.
