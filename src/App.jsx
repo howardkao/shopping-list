@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, ClipboardPen, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff, ScrollText } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
   createUserWithEmailAndPassword,
@@ -104,8 +104,8 @@ const formatLocalDateTimePhrase = (ms) => {
   }
 };
 
-function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
-  const [mode, setMode] = useState('signin');
+function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
+  const [mode, setMode] = useState(initialMode ?? 'signin');
   const [signupType, setSignupType] = useState('create'); // 'create' | 'join'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -260,7 +260,9 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4" style={{ backgroundColor: '#FF7A7A' }}>
             <Mail size={32} className="text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Shopping List</h1>
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">
+            <a href="/" style={{ color: 'inherit', textDecoration: 'none' }}>Provisions</a>
+          </h1>
           <p className="text-gray-600 font-medium">{mode === 'signin' ? 'Sign in to your account' : 'Create your account'}</p>
         </div>
         <div className="space-y-4">
@@ -341,7 +343,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms }) {
   );
 }
 
-function AuthLoginScreen({ onLoginSuccess, legalView, onLegalViewChange }) {
+function AuthLoginScreen({ onLoginSuccess, legalView, onLegalViewChange, initialMode }) {
   if (legalView === 'privacy') {
     return <PrivacyPolicyPage onBack={() => onLegalViewChange(null)} />;
   }
@@ -353,6 +355,7 @@ function AuthLoginScreen({ onLoginSuccess, legalView, onLegalViewChange }) {
       onLoginSuccess={onLoginSuccess}
       onOpenPrivacy={() => onLegalViewChange('privacy')}
       onOpenTerms={() => onLegalViewChange('terms')}
+      initialMode={initialMode}
     />
   );
 }
@@ -430,13 +433,100 @@ function insightsMemberLabel(members, uid) {
   return 'Unknown member';
 }
 
-function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, members, onClose }) {
+const ITEM_LOG_ACTIONS = new Set(['added', 'removed', 'checked', 'unchecked']);
+
+function itemLogActionLabel(action) {
+  if (action === 'added') return 'Added';
+  if (action === 'removed') return 'Removed';
+  if (action === 'checked') return 'Purchased';
+  if (action === 'unchecked') return 'Unchecked';
+  return action || '—';
+}
+
+function HouseholdItemEventLogModal({ onClose, members, eventsNewestFirst }) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="bg-white rounded-3xl shadow-xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col border border-gray-200"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="household-item-event-log-title"
+      >
+        <div className="p-5 border-b border-gray-200 shrink-0">
+          <h2 id="household-item-event-log-title" className="text-xl font-bold text-gray-800">
+            List activity log
+          </h2>
+          <p className="text-gray-600 text-xs font-medium mt-1">
+            Adds, removals, purchases, and unchecks. Newest first.
+          </p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 min-h-0">
+          {eventsNewestFirst.length === 0 ? (
+            <div className="text-gray-500 text-sm py-8 text-center">No list activity recorded yet.</div>
+          ) : (
+            <ul className="space-y-2">
+              {eventsNewestFirst.map((e, i) => (
+                <li
+                  key={`${e.ts}-${i}-${e.name || ''}-${e.action || ''}`}
+                  className="bg-gray-50 rounded-xl px-3 py-2.5 border border-gray-100 text-sm"
+                >
+                  <div className="flex justify-between gap-2 items-start">
+                    <span className="text-gray-500 text-xs shrink-0 tabular-nums">
+                      {formatLocalDateTimePhrase(e.ts)}
+                    </span>
+                    <span
+                      className={`text-xs font-bold shrink-0 ${
+                        e.action === 'added'
+                          ? 'text-green-700'
+                          : e.action === 'removed'
+                            ? 'text-red-600'
+                            : e.action === 'checked'
+                              ? 'text-emerald-700'
+                              : 'text-amber-700'
+                      }`}
+                    >
+                      {itemLogActionLabel(e.action)}
+                    </span>
+                  </div>
+                  <div className="mt-1 font-semibold text-gray-800 break-words">
+                    {e.name || '(unnamed)'}
+                    {e.category ? <span className="text-gray-500 font-medium text-xs"> · {e.category}</span> : null}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    {insightsMemberLabel(members, e.uid)}
+                    {e.qty != null && Number(e.qty) !== 1 ? ` · qty ${e.qty}` : ''}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="p-4 border-t border-gray-200 shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full bg-gray-200 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-300 transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HouseholdInsightsPage({ householdId, liveBucketMonthKey, liveBucketVal, members }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [events, setEvents] = useState([]);
   const [commonByCat, setCommonByCat] = useState({});
   const [categoriesV2, setCategoriesV2] = useState({});
   const [visibleByCatId, setVisibleByCatId] = useState({});
+  const [eventLogOpen, setEventLogOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -482,38 +572,45 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, members
   const dormant = Object.keys(visibleByCatId).length ? dormantShortcuts(events, visibleByCatId, categoriesV2) : [];
   const users = events.length ? userContributions(events) : [];
 
+  const itemLogEventsNewestFirst = useMemo(() => {
+    const rows = events.filter((e) => e && ITEM_LOG_ACTIONS.has(e.action));
+    rows.sort((a, b) => b.ts - a.ts);
+    return rows;
+  }, [events]);
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-3xl shadow-xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col border border-gray-200">
-        <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-800">Household Insights</h2>
-            <p className="text-gray-600 font-medium text-sm">Based on how your household adds, checks off, and removes items.</p>
-          </div>
-          <button onClick={onClose} className="p-2 text-gray-500 hover:text-gray-800"><X size={22} /></button>
-        </div>
-        <div className="p-6 flex-1 overflow-y-auto space-y-6 text-sm">
+    <div className="max-w-2xl mx-auto px-4 pb-8">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-800">Household Insights</h1>
+        <p className="text-gray-600 font-medium text-sm mt-1">Based on what your household adds, purchases, and removes from the list.</p>
+      </div>
+      <div className="space-y-6 text-sm">
           {loading && <div className="text-gray-500">Loading…</div>}
           {error && (
             <div className="text-red-600">
               <p className="font-medium">Could not load insights.</p>
-              <p className="text-xs text-gray-500 mt-1 font-normal">{error}</p>
+              <p className="text-xs text-gray-500 mt-1 font-normal">
+                Check your connection and try again.
+                {import.meta.env.DEV && error ? (
+                  <span className="block mt-1 font-mono text-gray-400 break-all">{error}</span>
+                ) : null}
+              </p>
             </div>
           )}
           {!loading && !error && !events.length && (
-            <div className="text-gray-500">No item events recorded yet. Add and check off items to start collecting data.</div>
+            <div className="text-gray-500">Not enough activity to show patterns yet. Add items and record what you purchase as you shop to build history.</div>
           )}
           {!loading && !error && events.length > 0 && (
             <>
               <section>
                 <h3 className="font-bold text-gray-800 mb-2">Top items</h3>
-                <p className="text-xs text-gray-500 mb-2">Most often checked off, all time.</p>
-                {top.length === 0 ? <div className="text-gray-500">Nothing checked off yet.</div> : (
+                <p className="text-xs text-gray-500 mb-2">Purchased most often, all time.</p>
+                {top.length === 0 ? <div className="text-gray-500">No purchases yet.</div> : (
                   <div className="space-y-1">
                     {top.map(s => (
                       <div key={s.key} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
                         <div><span className="font-semibold">{s.name}</span> <span className="text-gray-500 text-xs">· {s.category}</span></div>
-                        <div className="text-gray-600">×{s.checked}</div>
+                        <div className="text-gray-600">{s.checked}× purchased</div>
                       </div>
                     ))}
                   </div>
@@ -521,14 +618,14 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, members
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Often bought — not on quick-add</h3>
-                <p className="text-xs text-gray-500 mb-2">Checked off several times recently but not currently a quick-add tile. You may see the same suggestions on the Add screen.</p>
+                <h3 className="font-bold text-gray-800 mb-2">Purchased often, not a shortcut</h3>
+                <p className="text-xs text-gray-500 mb-2">Purchased several times recently, but not among the shortcuts you use while planning your list. You may see the same suggestions when you&apos;re planning your list.</p>
                 {promote.length === 0 ? <div className="text-gray-500">None right now.</div> : (
                   <div className="space-y-1">
                     {promote.map(c => (
                       <div key={`${c.categoryId || c.category}::${c.name}`} className="flex justify-between items-center bg-amber-50 rounded-lg px-3 py-2">
                         <div><span className="font-semibold">{c.name}</span> <span className="text-gray-500 text-xs">· {c.category}</span></div>
-                        <div className="text-gray-600">checked ×{c.checkedCount}</div>
+                        <div className="text-gray-600">{c.checkedCount}× purchased</div>
                       </div>
                     ))}
                   </div>
@@ -536,14 +633,18 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, members
               </section>
 
               <section>
-                <h3 className="font-bold text-gray-800 mb-2">Quiet quick-add tiles</h3>
-                <p className="text-xs text-gray-500 mb-2">Tiles with no recent adds or check-offs; how long counts as recent depends on the category. Same list may appear on the Add screen.</p>
+                <h3 className="font-bold text-gray-800 mb-2">Shortcuts without recent use</h3>
+                <p className="text-xs text-gray-500 mb-2">Shortcuts with no recent additions or purchases. What counts as recent depends on the category. You may see the same list when you&apos;re planning your list.</p>
                 {dormant.length === 0 ? <div className="text-gray-500">None right now.</div> : (
                   <div className="space-y-1">
                     {dormant.slice(0, 30).map(d => (
                       <div key={`${d.categoryId}::${d.name}`} className="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2">
                         <div><span className="font-semibold">{d.name}</span> <span className="text-gray-500 text-xs">· {d.categoryName}</span></div>
-                        <div className="text-gray-600">{d.daysSinceLastUse == null ? 'No activity yet' : `${d.daysSinceLastUse}d since last use`}</div>
+                        <div className="text-gray-600 text-right max-w-[11rem] shrink-0">
+                          {d.daysSinceLastUse == null
+                            ? 'No recent activity'
+                            : `${d.daysSinceLastUse} ${d.daysSinceLastUse === 1 ? 'day' : 'days'} since last added or purchased`}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -552,15 +653,15 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, members
 
               <section>
                 <h3 className="font-bold text-gray-800 mb-2">Household activity</h3>
-                <p className="text-xs text-gray-500 mb-2">Adds, check-offs, and removals per person.</p>
+                <p className="text-xs text-gray-500 mb-2">Additions, purchases, and removals per person.</p>
                 {users.length === 0 ? (
-                  <div className="text-gray-500">No member-attributed activity yet.</div>
+                  <div className="text-gray-500">No per-person breakdown yet. We can&apos;t tell who added, purchased, or removed items.</div>
                 ) : (
                   <div className="space-y-1">
                     {users.map(u => (
                       <div key={u.uid} className="flex justify-between items-center gap-3 bg-gray-50 rounded-lg px-3 py-2">
                         <div className="font-medium text-gray-800 truncate min-w-0">{insightsMemberLabel(members, u.uid)}</div>
-                        <div className="text-gray-600 text-xs shrink-0">Added {u.added} · Checked off {u.checked} · Removed {u.removed}</div>
+                        <div className="text-gray-600 text-xs shrink-0">Added {u.added} · Purchased {u.checked} · Removed {u.removed}</div>
                       </div>
                     ))}
                   </div>
@@ -568,8 +669,29 @@ function InsightsModal({ householdId, liveBucketMonthKey, liveBucketVal, members
               </section>
             </>
           )}
-        </div>
       </div>
+      {!loading && !error && (
+        <div className="mt-8 pt-4 border-t border-gray-200">
+          <button
+            type="button"
+            onClick={() => setEventLogOpen(true)}
+            className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 border-gray-200 bg-white text-gray-700 font-semibold text-sm hover:bg-gray-50 transition-colors"
+          >
+            <ScrollText size={18} className="text-gray-500 shrink-0" aria-hidden />
+            View full list activity log
+          </button>
+          <p className="text-center text-xs text-gray-500 mt-2">
+            Adds, removals, purchases, and unchecks — same data as insights, full timeline.
+          </p>
+        </div>
+      )}
+      {eventLogOpen && (
+        <HouseholdItemEventLogModal
+          onClose={() => setEventLogOpen(false)}
+          members={members}
+          eventsNewestFirst={itemLogEventsNewestFirst}
+        />
+      )}
     </div>
   );
 }
@@ -1130,7 +1252,7 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
                       <Pin size={14} fill="currentColor" />
                       {pinActionLoading ? 'Pinning…' : 'Pin'}
                     </button>
-                    <p className="text-xs text-gray-400 text-center mt-1.5">Keep as a shortcut in Add mode</p>
+                    <p className="text-xs text-gray-400 text-center mt-1.5">Keep as a shortcut in Plan mode</p>
                   </div>
                 ) : null
               )}
@@ -1395,7 +1517,6 @@ export default function App() {
   const [householdId, setHouseholdId] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
-  const [showHouseholdInsights, setShowHouseholdInsights] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [currentPage, setCurrentPage] = useState('list');
   const [showMenu, setShowMenu] = useState(false);
@@ -1406,7 +1527,7 @@ export default function App() {
   const [libraryItemsV2, setLibraryItemsV2] = useState({});
   const [onboardingCompleted, setOnboardingCompleted] = useState(null);
   const [quickAddMode, setQuickAddMode] = useState(false);
-  /** Bulk pin surface: only entered from Add mode; keeps `quickAddMode` true. */
+  /** Bulk pin surface: only entered from Plan mode; keeps `quickAddMode` true. */
   const [pinEditMode, setPinEditMode] = useState(false);
   const [pinEditTriggerAisleId, setPinEditTriggerAisleId] = useState(null);
   /** B1 entry only: `${categoryId}::${suggestionId}` keys for amber pin rings. */
@@ -1434,7 +1555,7 @@ export default function App() {
   const shopAisleDefaultsHouseholdIdRef = useRef(null);
   /** Shop mode: previous snapshot of whether each aisle had any list items (for auto-collapse when emptied). */
   const prevShopAisleHadItemsRef = useRef({});
-  /** Per-aisle Add search inputs — measure for autocomplete flip (design review 4.3). */
+  /** Per-aisle Plan search inputs — measure for autocomplete flip (design review 4.3). */
   const aisleAddSearchInputRefs = useRef({});
   const prevAisleAutocompleteOpenRef = useRef({});
   /** When true, per-aisle autocomplete renders above the input (decided once per open). */
@@ -1452,7 +1573,10 @@ export default function App() {
   const [showOfflineToast, setShowOfflineToast] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
-  const [showLoginExplicitly, setShowLoginExplicitly] = useState(false);
+  const [showLoginExplicitly, setShowLoginExplicitly] = useState(
+    () => ['/signin', '/signup'].includes(window.location.pathname)
+  );
+  const loginInitialMode = window.location.pathname === '/signup' ? 'signup' : 'signin';
   const [loginLegalView, setLoginLegalView] = useState(null);
   const [needsDisplayName, setNeedsDisplayName] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState('');
@@ -2550,7 +2674,7 @@ export default function App() {
   const openItemSheet = async (item) => {
     const itemKey = getStableItemKey(item);
     const base = { ...item, itemKey, onQuantityChange: updateQuantity, onNameChange: updateItemName };
-    // Surface pin/promote affordances in both Shop and Add mode so the sheet's
+    // Surface pin/promote affordances in both Shop and Plan mode so the sheet's
     // breadcrumb + Pin button work universally (per Pass 2 / decision 5.2).
     const makeListItemPinnedSuggestionConfig = (suggestionId, fromCatId, pinOptions = {}) => {
       const allowUnpin = pinOptions.allowUnpin !== false;
@@ -2735,7 +2859,7 @@ export default function App() {
     }
     if (typeof window === 'undefined') return;
     try {
-      const FLAG = 'tend.clearChipTooltipSeen.v1';
+      const FLAG = 'provisions.clearChipTooltipSeen.v1';
       if (window.localStorage.getItem(FLAG)) return;
       setShowClearChipTooltip(true);
       window.localStorage.setItem(FLAG, '1');
@@ -2971,7 +3095,7 @@ export default function App() {
     prevShopAisleHadItemsRef.current = nextHadItems;
   }, [quickAddMode, list, aislesV2, categoriesV2, householdId]);
 
-  // --- A1/B1: Load events and compute candidates when entering Add mode ---
+  // --- A1/B1: Load events and compute candidates when entering Plan mode ---
   useEffect(() => {
     if (!quickAddMode || !householdId) {
       return;
@@ -3210,6 +3334,7 @@ export default function App() {
   const handleLoginSuccess = useCallback(() => {
     setShowLoginExplicitly(false);
     setLoginLegalView(null);
+    window.history.replaceState({}, '', '/app');
     // Login is an early return in this component; list/Shop state would otherwise persist (e.g. Account page).
     setCurrentPage('list');
     setQuickAddMode(false);
@@ -3262,6 +3387,7 @@ export default function App() {
         onLoginSuccess={handleLoginSuccess}
         legalView={loginLegalView}
         onLegalViewChange={setLoginLegalView}
+        initialMode={loginInitialMode}
       />
     );
   }
@@ -3278,6 +3404,7 @@ export default function App() {
           onLoginSuccess={handleLoginSuccess}
           legalView={loginLegalView}
           onLegalViewChange={setLoginLegalView}
+          initialMode={loginInitialMode}
         />
       );
     }
@@ -3532,8 +3659,8 @@ export default function App() {
         }
       `}</style>
       <div className={`min-h-screen scroll-fade-bg ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: isScrolling ? '#FFFFFF' : '#F7F7F7' }}>
-        {/* Header — mobile: hamburger left, brand center, sync pill right (hides on scroll-down).
-            Desktop (lg+): brand left, Shop/Add + Clear inline (when on list), nav links, sync pill. Always visible. */}
+        {/* Header — hamburger + wordmark row; sync pill top-right. Mobile: brand centered (spacer); lg+: wordmark left.
+            List page (lg+): Shop/Plan bar mirrors mobile bottom bar, pinned under this row. */}
         <div
           className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 lg:translate-y-0 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}
           style={{ paddingTop: 'env(safe-area-inset-top)' }}
@@ -3542,7 +3669,7 @@ export default function App() {
             <div className="flex items-center gap-2 lg:gap-3">
               <button
                 onClick={() => setShowMenu(!showMenu)}
-                className="lg:hidden p-2 -ml-2 hover:bg-gray-100 rounded-lg transition-colors"
+                className="p-2 -ml-2 hover:bg-gray-100 rounded-lg transition-colors"
                 aria-label="Menu"
               >
                 <Menu size={22} className="text-gray-700" />
@@ -3550,92 +3677,128 @@ export default function App() {
 
               <button
                 onClick={() => { setCurrentPage('list'); setShowMenu(false); }}
-                className="font-bold text-xl flex-1 lg:flex-none text-center lg:text-left"
-                style={{ color: '#FF7A7A' }}
+                className="flex-1 lg:flex-none flex flex-col items-center lg:items-start min-w-0"
               >
-                Shopping List
+                <span
+                  className={`font-bold text-xl ${currentPage !== 'list' ? 'hidden' : ''}`}
+                  style={{ color: '#FF7A7A' }}
+                >
+                  Provisions
+                </span>
+                {currentPage !== 'list' && (
+                  <span className="flex flex-col items-center lg:items-start">
+                    <span className="text-[9px] font-bold tracking-[0.18em] uppercase leading-none mb-0.5" style={{ color: '#FF7A7A' }}>
+                      Provisions
+                    </span>
+                    <span className="text-base font-bold leading-tight text-gray-800">
+                      {currentPage === 'history'
+                        ? 'Purchase History'
+                        : currentPage === 'insights'
+                          ? 'Household Insights'
+                          : currentPage === 'settings'
+                            ? 'Settings'
+                            : 'Account'}
+                    </span>
+                  </span>
+                )}
               </button>
 
-              {currentPage === 'list' && (
-                pinEditMode ? (
-                  <div className="hidden lg:flex bg-gray-100 rounded-xl p-1 ml-4 min-w-[220px] items-center justify-between gap-2">
-                    <span className="flex-1 text-center font-bold text-sm text-gray-800 py-2">Edit pins</span>
-                    <button
-                      type="button"
-                      onClick={exitPinEditMode}
-                      className="shrink-0 px-4 py-2 rounded-lg font-bold text-sm text-white"
-                      style={{ backgroundColor: '#FF7A7A' }}
-                    >
-                      Done
-                    </button>
-                  </div>
-                ) : (
-                  <div className="hidden lg:flex bg-gray-100 rounded-xl p-1 gap-1 ml-4">
-                    <button
-                      onClick={() => setQuickAddMode(false)}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
-                      style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
-                    >
-                      <ShoppingCart size={16} strokeWidth={2.5} />
-                      Shop
-                    </button>
-                    <button
-                      onClick={() => setQuickAddMode(true)}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600 hover:text-gray-800'}`}
-                      style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
-                    >
-                      <ClipboardList size={16} strokeWidth={2.5} />
-                      Add
-                    </button>
-                  </div>
-                )
-              )}
+              {/* Balances the hamburger on the left so the wordmark is truly centered on mobile */}
+              <div className="lg:hidden shrink-0 w-[30px]" aria-hidden />
 
-              {currentPage === 'list' && doneCount > 0 && (
-                <button
-                  onClick={clearDone}
-                  className="hidden lg:flex items-center gap-1.5 px-3 py-2 rounded-lg text-white font-bold text-sm hover:opacity-90"
-                  style={{ backgroundColor: '#FF7A7A' }}
-                >
-                  <Check size={16} strokeWidth={2.5} />
-                  Clear {doneCount} done
-                </button>
-              )}
+            </div>
 
-              <div className="hidden lg:flex items-center gap-1 ml-auto">
-                <button onClick={() => setCurrentPage('list')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'list' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'list' ? { color: '#FF7A7A' } : {}}>List</button>
-                <button onClick={() => setCurrentPage('history')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'history' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'history' ? { color: '#FF7A7A' } : {}}>History</button>
-                <button onClick={() => setCurrentPage('settings')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'settings' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'settings' ? { color: '#FF7A7A' } : {}}>Settings</button>
-                <button onClick={() => setCurrentPage('account')} className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${currentPage === 'account' ? '' : 'text-gray-600 hover:bg-gray-100'}`} style={currentPage === 'account' ? { color: '#FF7A7A' } : {}}>Account</button>
-              </div>
-
-              {/* Reserve mobile width so the centered title does not shift when the pill mounts. */}
-              <div className="flex shrink-0 items-center justify-end min-w-[6.5rem] lg:min-w-0">
-                {(!isOnline || !isConnected || pendingOps > 0) && (
-                  <div className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 lg:px-3 py-1.5 rounded-full transition-colors ${
-                    !isOnline || !isConnected ? 'bg-red-100' : 'bg-blue-100'
-                  }`} aria-label={!isOnline || !isConnected ? 'Offline' : 'Syncing'}>
-                    {!isOnline || !isConnected ? (
-                      <>
-                        <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                        <span className="text-xs font-medium text-red-600">Offline</span>
-                      </>
-                    ) : (
-                      <>
-                        <Loader2 size={14} className="text-blue-600 animate-spin" />
-                        <span className="text-xs font-medium text-blue-600">Syncing</span>
-                      </>
+            {currentPage === 'list' && !keyboardInputFocused && (
+              <div className="hidden lg:block pt-1 pb-2">
+                {doneCount > 0 && (
+                  <div className="flex justify-center mb-2 pointer-events-auto relative">
+                    {showClearChipTooltip && (
+                      <div
+                        className="animate-tooltip-in absolute left-1/2 -top-12 -translate-x-1/2 bg-gray-900 text-white text-xs font-medium px-3 py-2 rounded-lg shadow-lg whitespace-nowrap"
+                        aria-hidden="true"
+                      >
+                        All done with these? Tap to clear.
+                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
+                      </div>
                     )}
+                    <button
+                      key={`clear-chip-desktop-${hasDone}`}
+                      onClick={clearDone}
+                      className="animate-chip-in flex items-center gap-1.5 px-4 py-2 rounded-full text-white text-xs font-bold shadow-lg active:scale-95 transition-transform"
+                      style={{ backgroundColor: '#FF7A7A' }}
+                      aria-label={`Clear ${doneCount} done item${doneCount === 1 ? '' : 's'}`}
+                    >
+                      <Check size={14} strokeWidth={2.5} />
+                      Clear {doneCount} done
+                    </button>
                   </div>
                 )}
+                <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-1.5 flex gap-1 pointer-events-auto items-center">
+                  {pinEditMode ? (
+                    <>
+                      <div className="flex-1 text-center font-bold text-sm text-gray-800 py-3">Edit pins</div>
+                      <button
+                        type="button"
+                        onClick={exitPinEditMode}
+                        className="shrink-0 px-5 py-3 rounded-xl font-bold text-sm text-white"
+                        style={{ backgroundColor: '#FF7A7A' }}
+                      >
+                        Done
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setQuickAddMode(false)}
+                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                        style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
+                        aria-pressed={!quickAddMode}
+                      >
+                        <ShoppingCart size={18} strokeWidth={2.5} />
+                        Shop
+                      </button>
+                      <button
+                        onClick={() => setQuickAddMode(true)}
+                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                        style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
+                        aria-pressed={quickAddMode}
+                      >
+                        <ClipboardPen size={18} strokeWidth={2.5} />
+                        Plan
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
+          {(!isOnline || !isConnected || pendingOps > 0) && (
+            <div
+              className={`fixed right-3 z-50 flex items-center gap-1.5 whitespace-nowrap px-2 py-1.5 rounded-full pointer-events-none transition-colors ${
+                !isOnline || !isConnected ? 'bg-red-100' : 'bg-blue-100'
+              }`}
+              style={{ top: 'calc(env(safe-area-inset-top) + 0.75rem)' }}
+              aria-label={!isOnline || !isConnected ? 'Offline' : 'Syncing'}
+            >
+              {!isOnline || !isConnected ? (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-red-500" />
+                  <span className="text-xs font-medium text-red-600">Offline</span>
+                </>
+              ) : (
+                <>
+                  <Loader2 size={14} className="text-blue-600 animate-spin" />
+                  <span className="text-xs font-medium text-blue-600">Syncing</span>
+                </>
+              )}
+            </div>
+          )}
           {showMenu && (
-            <div className="lg:hidden absolute top-full left-0 right-0 bg-white shadow-lg border-t border-gray-200">
-              <div className="max-w-2xl mx-auto">
-                <button onClick={() => { setCurrentPage('list'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 ${currentPage === 'list' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'list' ? '#FF7A7A' : '#374151' }}>Shopping List</button>
+            <div className="absolute top-full left-0 right-0 bg-white shadow-lg border-t border-gray-200">
+              <div className="max-w-2xl lg:max-w-6xl mx-auto">
+                <button onClick={() => { setCurrentPage('list'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'list' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'list' ? '#FF7A7A' : '#374151' }}><ClipboardList size={20} />List</button>
                 <button onClick={() => { setCurrentPage('history'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'history' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'history' ? '#FF7A7A' : '#374151' }}><History size={20} />Purchase History</button>
+                <button onClick={() => { setCurrentPage('insights'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'insights' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'insights' ? '#FF7A7A' : '#374151' }}><BarChart3 size={20} />Household Insights</button>
                 <button onClick={() => { setCurrentPage('settings'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'settings' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'settings' ? '#FF7A7A' : '#374151' }}><Settings size={20} />Settings</button>
                 <button onClick={() => { setCurrentPage('account'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'account' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'account' ? '#FF7A7A' : '#374151' }}><UserCircle size={20} />Account</button>
               </div>
@@ -3653,8 +3816,11 @@ export default function App() {
         )}
 
         <div
-          className={`lg:pb-6 ${currentPage === 'list' ? 'pb-32' : 'pb-6'}`}
-          style={{ paddingTop: 'calc(5rem + env(safe-area-inset-top))' }}
+          className={`lg:pb-6 ${currentPage === 'list' ? 'pb-32' : 'pb-6'} ${
+            currentPage === 'list'
+              ? 'pt-[calc(5rem+env(safe-area-inset-top,0px))] lg:pt-[calc(10.5rem+env(safe-area-inset-top,0px))]'
+              : 'pt-[calc(5rem+env(safe-area-inset-top,0px))]'
+          }`}
         >
           {currentPage === 'privacy' ? (
             <PrivacyPolicyPage onBack={() => setCurrentPage('account')} />
@@ -3663,11 +3829,6 @@ export default function App() {
           ) : currentPage === 'account' ? (
             <div className="max-w-2xl mx-auto px-4 flex min-h-[calc(100dvh-5.5rem)] flex-col">
               <div className="space-y-3 shrink-0">
-                {householdId && (
-                  <button onClick={() => setShowHouseholdInsights(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
-                    <BarChart3 size={20} />Household Insights
-                  </button>
-                )}
                 {isAdmin && (
                   <button onClick={() => setShowAdmin(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
                     <Shield size={20} />Invite Household Members
@@ -3704,22 +3865,21 @@ export default function App() {
             </div>
           ) : currentPage === 'list' ? (
             <div className="max-w-2xl mx-auto px-4">
-              {/* Toolbar lives in the desktop header (>=lg) and in the mobile bottom nav bar (<lg).
-                  See the fixed bottom-bar block at the bottom of this return for the mobile placement. */}
+              {/* Shop/Plan toolbar: mobile bottom bar; desktop second row under header (same UI). */}
               {!quickAddMode && list.length === 0 ? (
                 <div className="mt-12 mx-auto max-w-sm rounded-2xl border border-gray-200 bg-white p-8 text-center">
                   <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-4 bg-gray-50">
                     <ShoppingCart size={24} className="text-gray-400" />
                   </div>
                   <p className="text-gray-700 font-semibold mb-1">Your list is empty</p>
-                  <p className="text-sm text-gray-500 mb-5">Tap Add to start building your list.</p>
+                  <p className="text-sm text-gray-500 mb-5">Tap Plan to start building your list.</p>
                   <button
                     type="button"
                     onClick={() => setQuickAddMode(true)}
                     className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold"
                     style={{ backgroundColor: '#FF7A7A' }}
                   >
-                    Add items
+                    Plan your list
                   </button>
                 </div>
               ) : (
@@ -3738,17 +3898,17 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => toggleCategory(g.aisleId)}
-                        className={`w-full py-4 px-4 flex items-center gap-3 transition-colors ${
-                          isExpanded ? 'rounded-t-2xl' : 'rounded-2xl'
-                        } hover:bg-gray-50`}
-                        style={{ opacity: isScrolling ? 0.12 : 1, transition: 'opacity 0.1s ease-out' }}
+                        className={`w-full px-4 flex items-center transition-colors ${
+                          quickAddMode ? 'py-4 gap-3' : 'py-2.5 gap-2.5'
+                        } ${isExpanded ? 'rounded-t-2xl' : 'rounded-2xl'} hover:bg-gray-50`}
+                        style={{ opacity: isScrolling && !quickAddMode ? 0.12 : 1, transition: 'opacity 0.1s ease-out' }}
                       >
                         {isExpanded ? (
-                          <ChevronDown size={20} className="text-gray-400" />
+                          <ChevronDown size={quickAddMode ? 20 : 14} className={quickAddMode ? 'text-gray-400' : 'text-gray-300'} />
                         ) : (
-                          <ChevronRight size={20} className="text-gray-400" />
+                          <ChevronRight size={quickAddMode ? 20 : 14} className={quickAddMode ? 'text-gray-400' : 'text-gray-300'} />
                         )}
-                        <h3 className="flex-1 text-left uppercase tracking-wide font-bold text-gray-700 text-base">{g.aisleNameDisplay}</h3>
+                        <h3 className={`flex-1 text-left uppercase text-sm ${quickAddMode ? 'tracking-wide font-bold text-gray-700' : 'tracking-widest font-medium text-gray-400'}`}>{g.aisleNameDisplay}</h3>
                       </button>
 
                       {isExpanded && (
@@ -4072,7 +4232,20 @@ export default function App() {
               aisles={aislesV2}
               categories={categoriesV2}
             />
-          ) : (
+          ) : currentPage === 'insights' ? (
+            householdId ? (
+              <HouseholdInsightsPage
+                householdId={householdId}
+                liveBucketMonthKey={itemEventsListenerMonth}
+                liveBucketVal={liveItemEventsMonthVal}
+                members={members}
+              />
+            ) : (
+              <div className="max-w-2xl mx-auto px-4 text-center py-12 text-gray-500 text-sm">
+                Household insights are unavailable until your household is loaded.
+              </div>
+            )
+          ) : currentPage === 'settings' ? (
             <SuggestionsEditor
               aisles={aislesV2}
               categories={categoriesV2}
@@ -4088,11 +4261,10 @@ export default function App() {
               onMergeCategory={taxoMergeCategory}
               accordionAisles
             />
-          )}
+          ) : null}
         </div>
 
-        {/* Mobile bottom nav bar — Shop/Add primary toggle + contextual Clear chip.
-            Only on the list page (Shop/Add modes don't apply elsewhere). Hidden at lg+ where the desktop header carries these controls. */}
+        {/* Mobile bottom nav — same Shop/Plan + Clear as desktop (desktop: fixed under header). */}
         {currentPage === 'list' && !keyboardInputFocused && (
           <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 px-3 pt-3 pb-safe pointer-events-none">
             {doneCount > 0 && (
@@ -4148,8 +4320,8 @@ export default function App() {
                     style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
                     aria-pressed={quickAddMode}
                   >
-                    <ClipboardList size={18} strokeWidth={2.5} />
-                    Add
+                    <ClipboardPen size={18} strokeWidth={2.5} />
+                    Plan
                   </button>
                 </>
               )}
@@ -4157,15 +4329,6 @@ export default function App() {
           </div>
         )}
       </div>
-      {showHouseholdInsights && householdId && (
-        <InsightsModal
-          householdId={householdId}
-          liveBucketMonthKey={itemEventsListenerMonth}
-          liveBucketVal={liveItemEventsMonthVal}
-          members={members}
-          onClose={() => setShowHouseholdInsights(false)}
-        />
-      )}
       {showAdmin && isAdmin && <AdminPanel householdId={householdId} onClose={() => setShowAdmin(false)} />}
       {showDeleteAccount && user && (
         <DeleteAccountModal
