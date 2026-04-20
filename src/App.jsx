@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { flushSync } from 'react-dom';
 import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, ClipboardPen, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff, ScrollText } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
@@ -433,14 +434,16 @@ function insightsMemberLabel(members, uid) {
   return 'Unknown member';
 }
 
-const ITEM_LOG_ACTIONS = new Set(['added', 'removed', 'checked', 'unchecked']);
+const ITEM_LOG_ACTIONS = new Set(['added', 'removed', 'checked', 'unchecked', 'renamed']);
 
-function itemLogActionLabel(action) {
-  if (action === 'added') return 'Added';
-  if (action === 'removed') return 'Removed';
-  if (action === 'checked') return 'Purchased';
-  if (action === 'unchecked') return 'Unchecked';
-  return action || '—';
+/** Past-tense verb for list activity modal copy only ("Jane checked", not "Purchased"). */
+function itemLogActionVerbModal(action) {
+  if (action === 'added') return 'added';
+  if (action === 'removed') return 'removed';
+  if (action === 'checked') return 'checked';
+  if (action === 'unchecked') return 'unchecked';
+  if (action === 'renamed') return 'renamed';
+  return action || 'recorded';
 }
 
 function HouseholdItemEventLogModal({ onClose, members, eventsNewestFirst }) {
@@ -461,7 +464,7 @@ function HouseholdItemEventLogModal({ onClose, members, eventsNewestFirst }) {
             List activity log
           </h2>
           <p className="text-gray-600 text-xs font-medium mt-1">
-            Adds, removals, purchases, and unchecks. Newest first.
+            Adds, removals, renames, purchases, and unchecks. Newest first.
           </p>
         </div>
         <div className="flex-1 overflow-y-auto p-4 min-h-0">
@@ -471,34 +474,31 @@ function HouseholdItemEventLogModal({ onClose, members, eventsNewestFirst }) {
             <ul className="space-y-2">
               {eventsNewestFirst.map((e, i) => (
                 <li
-                  key={`${e.ts}-${i}-${e.name || ''}-${e.action || ''}`}
-                  className="bg-gray-50 rounded-xl px-3 py-2.5 border border-gray-100 text-sm"
+                  key={`${e.ts}-${i}-${e.prevName || ''}-${e.name || ''}-${e.action || ''}`}
+                  className="bg-gray-50 rounded-xl px-3 py-2 border border-gray-100 text-sm"
                 >
-                  <div className="flex justify-between gap-2 items-start">
-                    <span className="text-gray-500 text-xs shrink-0 tabular-nums">
-                      {formatLocalDateTimePhrase(e.ts)}
-                    </span>
-                    <span
-                      className={`text-xs font-bold shrink-0 ${
-                        e.action === 'added'
-                          ? 'text-green-700'
-                          : e.action === 'removed'
-                            ? 'text-red-600'
-                            : e.action === 'checked'
-                              ? 'text-emerald-700'
-                              : 'text-amber-700'
-                      }`}
-                    >
-                      {itemLogActionLabel(e.action)}
-                    </span>
+                  <div className="text-xs text-gray-500 min-w-0 leading-snug">
+                    <span className="tabular-nums text-gray-500">{formatLocalDateTimePhrase(e.ts)}</span>
+                    <span className="text-gray-400"> · </span>
+                    <span className="font-semibold text-gray-800">{insightsMemberLabel(members, e.uid)}</span>
+                    <span className="text-gray-600"> {itemLogActionVerbModal(e.action)}</span>
                   </div>
-                  <div className="mt-1 font-semibold text-gray-800 break-words">
-                    {e.name || '(unnamed)'}
-                    {e.category ? <span className="text-gray-500 font-medium text-xs"> · {e.category}</span> : null}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {insightsMemberLabel(members, e.uid)}
-                    {e.qty != null && Number(e.qty) !== 1 ? ` · qty ${e.qty}` : ''}
+                  <div className="mt-1 font-semibold text-gray-800 break-words text-sm min-w-0">
+                    {e.action === 'renamed' && e.prevName ? (
+                      <>
+                        <span className="text-gray-600 font-medium">{e.prevName}</span>
+                        <span className="text-gray-400 font-normal mx-0.5">→</span>
+                        <span>{e.name || '(unnamed)'}</span>
+                      </>
+                    ) : (
+                      <>{e.name || '(unnamed)'}</>
+                    )}
+                    {e.category ? (
+                      <span className="text-gray-500 font-medium text-xs"> · {e.category}</span>
+                    ) : null}
+                    {e.qty != null && Number(e.qty) !== 1 ? (
+                      <span className="text-gray-500 font-medium text-xs"> · qty {e.qty}</span>
+                    ) : null}
                   </div>
                 </li>
               ))}
@@ -681,7 +681,7 @@ function HouseholdInsightsPage({ householdId, liveBucketMonthKey, liveBucketVal,
             View full list activity log
           </button>
           <p className="text-center text-xs text-gray-500 mt-2">
-            Adds, removals, purchases, and unchecks — same data as insights, full timeline.
+            Adds, removals, renames, purchases, and unchecks — same data as insights, full timeline.
           </p>
         </div>
       )}
@@ -2322,6 +2322,8 @@ export default function App() {
       ? String(event.quantityLabel).trim().slice(0, 100)
       : '';
     if (qLabel) payload.quantityLabel = qLabel;
+    const prevRaw = event.prevName != null ? String(event.prevName).trim() : '';
+    if (prevRaw) payload.prevName = prevRaw.toLowerCase().slice(0, 200);
     pushHouseholdItemEvent(database, householdId, payload).catch((err) => {
       logger.warn('App', 'item-event write failed', { error: err.message, action: payload.action });
     });
@@ -2466,20 +2468,44 @@ export default function App() {
     };
     const nextVisible = renameBucket(vis);
     const nextLibrary = renameBucket(lib);
-    return { nextList, nextVisible, nextLibrary };
+    return {
+      nextList,
+      nextVisible,
+      nextLibrary,
+      renameLog: {
+        oldName: targetName,
+        newName: trimmed,
+        category: getShoppingCategoryName(target),
+        categoryId: getItemCategoryId(target),
+        itemKey: targetStableKey,
+      },
+    };
   };
 
   const updateItemName = async (itemKey, nextName) => {
     const trimmed = (nextName || '').trim();
     let outcome = null;
-    setList((prevList) => {
-      outcome = computeRenameOutcome(prevList, itemKey, trimmed, visibleItemsV2, libraryItemsV2);
-      return outcome ? outcome.nextList : prevList;
+    // Run synchronously so `outcome` is set before persistence / item-events (React 18 may defer plain setList updaters).
+    flushSync(() => {
+      setList((prevList) => {
+        outcome = computeRenameOutcome(prevList, itemKey, trimmed, visibleItemsV2, libraryItemsV2);
+        return outcome ? outcome.nextList : prevList;
+      });
     });
     if (!outcome) return;
 
     save('shopping-list', outcome.nextList);
     saveShoppingListLocally(outcome.nextList);
+    if (outcome.renameLog) {
+      logItemEvent({
+        name: outcome.renameLog.newName,
+        prevName: outcome.renameLog.oldName,
+        category: outcome.renameLog.category,
+        categoryId: outcome.renameLog.categoryId,
+        itemKey: outcome.renameLog.itemKey,
+        action: 'renamed',
+      });
+    }
     if (outcome.nextVisible) {
       setVisibleItemsV2(outcome.nextVisible);
       save('taxonomy/visible-items', outcome.nextVisible);
@@ -3288,7 +3314,7 @@ export default function App() {
       const scrollingUp = currentScrollY < lastScrollY.current;
 
       // Header visibility - hide when scrolling down past 50px, show when scrolling up.
-      // Bottom nav bar (mobile) is independently fixed-positioned and stays visible regardless.
+      // List toolbar (mobile bottom / desktop top) stays fixed; on desktop its offset follows the header.
       if (scrollingDown && currentScrollY > 50) {
         setShowHeader(false);
         setShowMenu(false); // Close menu when hiding header
@@ -3659,10 +3685,9 @@ export default function App() {
         }
       `}</style>
       <div className={`min-h-screen scroll-fade-bg ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: isScrolling ? '#FFFFFF' : '#F7F7F7' }}>
-        {/* Header — hamburger + wordmark row; sync pill top-right. Mobile: brand centered (spacer); lg+: wordmark left.
-            List page (lg+): Shop/Plan bar mirrors mobile bottom bar, pinned under this row. */}
+        {/* Header — hamburger + wordmark only; sync pill top-right. Scrolls off-screen on scroll-down (all breakpoints). */}
         <div
-          className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 lg:translate-y-0 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}
+          className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}
           style={{ paddingTop: 'env(safe-area-inset-top)' }}
         >
           <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3">
@@ -3707,70 +3732,6 @@ export default function App() {
               <div className="lg:hidden shrink-0 w-[30px]" aria-hidden />
 
             </div>
-
-            {currentPage === 'list' && !keyboardInputFocused && (
-              <div className="hidden lg:block pt-1 pb-2">
-                {doneCount > 0 && (
-                  <div className="flex justify-center mb-2 pointer-events-auto relative">
-                    {showClearChipTooltip && (
-                      <div
-                        className="animate-tooltip-in absolute left-1/2 -top-12 -translate-x-1/2 bg-gray-900 text-white text-xs font-medium px-3 py-2 rounded-lg shadow-lg whitespace-nowrap"
-                        aria-hidden="true"
-                      >
-                        All done with these? Tap to clear.
-                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
-                      </div>
-                    )}
-                    <button
-                      key={`clear-chip-desktop-${hasDone}`}
-                      onClick={clearDone}
-                      className="animate-chip-in flex items-center gap-1.5 px-4 py-2 rounded-full text-white text-xs font-bold shadow-lg active:scale-95 transition-transform"
-                      style={{ backgroundColor: '#FF7A7A' }}
-                      aria-label={`Clear ${doneCount} done item${doneCount === 1 ? '' : 's'}`}
-                    >
-                      <Check size={14} strokeWidth={2.5} />
-                      Clear {doneCount} done
-                    </button>
-                  </div>
-                )}
-                <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-1.5 flex gap-1 pointer-events-auto items-center">
-                  {pinEditMode ? (
-                    <>
-                      <div className="flex-1 text-center font-bold text-sm text-gray-800 py-3">Edit pins</div>
-                      <button
-                        type="button"
-                        onClick={exitPinEditMode}
-                        className="shrink-0 px-5 py-3 rounded-xl font-bold text-sm text-white"
-                        style={{ backgroundColor: '#FF7A7A' }}
-                      >
-                        Done
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => setQuickAddMode(false)}
-                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600'}`}
-                        style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
-                        aria-pressed={!quickAddMode}
-                      >
-                        <ShoppingCart size={18} strokeWidth={2.5} />
-                        Shop
-                      </button>
-                      <button
-                        onClick={() => setQuickAddMode(true)}
-                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
-                        style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
-                        aria-pressed={quickAddMode}
-                      >
-                        <ClipboardPen size={18} strokeWidth={2.5} />
-                        Plan
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
           {(!isOnline || !isConnected || pendingOps > 0) && (
             <div
@@ -3805,6 +3766,80 @@ export default function App() {
             </div>
           )}
         </div>
+
+        {/* Desktop list: Shop/Plan + Clear — fixed below header (not inside it); slides up when header hides, like mobile bottom bar. */}
+        {currentPage === 'list' && !keyboardInputFocused && (
+          <div
+            className="hidden lg:block fixed left-0 right-0 z-40 px-3 pt-3 pointer-events-none transition-[top] duration-300 ease-out"
+            style={{
+              top: showHeader
+                ? 'calc(env(safe-area-inset-top, 0px) + 4.25rem)'
+                : 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
+            }}
+          >
+            <div className="max-w-2xl lg:max-w-6xl mx-auto">
+              {doneCount > 0 && (
+                <div className="flex justify-center mb-2 pointer-events-auto relative">
+                  {showClearChipTooltip && (
+                    <div
+                      className="animate-tooltip-in absolute left-1/2 -top-12 -translate-x-1/2 bg-gray-900 text-white text-xs font-medium px-3 py-2 rounded-lg shadow-lg whitespace-nowrap"
+                      aria-hidden="true"
+                    >
+                      All done with these? Tap to clear.
+                      <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
+                    </div>
+                  )}
+                  <button
+                    key={`clear-chip-desktop-${hasDone}`}
+                    onClick={clearDone}
+                    className="animate-chip-in flex items-center gap-1.5 px-4 py-2 rounded-full text-white text-xs font-bold shadow-lg active:scale-95 transition-transform"
+                    style={{ backgroundColor: '#FF7A7A' }}
+                    aria-label={`Clear ${doneCount} done item${doneCount === 1 ? '' : 's'}`}
+                  >
+                    <Check size={14} strokeWidth={2.5} />
+                    Clear {doneCount} done
+                  </button>
+                </div>
+              )}
+              <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-1.5 flex gap-1 pointer-events-auto items-center">
+                {pinEditMode ? (
+                  <>
+                    <div className="flex-1 text-center font-bold text-sm text-gray-800 py-3">Edit pins</div>
+                    <button
+                      type="button"
+                      onClick={exitPinEditMode}
+                      className="shrink-0 px-5 py-3 rounded-xl font-bold text-sm text-white"
+                      style={{ backgroundColor: '#FF7A7A' }}
+                    >
+                      Done
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setQuickAddMode(false)}
+                      className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${!quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                      style={{ backgroundColor: !quickAddMode ? '#FF7A7A' : 'transparent' }}
+                      aria-pressed={!quickAddMode}
+                    >
+                      <ShoppingCart size={18} strokeWidth={2.5} />
+                      Shop
+                    </button>
+                    <button
+                      onClick={() => setQuickAddMode(true)}
+                      className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
+                      style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
+                      aria-pressed={quickAddMode}
+                    >
+                      <ClipboardPen size={18} strokeWidth={2.5} />
+                      Plan
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {(!isOnline || !isConnected) && (
           <div className="bg-red-600 text-white px-4 py-2 text-sm font-medium flex items-center justify-center gap-2">
@@ -3865,7 +3900,7 @@ export default function App() {
             </div>
           ) : currentPage === 'list' ? (
             <div className="max-w-2xl mx-auto px-4">
-              {/* Shop/Plan toolbar: mobile bottom bar; desktop second row under header (same UI). */}
+              {/* Shop/Plan: mobile = bottom fixed bar; desktop = top fixed bar (see block after header). */}
               {!quickAddMode && list.length === 0 ? (
                 <div className="mt-12 mx-auto max-w-sm rounded-2xl border border-gray-200 bg-white p-8 text-center">
                   <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-4 bg-gray-50">
@@ -4264,7 +4299,7 @@ export default function App() {
           ) : null}
         </div>
 
-        {/* Mobile bottom nav — same Shop/Plan + Clear as desktop (desktop: fixed under header). */}
+        {/* Mobile bottom nav — Shop/Plan + Clear (desktop uses the fixed top dock after the header). */}
         {currentPage === 'list' && !keyboardInputFocused && (
           <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 px-3 pt-3 pb-safe pointer-events-none">
             {doneCount > 0 && (

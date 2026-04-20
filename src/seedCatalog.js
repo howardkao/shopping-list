@@ -4,7 +4,7 @@
 // - Aisles are ordered; order reflects a reasonable default walk through a store.
 // - Categories attach to exactly one aisle via aisleId.
 // - Items attach to exactly one category via categoryId.
-// - `starred: true` items seed into the household's visible (quick-add) set.
+// - `starred: true` items seed into the household's visible (Plan shortcut tile) set.
 //   Unstarred items seed into the library (autocomplete-only).
 //
 // IDs below are stable slug-style strings. At household-seed time, the migration

@@ -1,11 +1,11 @@
-# Household Shopping List
+# Provisions
 
 A self-hosted collaborative shopping list app for a single household. Built with React and Firebase — deploy your own copy in about 20 minutes.
 
 **What it does:**
 - Shared, real-time shopping list across all household members' devices
 - Organize items by category; check them off as you shop
-- Suggestion system — items you've bought before surface as quick-adds
+- Suggestion system — items you've bought before surface as shortcut tiles in Plan mode
 - Works offline; syncs when connectivity returns
 - Invite-code system so only your household can sign in
 - Mobile-friendly PWA (add to home screen on iOS/Android)
@@ -92,9 +92,9 @@ firebase deploy --only hosting
 
 **Shopping list** — add items, check them off as you shop. Items are grouped by aisle so they appear in the order you walk the store.
 
-**Add mode vs Shop mode** — toggle between browsing suggestion tiles (Add mode) and checking off the active list (Shop mode).
+**Plan mode vs Shop mode** — toggle between browsing suggestion tiles and curating the list (Plan mode) and checking off the active list (Shop mode).
 
-**Suggestions** — every household is seeded with aisles, categories, and items. Items in each category are either **visible** (shown as quick-add tiles) or in the **library** (searchable via autocomplete). Edit the taxonomy from Settings → Suggestions.
+**Suggestions** — every household is seeded with aisles, categories, and items. Items in each category are either **visible** (shown as shortcut tiles in Plan mode) or in the **library** (searchable via autocomplete). Edit the taxonomy from Settings → Suggestions.
 
 **Offline support** — the app caches data locally and works without a connection. Changes sync automatically when you're back online.
 

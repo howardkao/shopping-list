@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aisle Chrome Mockups — Larder</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: #f2f2f2;
+      padding: 40px 24px;
+      color: #1a1a1a;
+    }
+
+    h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+    .intro { font-size: 14px; color: #888; margin-bottom: 12px; line-height: 1.5; }
+    .note { font-size: 12px; color: #aaa; margin-bottom: 48px; font-style: italic; }
+
+    .phones { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+
+    .phone-wrap { display: flex; flex-direction: column; gap: 8px; }
+    .phone-label { font-size: 11px; font-weight: 700; color: #aaa; letter-spacing: 0.08em; text-transform: uppercase; }
+
+    .phone {
+      width: 300px;
+      background: #f8f8f8;
+      border-radius: 28px;
+      box-shadow: 0 2px 20px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.05);
+      overflow: hidden;
+    }
+
+    /* ── App chrome (identical across all variants) ── */
+    .app-header {
+      background: white;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      align-items: center;
+    }
+    .app-header .slot { width: 28px; }
+    .app-header .wordmark {
+      flex: 1; text-align: center;
+      font-size: 13px; font-weight: 700; color: #FF7A7A; letter-spacing: 0.04em;
+    }
+
+    .list-body {
+      padding: 10px 10px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      background: #f8f8f8;
+    }
+
+    /* ── Item rows (identical across all variants) ── */
+    .item-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 14px;
+      border-bottom: 1px solid #f4f4f4;
+    }
+    .item-row:last-child { border-bottom: none; }
+    .cb {
+      width: 21px; height: 21px;
+      border: 2px solid #e0e0e0; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .item-name { font-size: 15px; font-weight: 500; color: #FF7A7A; }
+
+    /* ── Aisle card shell ── */
+    .aisle-card {
+      background: white;
+      border: 1px solid #e5e5e5;
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    /* ── Bottom nav (identical across all variants) ── */
+    .bottom-nav {
+      background: white;
+      border-top: 1px solid #f0f0f0;
+      padding: 10px 0 16px;
+      display: flex;
+      justify-content: space-around;
+    }
+    .nav-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .nav-icon { font-size: 18px; }
+    .nav-lbl { font-size: 10px; font-weight: 600; color: #ccc; }
+    .nav-lbl.active { color: #FF7A7A; }
+
+    /* ── SVG chevron helper ── */
+    .chev { display: block; flex-shrink: 0; }
+
+    /* ══════════════════════════════════════════
+       CURRENT — baseline for comparison
+    ══════════════════════════════════════════ */
+    .hdr-current {
+      width: 100%; padding: 16px;
+      display: flex; align-items: center; gap: 12px;
+      background: none; border: none; cursor: pointer;
+    }
+    .name-current {
+      flex: 1; text-align: left;
+      font-size: 16px; font-weight: 700; color: #374151;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+
+    /* ══════════════════════════════════════════
+       VARIANT A — Featherweight micro-label
+       Drops from 16px bold dark to 11px medium gray.
+       Keeps same left-chevron layout; shrinks padding.
+    ══════════════════════════════════════════ */
+    .hdr-a {
+      width: 100%; padding: 10px 14px;
+      display: flex; align-items: center; gap: 10px;
+      background: none; border: none; cursor: pointer;
+    }
+    .name-a {
+      flex: 1; text-align: left;
+      font-size: 11px; font-weight: 500; color: #9ca3af;
+      text-transform: uppercase; letter-spacing: 0.12em;
+    }
+
+    /* ══════════════════════════════════════════
+       VARIANT B — Title case, medium weight
+       Drops all-caps and tracking; reads as a caption
+       rather than a heading.
+    ══════════════════════════════════════════ */
+    .hdr-b {
+      width: 100%; padding: 12px 14px;
+      display: flex; align-items: center; gap: 10px;
+      background: none; border: none; cursor: pointer;
+    }
+    .name-b {
+      flex: 1; text-align: left;
+      font-size: 13px; font-weight: 500; color: #9ca3af;
+      letter-spacing: 0;
+    }
+
+    /* ══════════════════════════════════════════
+       VARIANT C — Hairline rule with centered label
+       Replaces the button with a ruled section break;
+       chevron sits to the right of the label.
+    ══════════════════════════════════════════ */
+    .hdr-c {
+      width: 100%; padding: 12px 14px 8px;
+      display: flex; align-items: center; gap: 8px;
+      background: none; border: none; cursor: pointer;
+    }
+    .rule-line { flex: 1; height: 1px; background: #ebebeb; }
+    .name-c {
+      font-size: 10px; font-weight: 600; color: #bbb;
+      text-transform: uppercase; letter-spacing: 0.14em;
+      white-space: nowrap;
+    }
+
+    /* ══════════════════════════════════════════
+       VARIANT D — Right-side chevron, compressed
+       Label flush-left as a whisper; chevron on the
+       right edge so the left side is clean for scanning.
+    ══════════════════════════════════════════ */
+    .hdr-d {
+      width: 100%; padding: 10px 14px;
+      display: flex; align-items: center;
+      background: none; border: none; cursor: pointer;
+    }
+    .name-d {
+      flex: 1; text-align: left;
+      font-size: 11px; font-weight: 600; color: #c4c9d4;
+      text-transform: uppercase; letter-spacing: 0.13em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Aisle Chrome Mockups</h1>
+  <p class="intro">Five treatments for the Shop-mode aisle expand/collapse header. Goal: make items the most scannable element, not the aisle name.</p>
+  <p class="note">Only the aisle header row changes. Item rows, card borders, bottom nav, and app header are identical across all variants.</p>
+
+  <div class="phones">
+
+    <!-- ─── CURRENT ─── -->
+    <div class="phone-wrap">
+      <div class="phone-label">Current</div>
+      <div class="phone">
+        <div class="app-header">
+          <div class="slot"></div>
+          <div class="wordmark">Larder</div>
+          <div class="slot"></div>
+        </div>
+        <div class="list-body">
+
+          <!-- Expanded aisle -->
+          <div class="aisle-card">
+            <button class="hdr-current">
+              <svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              <span class="name-current">Produce</span>
+            </button>
+            <div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">apples</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">bananas</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">spinach</span></div>
+            </div>
+          </div>
+
+          <!-- Collapsed aisle -->
+          <div class="aisle-card">
+            <button class="hdr-current">
+              <svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="name-current">Dairy</span>
+            </button>
+          </div>
+
+          <!-- Collapsed aisle -->
+          <div class="aisle-card">
+            <button class="hdr-current">
+              <svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="name-current">Meat &amp; Seafood</span>
+            </button>
+          </div>
+
+        </div>
+        <div class="bottom-nav">
+          <div class="nav-btn"><div class="nav-icon">🛒</div><div class="nav-lbl active">Shop</div></div>
+          <div class="nav-btn"><div class="nav-icon">➕</div><div class="nav-lbl">Plan</div></div>
+          <div class="nav-btn"><div class="nav-icon">⚙️</div><div class="nav-lbl">Settings</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── VARIANT A — Featherweight micro-label ─── -->
+    <div class="phone-wrap">
+      <div class="phone-label">A — Featherweight</div>
+      <div class="phone">
+        <div class="app-header">
+          <div class="slot"></div>
+          <div class="wordmark">Larder</div>
+          <div class="slot"></div>
+        </div>
+        <div class="list-body">
+
+          <div class="aisle-card">
+            <button class="hdr-a">
+              <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              <span class="name-a">Produce</span>
+            </button>
+            <div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">apples</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">bananas</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">spinach</span></div>
+            </div>
+          </div>
+
+          <div class="aisle-card">
+            <button class="hdr-a">
+              <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="name-a">Dairy</span>
+            </button>
+          </div>
+
+          <div class="aisle-card">
+            <button class="hdr-a">
+              <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="name-a">Meat &amp; Seafood</span>
+            </button>
+          </div>
+
+        </div>
+        <div class="bottom-nav">
+          <div class="nav-btn"><div class="nav-icon">🛒</div><div class="nav-lbl active">Shop</div></div>
+          <div class="nav-btn"><div class="nav-icon">➕</div><div class="nav-lbl">Plan</div></div>
+          <div class="nav-btn"><div class="nav-icon">⚙️</div><div class="nav-lbl">Settings</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── VARIANT B — Title case caption ─── -->
+    <div class="phone-wrap">
+      <div class="phone-label">B — Title case, caption weight</div>
+      <div class="phone">
+        <div class="app-header">
+          <div class="slot"></div>
+          <div class="wordmark">Larder</div>
+          <div class="slot"></div>
+        </div>
+        <div class="list-body">
+
+          <div class="aisle-card">
+            <button class="hdr-b">
+              <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              <span class="name-b">Produce</span>
+            </button>
+            <div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">apples</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">bananas</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">spinach</span></div>
+            </div>
+          </div>
+
+          <div class="aisle-card">
+            <button class="hdr-b">
+              <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="name-b">Dairy</span>
+            </button>
+          </div>
+
+          <div class="aisle-card">
+            <button class="hdr-b">
+              <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="name-b">Meat &amp; Seafood</span>
+            </button>
+          </div>
+
+        </div>
+        <div class="bottom-nav">
+          <div class="nav-btn"><div class="nav-icon">🛒</div><div class="nav-lbl active">Shop</div></div>
+          <div class="nav-btn"><div class="nav-icon">➕</div><div class="nav-lbl">Plan</div></div>
+          <div class="nav-btn"><div class="nav-icon">⚙️</div><div class="nav-lbl">Settings</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── VARIANT C — Hairline rule ─── -->
+    <div class="phone-wrap">
+      <div class="phone-label">C — Hairline rule</div>
+      <div class="phone">
+        <div class="app-header">
+          <div class="slot"></div>
+          <div class="wordmark">Larder</div>
+          <div class="slot"></div>
+        </div>
+        <div class="list-body">
+
+          <div class="aisle-card">
+            <button class="hdr-c">
+              <div class="rule-line"></div>
+              <span class="name-c">Produce</span>
+              <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              <div class="rule-line"></div>
+            </button>
+            <div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">apples</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">bananas</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">spinach</span></div>
+            </div>
+          </div>
+
+          <div class="aisle-card">
+            <button class="hdr-c">
+              <div class="rule-line"></div>
+              <span class="name-c">Dairy</span>
+              <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <div class="rule-line"></div>
+            </button>
+          </div>
+
+          <div class="aisle-card">
+            <button class="hdr-c">
+              <div class="rule-line"></div>
+              <span class="name-c">Meat &amp; Seafood</span>
+              <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <div class="rule-line"></div>
+            </button>
+          </div>
+
+        </div>
+        <div class="bottom-nav">
+          <div class="nav-btn"><div class="nav-icon">🛒</div><div class="nav-lbl active">Shop</div></div>
+          <div class="nav-btn"><div class="nav-icon">➕</div><div class="nav-lbl">Plan</div></div>
+          <div class="nav-btn"><div class="nav-icon">⚙️</div><div class="nav-lbl">Settings</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── VARIANT D — Right-side chevron ─── -->
+    <div class="phone-wrap">
+      <div class="phone-label">D — Right-chevron, whisper</div>
+      <div class="phone">
+        <div class="app-header">
+          <div class="slot"></div>
+          <div class="wordmark">Larder</div>
+          <div class="slot"></div>
+        </div>
+        <div class="list-body">
+
+          <div class="aisle-card">
+            <button class="hdr-d">
+              <span class="name-d">Produce</span>
+              <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">apples</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">bananas</span></div>
+              <div class="item-row"><div class="cb"></div><span class="item-name">spinach</span></div>
+            </div>
+          </div>
+
+          <div class="aisle-card">
+            <button class="hdr-d">
+              <span class="name-d">Dairy</span>
+              <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+
+          <div class="aisle-card">
+            <button class="hdr-d">
+              <span class="name-d">Meat &amp; Seafood</span>
+              <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+
+        </div>
+        <div class="bottom-nav">
+          <div class="nav-btn"><div class="nav-icon">🛒</div><div class="nav-lbl active">Shop</div></div>
+          <div class="nav-btn"><div class="nav-icon">➕</div><div class="nav-lbl">Plan</div></div>
+          <div class="nav-btn"><div class="nav-icon">⚙️</div><div class="nav-lbl">Settings</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.phones -->
+
+  <div style="margin-top: 56px; font-size: 13px; color: #999; line-height: 1.7; max-width: 700px;">
+    <strong style="color: #555;">Notes</strong><br>
+    <strong>A — Featherweight:</strong> Strongest suppression. 11px / medium / gray-400. Reduces button padding from 16px → 10px. Chevron shrinks to 14px.<br>
+    <strong>B — Title case:</strong> Drops ALL-CAPS and letter-spacing. Same gray-400, 13px, 500-weight. Feels like a nav breadcrumb rather than a section heading.<br>
+    <strong>C — Hairline rule:</strong> Turns the header into a section-divider motif — flanking rules collapse the label to pure wayfinding. Chevron moves inside the label cluster.<br>
+    <strong>D — Right chevron:</strong> Clears the left gutter so item names start at the same x-coordinate as in all other list contexts. Whisper-gray text, right-aligned control affordance.
+  </div>
+
+</body>
+</html>

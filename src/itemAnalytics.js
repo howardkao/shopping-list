@@ -1,9 +1,9 @@
 // Tier 1 analytics — pure functions over the household item-events log.
 //
-// Events shape: { ts, uid, name, category, categoryId?, itemKey?, action, source?, qty? }
+// Events shape: { ts, uid, name, category, categoryId?, itemKey?, action, source?, qty?, prevName? }
 // Names are normalized to lowercase on write; consumers can trust that.
 //
-// "visible items" = shortcuts shown as quick-add tiles in Add mode (keyed by categoryId).
+// "visible items" = shortcuts shown as tiles in Plan mode (keyed by categoryId).
 // "library" = autocomplete-only items (also keyed by categoryId).
 
 import { getThresholds } from './categoryClassifier.js';
@@ -18,6 +18,7 @@ export function buildItemStats(events, { now = Date.now() } = {}) {
   const stats = new Map();
   for (const e of events) {
     if (!e || !e.name) continue;
+    if (e.action === 'renamed') continue;
     const key = itemKey(e.name, e.category);
     let s = stats.get(key);
     if (!s) {
@@ -202,7 +203,7 @@ export function promotionCandidates(events, visibleItemsByCategoryId, categories
     .sort((a, b) => b.checkedCount - a.checkedCount || b.lastTs - a.lastTs);
 }
 
-// --- Legacy API wrappers (for InsightsModal backward compat) ---
+// --- Legacy API wrappers (for HouseholdInsightsPage backward compat) ---
 
 /** @deprecated Use dormantShortcuts instead */
 export function dormantQuickAddCandidates(events, commonItemsByCategory, { dormantDays = 56, now = Date.now() } = {}) {

@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Provisions — The shopping list that remembers what you buy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --coral:       #FF7A7A;
+      --coral-dark:  #e55f5f;
+      --coral-pale:  #fff2f2;
+      --coral-mid:   #ffdede;
+      --ink:         #111827;
+      --ink-mid:     #374151;
+      --ink-light:   #6b7280;
+      --border:      #e5e7eb;
+      --bg-subtle:   #f9fafb;
+      --bg-warm:     #fdf9f7;
+      --white:       #ffffff;
+      --font:        'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --max-w:       1100px;
+      --r:           14px;
+    }
+
+    html {
+      font-family: var(--font);
+      color: var(--ink);
+      background: var(--white);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── NAV ───────────────────────────────────────── */
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.94);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 28px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .wordmark {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--coral);
+      letter-spacing: -0.3px;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .nav-signin {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--ink-mid);
+      text-decoration: none;
+    }
+
+    .nav-signin:hover { color: var(--ink); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 9px 20px;
+      border-radius: 10px;
+      font-family: var(--font);
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      text-decoration: none;
+      border: none;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+
+    .btn-coral {
+      background: var(--coral);
+      color: white;
+    }
+
+    .btn-coral:hover { background: var(--coral-dark); }
+    .btn-coral:active { transform: scale(0.98); }
+
+    /* ── HERO ───────────────────────────────────────── */
+
+    .hero {
+      padding: 100px 28px 88px;
+      text-align: center;
+      max-width: var(--max-w);
+      margin: 0 auto;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--coral);
+      margin-bottom: 22px;
+    }
+
+    .hero h1 {
+      font-size: clamp(34px, 7vw, 80px);
+      font-weight: 800;
+      line-height: 1.02;
+      letter-spacing: -2.5px;
+      color: var(--ink);
+      margin-bottom: 26px;
+    }
+
+    #typed-word::after {
+      content: '';
+      display: inline-block;
+      width: 3px;
+      height: 0.82em;
+      background: currentColor;
+      margin-left: 3px;
+      vertical-align: -0.08em;
+      border-radius: 1px;
+    }
+
+    #typed-word.blink::after {
+      animation: cursor-blink 0.65s step-end infinite;
+    }
+
+    @keyframes cursor-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    .hero-sub {
+      font-size: clamp(17px, 1.8vw, 20px);
+      font-weight: 400;
+      line-height: 1.65;
+      color: var(--ink-light);
+      max-width: 540px;
+      margin: 0 auto 40px;
+    }
+
+    .cta-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 11px;
+    }
+
+    .btn-lg {
+      font-size: 16px;
+      padding: 15px 34px;
+      border-radius: 12px;
+    }
+
+    .fine-print {
+      font-size: 13px;
+      color: var(--ink-light);
+    }
+
+
+    /* ── INSIGHT ────────────────────────────────────── */
+
+    .insight {
+      background: var(--bg-subtle);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .insight-inner {
+      padding: 96px 28px;
+      max-width: var(--max-w);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 80px;
+      align-items: center;
+    }
+
+    .insight-copy h2 {
+      font-size: clamp(30px, 3.5vw, 42px);
+      font-weight: 800;
+      line-height: 1.12;
+      letter-spacing: -1.2px;
+      color: var(--ink);
+      margin-bottom: 22px;
+    }
+
+    .insight-copy p {
+      font-size: 16px;
+      line-height: 1.75;
+      color: var(--ink-light);
+      margin-bottom: 16px;
+    }
+
+    .insight-copy p:last-child { margin-bottom: 0; }
+    .insight-copy em { font-style: normal; color: var(--ink-mid); font-weight: 600; }
+
+    /* ── PHONE MOCKUP ───────────────────────────────── */
+
+    .phone-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .phone {
+      width: 268px;
+      height: 554px;
+      background: #1c1c1e;
+      border-radius: 50px;
+      padding: 11px;
+      box-shadow:
+        0 50px 120px rgba(0,0,0,0.22),
+        0 0 0 1px rgba(255,255,255,0.07) inset;
+      position: relative;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    /* dynamic island */
+    .phone::before {
+      content: '';
+      position: absolute;
+      top: 17px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90px;
+      height: 28px;
+      background: #1c1c1e;
+      border-radius: 20px;
+      z-index: 10;
+    }
+
+    .phone-screen {
+      width: 100%;
+      height: 100%;
+      background: #f3f4f6;
+      border-radius: 40px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* White header with shadow — wordmark is coral, not the bg */
+    .ph-header {
+      background: white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      padding: 52px 12px 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 2;
+    }
+
+    .ph-hamburger {
+      width: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 3.5px;
+      flex-shrink: 0;
+    }
+    .ph-hamburger span {
+      height: 2px;
+      background: #6b7280;
+      border-radius: 1px;
+      display: block;
+    }
+
+    .ph-wordmark {
+      flex: 1;
+      text-align: center;
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--coral);
+      letter-spacing: -0.3px;
+    }
+
+    .ph-header-spacer { width: 18px; flex-shrink: 0; }
+
+    /* Scrollable content */
+    .ph-body {
+      flex: 1;
+      overflow: hidden;
+      padding: 10px 8px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+    }
+
+    .ph-body::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 70px;
+      background: linear-gradient(to bottom, transparent, #f3f4f6);
+      pointer-events: none;
+    }
+
+    /* Aisle card */
+    .ph-aisle {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .ph-aisle-hdr {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 10px;
+    }
+
+    .ph-chevron-down {
+      width: 6px;
+      height: 6px;
+      border-right: 1.5px solid #9ca3af;
+      border-bottom: 1.5px solid #9ca3af;
+      transform: rotate(45deg) translate(-1px, -1px);
+      flex-shrink: 0;
+    }
+
+    .ph-aisle-name {
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #374151;
+    }
+
+    /* Per-aisle search input */
+    .ph-search {
+      margin: 0 8px 8px;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 0 8px;
+      background: white;
+    }
+
+    .ph-search-icon {
+      width: 9px;
+      height: 9px;
+      border: 1.5px solid #9ca3af;
+      border-radius: 50%;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .ph-search-icon::after {
+      content: '';
+      position: absolute;
+      bottom: -3.5px;
+      right: -3.5px;
+      width: 4px;
+      height: 1.5px;
+      background: #9ca3af;
+      transform: rotate(45deg);
+      transform-origin: left center;
+    }
+
+    .ph-search-placeholder {
+      font-size: 8px;
+      color: #9ca3af;
+    }
+
+    /* Suggestion row: [coral + btn] [name] [chevron] */
+    .ph-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-top: 1px solid #f3f4f6;
+    }
+
+    .ph-plus {
+      width: 18px;
+      height: 18px;
+      border-radius: 5px;
+      background: var(--coral);
+      flex-shrink: 0;
+      position: relative;
+    }
+    .ph-plus::before, .ph-plus::after {
+      content: '';
+      position: absolute;
+      background: white;
+      border-radius: 1px;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+    }
+    .ph-plus::before { width: 8px; height: 1.5px; }
+    .ph-plus::after  { width: 1.5px; height: 8px; }
+
+    .ph-row-label {
+      flex: 1;
+      font-size: 9px;
+      font-weight: 600;
+      color: #1f2937;
+    }
+
+    .ph-chevron-right {
+      width: 5px;
+      height: 5px;
+      border-right: 1.5px solid #d1d5db;
+      border-bottom: 1.5px solid #d1d5db;
+      transform: rotate(-45deg);
+      flex-shrink: 0;
+    }
+
+    /* Bottom nav pill */
+    .ph-nav {
+      flex-shrink: 0;
+      margin: 6px 8px 10px;
+      background: white;
+      border: 2px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 4px;
+      display: flex;
+      gap: 3px;
+    }
+
+    .ph-nav-btn {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 8px 4px;
+      border-radius: 10px;
+      font-size: 9px;
+      font-weight: 800;
+      color: #6b7280;
+      font-family: var(--font);
+    }
+
+    .ph-nav-btn svg { flex-shrink: 0; }
+
+    .ph-nav-active {
+      background: var(--coral);
+      color: white;
+    }
+
+    /* ── HOW IT WORKS ───────────────────────────────── */
+
+    .how {
+      background: var(--bg-warm);
+      border-top: 1px solid #f0ebe6;
+      border-bottom: 1px solid #f0ebe6;
+      padding: 88px 28px;
+    }
+
+    .how-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+    }
+
+    .section-label {
+      text-align: center;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--coral);
+      margin-bottom: 12px;
+    }
+
+    .section-h {
+      text-align: center;
+      font-size: clamp(26px, 3.5vw, 36px);
+      font-weight: 800;
+      letter-spacing: -0.8px;
+      color: var(--ink);
+      margin-bottom: 56px;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 36px;
+    }
+
+    .step-num {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: var(--coral-pale);
+      color: var(--coral);
+      font-size: 14px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .step h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 9px;
+      line-height: 1.3;
+    }
+
+    .step p {
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--ink-light);
+    }
+
+    /* ── PRICING ─────────────────────────────────────── */
+
+    .pricing {
+      padding: 96px 28px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .p-card-outer {
+      width: 100%;
+      max-width: 500px;
+      text-align: center;
+    }
+
+    .pricing-card {
+      border: 2px solid var(--coral);
+      border-radius: 24px;
+      padding: 48px 44px;
+      background: white;
+    }
+
+    .trial-badge {
+      display: inline-block;
+      background: var(--coral-pale);
+      color: var(--coral);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 5px 14px;
+      border-radius: 100px;
+      margin-bottom: 22px;
+    }
+
+    .price-main {
+      font-size: 38px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .price-amount {
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+
+    .price-dollar {
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--coral);
+      margin-top: 4px;
+    }
+
+    .price-num {
+      font-size: 64px;
+      font-weight: 800;
+      color: var(--coral);
+      line-height: 1;
+      letter-spacing: -3px;
+    }
+
+    .price-cents {
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--coral);
+      margin-top: 4px;
+    }
+
+    .price-period {
+      font-size: 14px;
+      color: var(--ink-light);
+      line-height: 1.5;
+      margin-bottom: 30px;
+    }
+
+    .feature-list {
+      list-style: none;
+      text-align: left;
+      margin-bottom: 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+    }
+
+    .feature-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--ink-mid);
+      line-height: 1.45;
+    }
+
+    .chk {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--coral-pale);
+      color: var(--coral);
+      font-size: 9px;
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .btn-full {
+      width: 100%;
+      justify-content: center;
+      font-size: 16px;
+      padding: 15px 24px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+    }
+
+    .fine-print-center {
+      text-align: center;
+      font-size: 13px;
+      color: var(--ink-light);
+    }
+
+    /* ── FOOTER ──────────────────────────────────────── */
+
+    footer {
+      background: var(--ink);
+      padding: 28px 28px;
+    }
+
+    .footer-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .footer-wordmark { font-size: 15px; font-weight: 800; color: var(--coral); }
+
+    .footer-links { display: flex; gap: 24px; }
+
+    .footer-links a {
+      font-size: 13px;
+      color: #6b7280;
+      text-decoration: none;
+    }
+
+    .footer-links a:hover { color: white; }
+
+    .footer-copy { font-size: 13px; color: #6b7280; }
+
+    /* ── RESPONSIVE ─────────────────────────────────── */
+
+    @media (max-width: 800px) {
+
+      .insight-inner {
+        grid-template-columns: 1fr;
+        gap: 52px;
+        text-align: center;
+      }
+
+      .insight-copy p { text-align: left; }
+
+      .phone-wrap { order: -1; }
+
+      .steps { grid-template-columns: 1fr; gap: 32px; max-width: 480px; margin: 0 auto; }
+
+      .pricing-card { padding: 36px 28px; }
+
+      .footer-inner { flex-direction: column; align-items: center; }
+      .footer-links { justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── NAV ──────────────────────────────────────────── -->
+<nav>
+  <div class="nav-inner">
+    <span class="wordmark">Provisions</span>
+    <div class="nav-actions">
+      <a href="/signin" class="nav-signin">Sign in</a>
+      <a href="/signup" class="btn btn-coral">Try free →</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ── HERO ─────────────────────────────────────────── -->
+<section class="hero">
+  <span class="eyebrow">The shopping list that remembers</span>
+  <h1>Stop retyping<br><span id="typed-word"></span>.</h1>
+  <p class="hero-sub">Provisions remembers what your household actually buys. Anyone can mark what's running low. The list is ready and waiting when you get to the store.</p>
+  <div class="cta-stack">
+    <a href="/signup" class="btn btn-coral btn-lg">Try free — 2 months</a>
+    <span class="fine-print">Then $4.99/year.</span>
+  </div>
+</section>
+
+<!-- ── INSIGHT ───────────────────────────────────────── -->
+<section class="insight">
+<div class="insight-inner">
+
+  <div class="insight-copy">
+    <h2>Most of what you buy is the same from week to week.</h2>
+    <p>Last week. The week before. The month before. And yet most shopping list apps make you repeatedly start over from scratch.</p>
+    <p>Provisions is built around your household's <em>standing items</em> — everything you normally keep stocked, organized by where you find it in the store. Tap the things running low, and your list is done in seconds.</p>
+  </div>
+
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-screen">
+
+        <!-- White header: hamburger · Provisions wordmark · spacer -->
+        <div class="ph-header">
+          <div class="ph-hamburger">
+            <span></span><span></span><span></span>
+          </div>
+          <span class="ph-wordmark">Provisions</span>
+          <div class="ph-header-spacer"></div>
+        </div>
+
+        <!-- Scrollable content: gray bg, aisle cards -->
+        <div class="ph-body">
+
+          <div class="ph-aisle">
+            <div class="ph-aisle-hdr">
+              <div class="ph-chevron-down"></div>
+              <span class="ph-aisle-name">Produce</span>
+            </div>
+            <div class="ph-search">
+              <div class="ph-search-icon"></div>
+              <span class="ph-search-placeholder">Add to Produce…</span>
+            </div>
+            <div class="ph-row"><div class="ph-plus"></div><span class="ph-row-label">avocados</span><div class="ph-chevron-right"></div></div>
+            <div class="ph-row"><div class="ph-plus"></div><span class="ph-row-label">bananas</span><div class="ph-chevron-right"></div></div>
+            <div class="ph-row"><div class="ph-plus"></div><span class="ph-row-label">spinach</span><div class="ph-chevron-right"></div></div>
+            <div class="ph-row"><div class="ph-plus"></div><span class="ph-row-label">tomatoes</span><div class="ph-chevron-right"></div></div>
+          </div>
+
+          <div class="ph-aisle">
+            <div class="ph-aisle-hdr">
+              <div class="ph-chevron-down"></div>
+              <span class="ph-aisle-name">Dairy &amp; Eggs</span>
+            </div>
+            <div class="ph-search">
+              <div class="ph-search-icon"></div>
+              <span class="ph-search-placeholder">Add to Dairy &amp; Eggs…</span>
+            </div>
+            <div class="ph-row"><div class="ph-plus"></div><span class="ph-row-label">milk</span><div class="ph-chevron-right"></div></div>
+            <div class="ph-row"><div class="ph-plus"></div><span class="ph-row-label">eggs</span><div class="ph-chevron-right"></div></div>
+            <div class="ph-row"><div class="ph-plus"></div><span class="ph-row-label">butter</span><div class="ph-chevron-right"></div></div>
+          </div>
+
+        </div>
+
+        <!-- Bottom nav: Shop / Plan pill — Plan active -->
+        <div class="ph-nav">
+          <div class="ph-nav-btn">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+            Shop
+          </div>
+          <div class="ph-nav-btn ph-nav-active">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+            Plan
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+</section>
+
+<!-- ── HOW IT WORKS ──────────────────────────────────── -->
+<section class="how">
+  <div class="how-inner">
+    <p class="section-label">How it works</p>
+    <h2 class="section-h">Built for how your household actually shops.</h2>
+    <div class="steps">
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Provisions adapts to your household.</h3>
+        <p>A personalized library of everything you normally buy, organized by the aisles you walk. It's ready on day one and gets better over time.</p>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Add throughout the week.</h3>
+        <p>You notice the coffee is low on Tuesday. Your partner finishes the bread on Friday. Both are in the list before either of you goes to the store.</p>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Arrive. Walk. Done.</h3>
+        <p>The list is organized in the order you walk your store. No backtracking, no forgetting, no texting from the dairy aisle to ask what kind of yogurt.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ── PRICING ───────────────────────────────────────── -->
+<section class="pricing">
+  <div class="p-card-outer">
+    <div class="pricing-card">
+
+      <span class="trial-badge">Free trial included</span>
+
+      <p class="price-main">Two months free.</p>
+
+      <div class="price-amount">
+        <span class="price-dollar">$</span>
+        <span class="price-num">3</span>
+        <span class="price-cents">.99</span>
+      </div>
+
+      <p class="price-period">per year after your trial<br>one price covers your whole household</p>
+
+      <ul class="feature-list">
+        <li><span class="chk">✓</span> Personalized shortcut library for your household</li>
+        <li><span class="chk">✓</span> Real-time sync — everyone in the house, any device</li>
+        <li><span class="chk">✓</span> Invite your partner or housemates</li>
+        <li><span class="chk">✓</span> Organize by your store's actual aisle layout</li>
+      </ul>
+
+      <a href="/signup" class="btn btn-coral btn-full">Try free — 2 months</a>
+
+    </div>
+  </div>
+</section>
+
+<!-- ── FOOTER ────────────────────────────────────────── -->
+<footer>
+  <div class="footer-inner">
+    <span class="footer-wordmark">Provisions</span>
+    <div class="footer-links">
+      <a href="/app">Privacy Policy</a>
+      <a href="/app">Terms of Service</a>
+    </div>
+    <span class="footer-copy">© 2026 Provisions</span>
+  </div>
+</footer>
+
+<script>
+  const words = [
+    'milk',
+    'eggs',
+    'worcestershire',
+    'bread',
+    'mozzarella',
+    'coffee',
+    'gnocchi',
+    'bananas',
+    'sriracha',
+    'butter',
+    'parmesan',
+    'chicken',
+  ];
+
+  const el = document.getElementById('typed-word');
+  let wi = 0, ci = 0, del = false;
+
+  function tick() {
+    const w = words[wi];
+    if (!del) {
+      ci++;
+      el.textContent = w.slice(0, ci);
+      if (ci === w.length) {
+        el.classList.add('blink');
+        return setTimeout(() => { el.classList.remove('blink'); del = true; tick(); }, 1700);
+      }
+      setTimeout(tick, 85 + Math.random() * 55);
+    } else {
+      ci--;
+      el.textContent = w.slice(0, ci);
+      if (ci === 0) {
+        del = false;
+        wi = (wi + 1) % words.length;
+        el.classList.add('blink');
+        return setTimeout(() => { el.classList.remove('blink'); tick(); }, 300);
+      }
+      setTimeout(tick, 40);
+    }
+  }
+
+  el.classList.add('blink');
+  setTimeout(() => { el.classList.remove('blink'); tick(); }, 800);
+</script>
+</body>
+</html>

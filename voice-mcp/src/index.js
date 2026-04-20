@@ -153,7 +153,7 @@ const getProtectedResourceMetadata = (request, env) => {
     authorization_servers: [metadata.issuer],
     scopes_supported: ['mcp:tools'],
     bearer_methods_supported: ['header'],
-    resource_name: 'Shopping List Voice MCP'
+    resource_name: 'Provisions Voice MCP'
   };
 };
 

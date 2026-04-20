@@ -176,7 +176,7 @@ export default function SuggestionsEditor(props) {
 
       {!onboarding && (
         <div className="pt-6 pb-4">
-          <h2 className="text-xl font-semibold">Pinned items</h2>
+          <h2 className="text-xl font-semibold">Aisles &amp; Categories</h2>
         </div>
       )}
 

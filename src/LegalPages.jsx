@@ -1,5 +1,5 @@
 /**
- * Privacy Policy and Terms of Service for the Shopping List web app.
+ * Privacy Policy and Terms of Service for the Provisions web app.
  * "Operator" means whoever runs this deployment (hosted provider or self-hoster).
  *
  * ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ export function PrivacyPolicyPage({ onBack }) {
     >
       <p>
         This policy describes how information is collected, used, and shared when you use the{' '}
-        <strong>Shopping List</strong> application on this website or installed as a web app
+        <strong>Provisions</strong> application on this website or installed as a web app
         (the &quot;Service&quot;). The <strong>operator</strong> of the Service is the person or
         organization that controls the Firebase project and hosting used by this instance (for
         example, a household self-hosting the app, or a company providing a hosted version).
@@ -68,7 +68,7 @@ export function PrivacyPolicyPage({ onBack }) {
         </li>
         <li>
           <strong>Household and list data.</strong> Shopping list items, purchase-related events,
-          item suggestions and taxonomy (aisles, categories, pinned quick-add items, library), invite codes,
+          item suggestions and taxonomy (aisles, categories, pinned shortcut items, library), invite codes,
           optional notes, and similar content you or your household save in the Service are stored
           in{' '}
           <a
@@ -174,7 +174,7 @@ export function TermsOfServicePage({ onBack }) {
     >
       <p>
         These Terms of Service (&quot;Terms&quot;) govern your access to and use of the{' '}
-        <strong>Shopping List</strong> web application (the &quot;Service&quot;). By creating an
+        <strong>Provisions</strong> web application (the &quot;Service&quot;). By creating an
         account, signing in, or otherwise using the Service, you agree to these Terms. If you do
         not agree, do not use the Service.
       </p>

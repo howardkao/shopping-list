@@ -9,13 +9,13 @@ export default defineConfig({
       registerType: 'prompt',
       includeAssets: ['icon.svg'],
       manifest: {
-        name: 'Shopping List',
-        short_name: 'Shopping',
-        description: 'A collaborative shopping list app that works offline',
+        name: 'Provisions',
+        short_name: 'Provisions',
+        description: 'A shared shopping list that remembers what your household buys. Works offline.',
         theme_color: '#FF7A7A',
         background_color: '#f3f4f6',
         display: 'standalone',
-        start_url: '/',
+        start_url: '/app',
         icons: [
           {
             src: 'icon.svg',
@@ -36,6 +36,8 @@ export default defineConfig({
         ]
       },
       workbox: {
+        navigateFallback: '/app.html',
+        navigateFallbackAllowlist: [/^\/app(\/|$)/, /^\/signin$/, /^\/signup$/],
         // Cache all static assets
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         // Runtime caching for Firebase and other APIs

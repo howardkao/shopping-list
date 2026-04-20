@@ -39,13 +39,12 @@ This document tracks the ongoing effort to productize this app for public, multi
 
 ## Open Decisions
 
-- [ ] **Business model**: free trial + annual subscription — details below still open
-  - Leading option: ~$5-10/year after 2-month free trial
-  - [ ] **Price point**: $5/year (impulse buy, low revenue) vs $8-10/year (doubles revenue, still cheap). AnyList comparable at $12/year.
-  - [ ] **Trial length**: 2 months (8+ shopping trips, enough to invest in taxonomy) vs 3 months (safer but may lose conversion signal). Must be configured in App Store Connect + Play Console.
-  - [ ] **Post-trial behavior**: read-only mode (preserves data, gates adding)? degraded mode (disable sync/collaboration)? full lockout? nag-based?
-  - [ ] **Subscription scope**: per-household (one person pays, all benefit — better UX) vs per-user (higher revenue, feels petty for $5). RevenueCat supports either via entitlement mapping.
-  - [ ] **Web vs in-app pricing**: uniform ($5 everywhere) or web discount ($5 web / $6 in-app to offset 15% platform fee)? Most apps keep uniform.
+- [x] **Business model**: free trial + annual subscription — decided 2026-04-17
+  - **Price:** $3.99/year at launch. Goal is user acquisition over revenue; raise price later once download counts provide social proof. Grandfather early adopters at $3.99 forever (new price tier, not modifying existing).
+  - **Trial:** 2 months (~8 weekly shopping trips; enough to build taxonomy investment and invite household members).
+  - **Post-trial behavior:** Read-only mode — can view list and check items off at the store; cannot add, edit suggestions, or invite new members. Preserves data investment; not punitive by Apple's standards.
+  - **Subscription scope:** Per-household. Admin pays; all members covered. RevenueCat entitlement keyed to household ID as App User ID.
+  - **Web vs in-app pricing:** Uniform $3.99 everywhere. Can't reference web pricing inside iOS app; the IAP vs Stripe fee difference (~$0.60) isn't worth the complexity.
 - [x] **App store strategy**: Capacitor wrapper for both iOS App Store and Google Play — decided 2026-04-12
   - Plan documented in `NATIVE_APP_PLAN.md`
 - [ ] **RTDB vs Firestore for household data**: RTDB is simpler and already used, but Firestore is more cost-efficient at scale and supports finer-grained security rules
@@ -99,6 +98,7 @@ This document tracks the ongoing effort to productize this app for public, multi
 ### Nice-to-Have / Post-Launch
 
 - [ ] **Firestore migration for household data** — more cost-efficient at 10k+ households; requires significant refactor
+- [ ] **Email invites** — admin enters invitee email; Worker emails a pre-filled join link (`?code=`); frontend detects and pre-fills join form. Plan in `INVITE_EMAIL_PLAN.md` (5 work packages; WP-A/B+C/E parallel, WP-D after WP-B).
 - [ ] **Push notifications** — notify household members when the list changes (Capacitor plugin: `@capacitor/push-notifications`)
 - [ ] **Push notifications** — notify household members when the list changes (limited on iOS PWA pre-16.4)
 
@@ -137,6 +137,34 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ---
 
 ## Session Log
+
+### 2026-04-20 — Marketing landing page mockup
+- **Artifact:** `landing-mockup.html` (gitignored) — standalone HTML/CSS/JS mockup for iteration, not wired into the app.
+- **Approach chosen:** Option A (problem-led / "PAS" framework) over Option B (product-led). Rationale: the product's insight — routine shopping is 80% of shopping, every other app ignores that — is the conversion lever, not the UI. The value can't be shown in a screenshot; it has to be narrated.
+- **Page structure:** Nav → Hero (typewriter headline) → Insight (2-col with phone mockup) → How it works (3 steps) → Pricing card → Footer.
+- **Headline:** Typewriter animation cycling through common grocery items (milk, eggs, worcestershire, bread, mozzarella, coffee, gnocchi, bananas, sriracha, butter, parmesan, chicken). Mundane items establish the joke; hard-to-spell items are the punchline.
+- **Pricing copy:** "Two months free. $3.99/year after. One price covers your whole household." Dropped "No card required" (sets expectation we may not fulfill) and "Cancel anytime" (implies refund we don't plan to issue).
+- **Removed:** Problems section (restated what the hero already said), closing quote section (felt forced without real testimonials).
+- **Phone mockup:** Rebuilt to match actual app chrome — white header with coral wordmark, gray content background, aisle cards with per-aisle search + list rows (coral + button, name, chevron), bottom nav pill with Shop/Plan tabs (Plan active). Previous version had coral header, top tab bar, and tile grid — all wrong.
+- **Open:** No domain, no real CTA destination, no real app store links. Landing page is not yet wired to the auth flow. Tagline still unresolved (PRODUCT_MARKETING.md open question).
+
+### 2026-04-18 — Header: wordmark-only on home; Variant A on secondary pages
+- **Decision:** Mobile header shows "Provisions" wordmark alone on the list page (Shop/Add modes). On all other pages (Purchase History, Settings, Account) it shows Variant A: small coral "PROVISIONS" eyebrow + large dark page name below. Desktop always shows the plain wordmark (the desktop nav links already indicate current page).
+- **`src/App.jsx`:** Header center button is now a flex column; conditionally renders the stacked layout for non-list pages on mobile (`lg:hidden`); desktop always shows the plain wordmark span (`hidden lg:block` when on non-list pages).
+
+### 2026-04-18 — Product rename: Larder → Provisions
+- **Decision:** Renamed from Larder to Provisions. Larder created a semantic collision in the header context — "Larder" above a shopping list implied those items were *in* the larder, when they're actually what's *missing from* it. Provisions resolves this: "making provisions" is active and forward-looking, which matches a shopping list. Provisions also accommodates non-grocery household categories more naturally than the food-specific "Larder."
+- **Updated:** `PRODUCT_MARKETING.md` (naming rationale rewritten for Provisions), `DESIGN_REVIEW.md`, `NATIVE_APP_EXECUTION_PLAN.md` (bundle ID `com.provisionsapp.shoppinglist`, "Provisions Premium"), `NATIVE_APP_PLAN.md`, `src/App.jsx` (login screen, header wordmark, `provisions.clearChipTooltipSeen.v1`).
+
+### 2026-04-18 — Product rename: Tend → Larder
+- **Decision:** Product name changed from **Tend** to **Larder**. Core objection to Tend: evokes gardening or home maintenance; doesn't survive first contact with a new user. Larder captures the actual mental model — a household's maintained food store that you replenish, not a blank-slate list you rebuild from scratch. The 90% of what you buy that never changes is your larder; the shopping list is just the running-low delta.
+- **Updated:** `PRODUCT_MARKETING.md` (naming rationale rewritten, all inline references), `DESIGN_REVIEW.md` (brand name references), `NATIVE_APP_EXECUTION_PLAN.md` (app name, bundle ID `com.larderapp.shoppinglist`, subscription group "Larder Premium", localStorage key), `NATIVE_APP_PLAN.md` (same), `src/App.jsx` (localStorage key `larder.clearChipTooltipSeen.v1`).
+
+### 2026-04-17 — Native app track: multi-agent execution plan + business model decisions
+- **Business model finalized:** $3.99/year launch price (user acquisition over revenue; grandfather early adopters; raise price after social proof); 2-month trial; read-only post-trial mode; per-household subscription scope; uniform pricing.
+- **`NATIVE_APP_PLAN.md`:** Open decisions section replaced with finalized business model decisions.
+- **`NATIVE_APP_EXECUTION_PLAN.md`:** New multi-agent execution plan with 11 work packages across 7 batches, model-tier recommendations (Opus/Sonnet/Haiku per WP), branch strategy, human gates, and dependency graph. WP-1 (SSO) and WP-2 (analytics) serialized to avoid App.jsx merge conflicts.
+- **`PAYWALL_SPEC.md`** and **`.gitignore`:** New planning doc gitignored.
 
 ### 2026-04-17 — Design review 9.2 (Household Insights copy)
 - **`src/App.jsx` (`InsightsModal`):** Removed tier / internal analytics jargon; plain-English section titles and blurbs; member rows use `members` display names (email fallback, then “Unknown member”) instead of truncated UIDs; friendlier error and empty states.

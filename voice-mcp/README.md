@@ -1,4 +1,4 @@
-# Shopping List Voice Worker
+# Provisions Voice Worker
 
 This folder contains the first-pass backend scaffold for Claude-powered voice add, including a real MCP tool surface over Streamable HTTP.
 

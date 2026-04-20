@@ -11,8 +11,24 @@
     ],
     "rewrites": [
       {
+        "source": "/app",
+        "destination": "/app.html"
+      },
+      {
+        "source": "/app/**",
+        "destination": "/app.html"
+      },
+      {
+        "source": "/signin",
+        "destination": "/app.html"
+      },
+      {
+        "source": "/signup",
+        "destination": "/app.html"
+      },
+      {
         "source": "**",
-        "destination": "/index.html"
+        "destination": "/landing.html"
       }
     ]
   }
