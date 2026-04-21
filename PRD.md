@@ -31,13 +31,15 @@ A collaborative household shopping list app designed for a small group of truste
 
 | Requirement         | Detail                                                                                        |
 | ------------------- | --------------------------------------------------------------------------------------------- |
-| Auth method         | Email/password via Firebase Auth                                                              |
-| Display name        | Required during sign-up; existing users without one are prompted on next login                 |
+| Auth method         | Email/password, Google SSO, or Apple SSO via Firebase Auth                                    |
+| SSO providers       | Google and Apple; via `signInWithPopup` on web. Account linking supported when an SSO identity collides with an existing email/password account |
+| Display name        | Required during sign-up; existing users without one are prompted on next login. SSO signups reuse the provider's displayName when available |
 | First user          | Automatically becomes admin; no invitation code required                                      |
 | Subsequent users    | Must provide a valid, unused invitation code during sign-up                                   |
-| Invitation codes    | 8 characters, uppercase alphanumeric; expire after 7 days                                     |
+| Invitation codes    | 16 characters, uppercase alphanumeric; expire after 7 days                                    |
 | Code management     | Admins generate codes via Admin Panel; codes are single-use                                   |
-| Password reset      | Available from the login screen via email                                                     |
+| Password reset      | Available from the login screen via email (email/password accounts only)                      |
+| Account deletion    | Requires reauthentication: password for email/password accounts, provider popup for SSO accounts |
 | Session persistence | Auth tokens persisted to IndexedDB (preferred) with localStorage fallback                     |
 | Offline auth        | Previously authenticated users can access the app offline via cached credentials in IndexedDB |
 
@@ -382,7 +384,7 @@ Accessible only to admin users (first registered user) via the menu.
 
 | Feature                  | Description                                                |
 | ------------------------ | ---------------------------------------------------------- |
-| Generate invitation code | Creates a new 8-char code with 7-day expiration            |
+| Generate invitation code | Creates a new 16-char code with 7-day expiration           |
 | View invitation codes    | Lists all codes with status (used/unused, expiry, used-by) |
 | View production logs     | Real-time log viewer with filters and export               |
 | Log analytics            | Aggregated insights across all users                       |

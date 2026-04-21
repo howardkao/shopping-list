@@ -16,7 +16,9 @@ const AUTH_ERROR_COPY = {
 };
 
 export function humanizeAuthError(err) {
-  const code = err && err.code;
-  if (code && AUTH_ERROR_COPY[code]) return AUTH_ERROR_COPY[code];
+  if (!err) return 'Something went wrong. Please try again.';
+  if (err.code && AUTH_ERROR_COPY[err.code]) return AUTH_ERROR_COPY[err.code];
+  // Plain Errors thrown by our own validation code (no Firebase error code) carry a human message.
+  if (!err.code && err.message) return err.message;
   return 'Something went wrong. Please try again.';
 }

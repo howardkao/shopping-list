@@ -1,7 +1,12 @@
 import { initializeApp } from 'firebase/app';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { getAnalytics, isSupported } from 'firebase/analytics';
-import { initializeAuth, indexedDBLocalPersistence, browserLocalPersistence } from 'firebase/auth';
+import {
+  initializeAuth,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
+  browserPopupRedirectResolver
+} from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
 
 // Your web app's Firebase configuration
@@ -19,6 +24,15 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+
+// Auth must initialize before App Check so signInWithRedirect / getRedirectResult is not raced by
+// reCAPTCHA App Check network work (same issue class as firebase.auth() ordering in the docs).
+// Use initializeAuth to set persistence from the start (IndexedDB preferred for mobile, fallback to localStorage)
+export const auth = initializeAuth(app, {
+  persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+  popupRedirectResolver: browserPopupRedirectResolver
+});
+export const database = getDatabase(app);
 
 const recaptchaSiteKey = (import.meta.env.VITE_RECAPTCHA_SITE_KEY || '').trim();
 
@@ -56,10 +70,4 @@ if (measurementId) {
     .catch(() => {});
 }
 
-// Initialize Firebase services
-// Use initializeAuth to set persistence from the start (IndexedDB preferred for mobile, fallback to localStorage)
-export const auth = initializeAuth(app, {
-  persistence: [indexedDBLocalPersistence, browserLocalPersistence]
-});
-export const database = getDatabase(app);
 export default app;

@@ -40,8 +40,15 @@ export function registerOfflineCallback(callback) {
   offlineReadyCallback = callback;
 }
 
+// StrictMode intentionally double-mounts in dev; that raced OAuth getRedirectResult. Production
+// builds do not double-invoke effects, which is why SSO worked there. Skip StrictMode in dev so
+// local behavior matches production for auth.
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
+  import.meta.env.DEV ? (
     <App />
-  </React.StrictMode>,
+  ) : (
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  )
 )
