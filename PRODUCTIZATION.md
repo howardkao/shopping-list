@@ -80,7 +80,7 @@ This document tracks the ongoing effort to productize this app for public, multi
 - [x] **Firebase App Check** — client: reCAPTCHA v3 + `initializeAppCheck` in `src/firebase.js` (2026-04-17). **Console:** register web app in App Check, monitor, then enforce RTDB (optionally Auth); register dev debug tokens.
 - [ ] **Google + Apple SSO** — reduces signup friction; Apple SSO required by guideline 4.8 if Google SSO is offered
 - [ ] **Subscription system (RevenueCat)** — Apple IAP + Google Play Billing + Stripe, unified cross-platform
-- [ ] **Cross-platform analytics (Firebase Analytics)** — unified event tracking across web, iOS, Android
+- [ ] **Cross-platform analytics (Firebase Analytics)** — web: `src/analytics.js` + GA4 events in `App.jsx` (2026-04-21, branch `native/analytics`). Native platforms: Capacitor plugin per `NATIVE_APP_EXECUTION_PLAN.md` (WP-5).
 
 ### Should-Have
 
@@ -608,6 +608,10 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **`src/seedCatalog.js`:** Replaced single **Produce** aisle with **Fruit** and **Veggies**; **Vegetables** display name (slug `vegetable` unchanged); **Fresh herbs** under Veggies. Packaged Foods: merged **East Asian** + **Southeast Asian** into **East & Southeast Asian groceries** (`east-southeast-asian-foods`); added **South Asian groceries** (six library items: basmati rice, ghee, red lentils, tikka masala simmer sauce, garam masala, papadums).
 - **`src/categoryClassifier.js`:** Tier map + keyword `veggies` for renames.
 - **`scripts/migrate-to-taxonomy-v2.cjs`**, **`scripts/reseed-with-legacy.cjs`:** `SEED_AISLES` / `LEGACY_TO_AISLE` aligned with new aisle slugs (`fruit` / `veggies`; legacy `PRODUCE` → `fruit`, `RANCH 99…` → `veggies`).
+
+### 2026-04-21 — Native track WP-2: Firebase Analytics (web)
+- **`src/analytics.js` (new):** `trackEvent`, `setAnalyticsUserId` (handles late `getAnalytics()` init), `setAnalyticsUserProperties`.
+- **`src/App.jsx`:** Acquisition (`signup_*`, `invite_code_*`), onboarding duration, engagement (`list_item_added` with `quick_add` / `search` / `typed`, `list_item_checked`, `mode_switched`), user id on auth/cached user, `platform: web` + `household_role` after household load.
 
 ### 2026-04-10 — Initial productization planning
 - Discussed what's needed to go from single-household personal app to public multi-household product
