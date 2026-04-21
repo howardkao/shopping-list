@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { flushSync } from 'react-dom';
+import { Capacitor } from '@capacitor/core';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { App as CapacitorApp } from '@capacitor/app';
+import { SplashScreen } from '@capacitor/splash-screen';
 import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, ClipboardPen, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff, ScrollText } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
@@ -14,6 +19,7 @@ import {
   EmailAuthProvider,
   GoogleAuthProvider,
   OAuthProvider,
+  signInWithCredential,
   signInWithRedirect,
   getRedirectResult,
   linkWithCredential
@@ -215,6 +221,19 @@ function getRedirectResultOnce() {
   return getRedirectResultPromise;
 }
 
+/** Firebase JS `AuthCredential` from `@capacitor-firebase/authentication` when using `skipNativeAuth: true`. */
+function buildFirebaseCredentialFromNativePlugin(providerType, pluginResult) {
+  const c = pluginResult?.credential;
+  if (providerType === 'google') {
+    return GoogleAuthProvider.credential(c?.idToken, c?.accessToken);
+  }
+  const apple = new OAuthProvider('apple.com');
+  return apple.credential({
+    idToken: c?.idToken,
+    rawNonce: c?.nonce
+  });
+}
+
 async function deleteAccountDataAndAuth(user, householdId, isAdmin) {
   if (isAdmin && householdId) {
     const inviteCodesSnap = await get(ref(database, `households/${householdId}/inviteCodes`));
@@ -376,7 +395,133 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
   const handleSsoSignIn = async (providerType) => {
     setLoading(true);
     clearMessages();
-    logger.info('Auth', 'SSO sign-in attempt (redirect)', { providerType, mode, signupType });
+    logger.info('Auth', 'SSO sign-in attempt', {
+      providerType,
+      mode,
+      signupType,
+      native: Capacitor.isNativePlatform()
+    });
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        sessionStorage.setItem(
+          SSO_SESSION_KEY,
+          JSON.stringify({
+            phase: 'pre_redirect',
+            mode,
+            signupType,
+            inviteCode,
+            displayName,
+            providerType
+          })
+        );
+        const pluginResult =
+          providerType === 'google'
+            ? await FirebaseAuthentication.signInWithGoogle({
+                skipNativeAuth: true,
+                customParameters: [{ key: 'prompt', value: 'select_account' }]
+              })
+            : await FirebaseAuthentication.signInWithApple({
+                skipNativeAuth: true,
+                scopes: ['email', 'name']
+              });
+        const oauthCred = buildFirebaseCredentialFromNativePlugin(providerType, pluginResult);
+        const userCred = await signInWithCredential(auth, oauthCred);
+
+        const rawCtx = sessionStorage.getItem(SSO_SESSION_KEY);
+        let ctx;
+        try {
+          ctx = rawCtx ? JSON.parse(rawCtx) : null;
+        } catch {
+          ctx = null;
+        }
+        if (!ctx || ctx.phase !== 'pre_redirect') {
+          sessionStorage.removeItem(SSO_SESSION_KEY);
+          return;
+        }
+
+        const ssoUser = userCred.user;
+        const {
+          mode: ctxMode,
+          signupType: ctxSignupType,
+          inviteCode: ctxInvite,
+          displayName: storedName
+        } = ctx;
+
+        const userRecSnap = await get(ref(database, `users/${ssoUser.uid}`));
+        const existing = userRecSnap.val();
+        if (existing?.householdId) {
+          logger.info('Auth', 'SSO returning user (native), proceeding to app');
+          sessionStorage.removeItem(SSO_SESSION_KEY);
+          if (onLoginSuccess) onLoginSuccess();
+          return;
+        }
+
+        const ssoDisplayName = (ssoUser.displayName || '').trim();
+        const storedTrim = (storedName || '').trim();
+        if (ctxMode === 'signup' && (ssoDisplayName || storedTrim)) {
+          await setupHouseholdForUser(ssoUser, {
+            signupType: ctxSignupType,
+            inviteCode: ctxInvite,
+            displayName: ssoDisplayName || storedTrim
+          });
+          logger.info('Auth', 'SSO household setup completed (native)', { signupType: ctxSignupType });
+          sessionStorage.removeItem(SSO_SESSION_KEY);
+          if (onLoginSuccess) onLoginSuccess();
+          return;
+        }
+
+        sessionStorage.setItem(
+          SSO_SESSION_KEY,
+          JSON.stringify({
+            phase: 'awaiting_household',
+            mode: ctxMode,
+            signupType: ctxSignupType,
+            inviteCode: ctxInvite,
+            displayName: ssoDisplayName || storedTrim
+          })
+        );
+        setAwaitingHousehold(true);
+        setMode(ctxMode || 'signup');
+        setSignupType(ctxSignupType || 'create');
+        setInviteCode(ctxInvite || '');
+        setDisplayName(ssoDisplayName || storedTrim);
+      } catch (err) {
+        sessionStorage.removeItem(SSO_SESSION_KEY);
+        if (err.code === 'auth/account-exists-with-different-credential') {
+          const inferredProvider = err.customData?.providerId === 'google.com' ? 'google' : 'apple';
+          const cred =
+            inferredProvider === 'google'
+              ? GoogleAuthProvider.credentialFromError(err)
+              : OAuthProvider.credentialFromError(err);
+          setPendingCredential(cred);
+          setPendingLinkEmail(err.customData?.email || '');
+          setPendingLinkProvider(inferredProvider);
+          if (err.customData?.email) setEmail(err.customData.email);
+          setPassword('');
+          setError(
+            'An account already exists with this email. Enter your password below to link your accounts.'
+          );
+          sessionStorage.setItem(SSO_LINK_UI_KEY, '1');
+        } else if (
+          err.code === 'auth/popup-closed-by-user' ||
+          err.code === 'auth/cancelled-popup-request'
+        ) {
+          logger.info('Auth', 'SSO native flow cancelled', { providerType });
+        } else {
+          logger.error('Auth', 'SSO native sign-in failed', {
+            providerType,
+            error: err.message,
+            code: err.code
+          });
+          setError(humanizeAuthError(err));
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       sessionStorage.setItem(
         SSO_SESSION_KEY,
@@ -1708,12 +1853,26 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
   const handleDeleteSso = async () => {
     setLoading(true);
     setError('');
-    logger.info('Auth', 'Account deletion initiated (redirect reauth)', {
+    logger.info('Auth', 'Account deletion initiated (SSO reauth)', {
       uid: user.uid,
       isAdmin,
-      provider: providerId
+      provider: providerId,
+      native: Capacitor.isNativePlatform()
     });
     try {
+      if (Capacitor.isNativePlatform()) {
+        const pluginResult =
+          providerId === 'google.com'
+            ? await FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true })
+            : await FirebaseAuthentication.signInWithApple({ skipNativeAuth: true });
+        const cred = buildFirebaseCredentialFromNativePlugin(
+          providerId === 'google.com' ? 'google' : 'apple',
+          pluginResult
+        );
+        await reauthenticateWithCredential(auth.currentUser, cred);
+        await finishDeletion();
+        return;
+      }
       sessionStorage.setItem(
         SSO_SESSION_KEY,
         JSON.stringify({
@@ -2076,6 +2235,8 @@ export default function App() {
   const [selectedItemLastPurchased, setSelectedItemLastPurchased] = useState(null);
   const [quantityDefaults, setQuantityDefaults] = useState({});
   const authResolvedRef = useRef(false);
+  /** Latest UI state for Android hardware back (listener must not close over stale React state). */
+  const androidNavRef = useRef(null);
   const getStableItemKey = (item) => item?.itemKey || String(item?.id || '');
   const currentEditor = user?.uid || 'unknown';
   const stampRecord = (record) => ({
@@ -4133,6 +4294,127 @@ export default function App() {
   // 2. No cached data AND (finished auth loading OR not logged in)
   const showLogin = showLoginExplicitly || (!hasCachedData && !authLoading && !user);
 
+  const onboardingActive =
+    Boolean(user) &&
+    !needsDisplayName &&
+    Object.keys(aislesV2).length > 0 &&
+    Object.keys(categoriesV2).length > 0 &&
+    onboardingCompleted === false;
+
+  androidNavRef.current = {
+    showLogin,
+    loginLegalView,
+    closeLoginLegalView,
+    showMenu,
+    setShowMenu,
+    currentPage,
+    setCurrentPage,
+    showAdmin,
+    setShowAdmin,
+    showDeleteAccount,
+    setShowDeleteAccount,
+    selectedItem,
+    setSelectedItem,
+    showDebugPanel,
+    setShowDebugPanel,
+    closeAppLegalPage,
+    exitPinEditMode,
+    pinEditMode,
+    onboardingActive,
+    needsReauth,
+    setShowLoginExplicitly,
+  };
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || authLoading) return;
+    void SplashScreen.hide({ fadeOutDuration: 220 }).catch(() => {});
+  }, [authLoading]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        await StatusBar.setStyle({ style: Style.Light });
+        if (Capacitor.getPlatform() === 'ios') {
+          await StatusBar.setBackgroundColor({ color: '#FF7A7A' });
+        }
+        if (Capacitor.getPlatform() === 'android') {
+          await StatusBar.setOverlaysWebContent({ overlay: false });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          logger.warn('Native', 'StatusBar setup failed', { error: err?.message });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') return;
+    if (!showLogin && onboardingActive) return undefined;
+
+    const sub = CapacitorApp.addListener('backButton', () => {
+      const r = androidNavRef.current;
+      if (!r) return;
+
+      if (r.showLogin) {
+        if (r.loginLegalView) {
+          r.closeLoginLegalView();
+          return;
+        }
+        void CapacitorApp.exitApp();
+        return;
+      }
+
+      if (r.showDebugPanel) {
+        r.setShowDebugPanel(false);
+        return;
+      }
+      if (r.showAdmin) {
+        r.setShowAdmin(false);
+        return;
+      }
+      if (r.showDeleteAccount) {
+        r.setShowDeleteAccount(false);
+        return;
+      }
+      if (r.selectedItem) {
+        r.setSelectedItem(null);
+        return;
+      }
+      if (r.pinEditMode) {
+        r.exitPinEditMode();
+        return;
+      }
+      if (r.needsReauth) {
+        r.setShowLoginExplicitly(true);
+        return;
+      }
+      if (r.showMenu) {
+        r.setShowMenu(false);
+        return;
+      }
+      if (r.currentPage === 'privacy' || r.currentPage === 'terms') {
+        r.closeAppLegalPage();
+        return;
+      }
+      if (r.currentPage !== 'list') {
+        r.setCurrentPage('list');
+        r.setShowMenu(false);
+        return;
+      }
+      void CapacitorApp.exitApp();
+    });
+
+    return () => {
+      void sub.remove();
+    };
+  }, [showLogin, onboardingActive]);
+
   if (showLogin) {
     return (
       <AuthLoginScreen
@@ -4350,12 +4632,7 @@ export default function App() {
     }
   };
 
-  const shouldShowOnboarding = Boolean(user) && !needsDisplayName
-    && Object.keys(aislesV2).length > 0
-    && Object.keys(categoriesV2).length > 0
-    && onboardingCompleted === false;
-
-  if (shouldShowOnboarding) {
+  if (onboardingActive) {
     return (
       <Onboarding
         displayName={members?.[user.uid]?.displayName}
@@ -4420,8 +4697,7 @@ export default function App() {
       <div className={`min-h-screen scroll-fade-bg ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: isScrolling ? '#FFFFFF' : '#F7F7F7' }}>
         {/* Header — hamburger + wordmark only; sync pill top-right. Scrolls off-screen on scroll-down (all breakpoints). */}
         <div
-          className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}
-          style={{ paddingTop: 'env(safe-area-inset-top)' }}
+          className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 pt-safe ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}
         >
           <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3">
             <div className="flex items-center gap-2 lg:gap-3">

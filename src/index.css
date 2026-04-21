@@ -15,10 +15,17 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: #F7F7F7;
+  overscroll-behavior-y: none;
+}
+
+html {
+  overscroll-behavior-y: none;
 }
 
 #root {
   min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-overflow-scrolling: touch;
 }
 
 @keyframes slide-up {
@@ -58,4 +65,9 @@ body {
 /* iOS safe-area: apply to fixed bottom elements so the home indicator doesn't overlap. */
 .pb-safe {
   padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
+}
+
+/* Fixed header: notch / Dynamic Island — mirrors .pb-safe pattern for WKWebView. */
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top), 0px);
 }
