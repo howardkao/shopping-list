@@ -1,3 +1,5 @@
+/// <reference types="@capacitor-firebase/authentication" />
+
 /**
  * Native shell (Capacitor 8) for the Vite app. Web assets: `npm run build` then `npx cap sync`.
  *
@@ -7,7 +9,14 @@
  *   Android Studio’s bundled Gradle.
  * - Capacitor CLI 8 expects Node >= 22 and a project `typescript` devDependency to load this `.ts` file.
  *
- * Plugins: @capacitor/status-bar and @capacitor/splash-screen are deferred to Batch 3 (WP-4).
+ * Plugins: WP-4 added @capacitor/status-bar, @capacitor/splash-screen, @capacitor/app.
+ *
+ * **Native Google Sign-In (WP-5):** Add `GoogleService-Info.plist` (iOS) and `google-services.json` (Android)
+ * from Firebase Console → Project settings → Your apps. Without them, Google SSO fails at runtime on device/simulator.
+ *
+ * **WP-6 (Firebase Analytics, iOS):** `analytics_default_allow_ad_personalization_signals: false` is applied in
+ * `ios/App/App/Info.plist` as `GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS` = NO (Capacitor config
+ * does not merge arbitrary plist keys).
  */
 
 import type { CapacitorConfig } from '@capacitor/cli';
@@ -19,8 +28,20 @@ const config: CapacitorConfig = {
   server: {
     cleartext: false,
   },
+  android: {
+    allowMixedContent: false,
+  },
   ios: {
     preferredContentMode: 'mobile',
+  },
+  plugins: {
+    SplashScreen: {
+      launchShowDuration: 2000,
+      backgroundColor: '#FFFFFF',
+    },
+    FirebaseAuthentication: {
+      providers: ['google.com', 'apple.com'],
+    },
   },
 };
 

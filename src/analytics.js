@@ -1,7 +1,13 @@
+import { Capacitor } from '@capacitor/core';
+import { FirebaseAnalytics } from '@capacitor-firebase/analytics';
 import { logEvent, setUserId, setUserProperties } from 'firebase/analytics';
 import { analytics } from './firebase';
 
-function flushPendingUserId() {
+function isNativeAnalytics() {
+  return Capacitor.isNativePlatform();
+}
+
+function flushPendingUserIdWeb() {
   if (!analytics || pendingUserId === undefined) return;
   try {
     setUserId(analytics, pendingUserId);
@@ -19,7 +25,7 @@ function scheduleUserIdRetry() {
   const id = window.setInterval(() => {
     if (analytics) {
       window.clearInterval(id);
-      flushPendingUserId();
+      flushPendingUserIdWeb();
       return;
     }
     if (Date.now() - started > 12000) window.clearInterval(id);
@@ -31,9 +37,13 @@ function scheduleUserIdRetry() {
  * @param {Record<string, string | number | boolean> | undefined} [params]
  */
 export function trackEvent(name, params) {
+  if (isNativeAnalytics()) {
+    void FirebaseAnalytics.logEvent({ name, params: params || {} }).catch(() => {});
+    return;
+  }
   if (!analytics) return;
   try {
-    flushPendingUserId();
+    flushPendingUserIdWeb();
     logEvent(analytics, name, params || {});
   } catch {
     /* ignore */
@@ -42,9 +52,14 @@ export function trackEvent(name, params) {
 
 /** @param {string | null | undefined} uid Firebase Auth uid, or null on sign-out */
 export function setAnalyticsUserId(uid) {
-  pendingUserId = uid === undefined || uid === '' ? null : uid;
+  const normalized = uid === undefined || uid === '' ? null : uid;
+  if (isNativeAnalytics()) {
+    void FirebaseAnalytics.setUserId({ userId: normalized }).catch(() => {});
+    return;
+  }
+  pendingUserId = normalized;
   if (analytics) {
-    flushPendingUserId();
+    flushPendingUserIdWeb();
     return;
   }
   if (pendingUserId !== undefined) scheduleUserIdRetry();
@@ -52,9 +67,17 @@ export function setAnalyticsUserId(uid) {
 
 /** @param {Record<string, string>} props GA4 user properties (string values) */
 export function setAnalyticsUserProperties(props) {
-  if (!analytics || !props) return;
+  if (!props) return;
+  if (isNativeAnalytics()) {
+    for (const [key, value] of Object.entries(props)) {
+      const v = value === undefined || value === null ? null : String(value);
+      void FirebaseAnalytics.setUserProperty({ key, value: v }).catch(() => {});
+    }
+    return;
+  }
+  if (!analytics) return;
   try {
-    flushPendingUserId();
+    flushPendingUserIdWeb();
     setUserProperties(analytics, props);
   } catch {
     /* ignore */

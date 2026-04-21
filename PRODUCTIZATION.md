@@ -613,6 +613,11 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **`src/analytics.js` (new):** `trackEvent`, `setAnalyticsUserId` (handles late `getAnalytics()` init), `setAnalyticsUserProperties`.
 - **`src/App.jsx`:** Acquisition (`signup_*`, `invite_code_*`), onboarding duration, engagement (`list_item_added` with `quick_add` / `search` / `typed`, `list_item_checked`, `mode_switched`), user id on auth/cached user, `platform: web` + `household_role` after household load.
 
+### 2026-04-21 — Native track WP-5: Capacitor Firebase Authentication (SSO on native)
+- **`package.json`:** `@capacitor-firebase/authentication`; `firebase` bumped to ^12.6 (peer of the plugin).
+- **`src/App.jsx`:** On `Capacitor.isNativePlatform()`, Google/Apple sign-in and delete-account reauth use `FirebaseAuthentication` with `skipNativeAuth: true` + `signInWithCredential` / `reauthenticateWithCredential`; web keeps redirect-based OAuth.
+- **`capacitor.config.ts`:** `FirebaseAuthentication.providers` for Google + Apple; comment documenting `GoogleService-Info.plist` / `google-services.json` from Firebase Console.
+
 ### 2026-04-10 — Initial productization planning
 - Discussed what's needed to go from single-household personal app to public multi-household product
 - Identified multi-household data isolation as the primary architectural blocker (all data currently shared at root level)

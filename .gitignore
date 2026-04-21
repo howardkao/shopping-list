@@ -52,6 +52,9 @@ firebase-debug.*.log
 *.tmp
 *.temp
 
+# WP-6: transient input for `npm run gen-icons` (source of truth is public/icon-1024.png)
+.cap-assets-input/
+
 # Voice worker local env
 voice-mcp/.dev.vars
 
