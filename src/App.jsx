@@ -3028,6 +3028,9 @@ export default function App() {
     };
   });
 
+  /** Shop mode: only show aisles that have at least one list item (checked items still count). */
+  const aislesForListUi = quickAddMode ? organized : organized.filter((g) => g.has);
+
   useEffect(() => {
     const modeChanged = prevQuickAddMode.current !== quickAddMode;
     prevQuickAddMode.current = quickAddMode;
@@ -3104,15 +3107,23 @@ export default function App() {
     } else {
       const prevHad = prevShopAisleHadItemsRef.current;
       const toCollapse = [];
+      const toExpand = [];
       for (const g of organized) {
         if (prevHad[g.aisleId] === true && !nextHadItems[g.aisleId]) {
           toCollapse.push(g.aisleId);
         }
+        // List often arrives after taxonomy: first effect had an empty list and collapsed
+        // everything; when items sync, expand aisles that now have items (not after a manual
+        // collapse while the aisle still had stock — then prevHad stayed true).
+        if (nextHadItems[g.aisleId] && prevHad[g.aisleId] !== true) {
+          toExpand.push(g.aisleId);
+        }
       }
-      if (toCollapse.length > 0) {
+      if (toCollapse.length > 0 || toExpand.length > 0) {
         setExpandedCategories((p) => {
           const n = { ...p };
           for (const id of toCollapse) n[id] = false;
+          for (const id of toExpand) n[id] = true;
           return n;
         });
       }
@@ -3919,7 +3930,7 @@ export default function App() {
                 </div>
               ) : (
               <div className="space-y-3">
-                {organized.map(g => {
+                {aislesForListUi.map(g => {
                   const search = categorySearches[g.aisleId] || '';
                   const quickAddDropdown = getAisleDropdownItems(g.aisleId);
                   const isExpanded = expandedCategories[g.aisleId];

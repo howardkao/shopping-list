@@ -40,11 +40,11 @@ This document tracks the ongoing effort to productize this app for public, multi
 ## Open Decisions
 
 - [x] **Business model**: free trial + annual subscription — decided 2026-04-17
-  - **Price:** $3.99/year at launch. Goal is user acquisition over revenue; raise price later once download counts provide social proof. Grandfather early adopters at $3.99 forever (new price tier, not modifying existing).
+  - **Price:** $4.99/year at launch. Goal is user acquisition over revenue; raise price later once download counts provide social proof. Grandfather early adopters at $4.99 forever (new price tier, not modifying existing).
   - **Trial:** 2 months (~8 weekly shopping trips; enough to build taxonomy investment and invite household members).
   - **Post-trial behavior:** Read-only mode — can view list and check items off at the store; cannot add, edit suggestions, or invite new members. Preserves data investment; not punitive by Apple's standards.
   - **Subscription scope:** Per-household. Admin pays; all members covered. RevenueCat entitlement keyed to household ID as App User ID.
-  - **Web vs in-app pricing:** Uniform $3.99 everywhere. Can't reference web pricing inside iOS app; the IAP vs Stripe fee difference (~$0.60) isn't worth the complexity.
+  - **Web vs in-app pricing:** Uniform $4.99 everywhere. Can't reference web pricing inside iOS app; the IAP vs Stripe fee difference (~$0.60) isn't worth the complexity.
 - [x] **App store strategy**: Capacitor wrapper for both iOS App Store and Google Play — decided 2026-04-12
   - Plan documented in `NATIVE_APP_PLAN.md`
 - [ ] **RTDB vs Firestore for household data**: RTDB is simpler and already used, but Firestore is more cost-efficient at scale and supports finer-grained security rules
@@ -138,12 +138,16 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ## Session Log
 
+### 2026-04-20 — Pricing revised: $3.99 → $4.99/year; custom auth domain for SSO
+- **Pricing:** Launch price bumped from $3.99 to $4.99/year. All strategy docs (`PRODUCTIZATION.md`, `NATIVE_APP_PLAN.md`, `NATIVE_APP_EXECUTION_PLAN.md`, `PAYWALL_SPEC.md`, `BUSINESS_LAUNCH_PLAN.md`, `landing.html`) updated; derived math in `BUSINESS_LAUNCH_PLAN.md` recalculated (per-sale net ~$3.99 after 15% Apple + 5% RevenueCat; 25 subs = ~$125 ARR; 900 subs = ~$4,500 ARR / ~$2,700 net; break-even now ~8K subs). `PRODUCT_MARKETING.md` already reflected $4.99 from earlier session.
+- **Custom auth domain:** To prep for SSO (WP-1), pointed `myprovisions.app` at Firebase Hosting and added it as an authorized Auth domain. `.env` updated to `VITE_FIREBASE_AUTH_DOMAIN=myprovisions.app` so the OAuth popup shows brand domain instead of `*.firebaseapp.com`. Apple Services ID + Google OAuth client will register against the custom domain.
+
 ### 2026-04-20 — Marketing landing page mockup
 - **Artifact:** `landing-mockup.html` (gitignored) — standalone HTML/CSS/JS mockup for iteration, not wired into the app.
 - **Approach chosen:** Option A (problem-led / "PAS" framework) over Option B (product-led). Rationale: the product's insight — routine shopping is 80% of shopping, every other app ignores that — is the conversion lever, not the UI. The value can't be shown in a screenshot; it has to be narrated.
 - **Page structure:** Nav → Hero (typewriter headline) → Insight (2-col with phone mockup) → How it works (3 steps) → Pricing card → Footer.
 - **Headline:** Typewriter animation cycling through common grocery items (milk, eggs, worcestershire, bread, mozzarella, coffee, gnocchi, bananas, sriracha, butter, parmesan, chicken). Mundane items establish the joke; hard-to-spell items are the punchline.
-- **Pricing copy:** "Two months free. $3.99/year after. One price covers your whole household." Dropped "No card required" (sets expectation we may not fulfill) and "Cancel anytime" (implies refund we don't plan to issue).
+- **Pricing copy:** "Two months free. $4.99/year after. One price covers your whole household." Dropped "No card required" (sets expectation we may not fulfill) and "Cancel anytime" (implies refund we don't plan to issue).
 - **Removed:** Problems section (restated what the hero already said), closing quote section (felt forced without real testimonials).
 - **Phone mockup:** Rebuilt to match actual app chrome — white header with coral wordmark, gray content background, aisle cards with per-aisle search + list rows (coral + button, name, chevron), bottom nav pill with Shop/Plan tabs (Plan active). Previous version had coral header, top tab bar, and tile grid — all wrong.
 - **Open:** No domain, no real CTA destination, no real app store links. Landing page is not yet wired to the auth flow. Tagline still unresolved (PRODUCT_MARKETING.md open question).
@@ -161,7 +165,7 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **Updated:** `PRODUCT_MARKETING.md` (naming rationale rewritten, all inline references), `DESIGN_REVIEW.md` (brand name references), `NATIVE_APP_EXECUTION_PLAN.md` (app name, bundle ID `com.larderapp.shoppinglist`, subscription group "Larder Premium", localStorage key), `NATIVE_APP_PLAN.md` (same), `src/App.jsx` (localStorage key `larder.clearChipTooltipSeen.v1`).
 
 ### 2026-04-17 — Native app track: multi-agent execution plan + business model decisions
-- **Business model finalized:** $3.99/year launch price (user acquisition over revenue; grandfather early adopters; raise price after social proof); 2-month trial; read-only post-trial mode; per-household subscription scope; uniform pricing.
+- **Business model finalized:** $4.99/year launch price (user acquisition over revenue; grandfather early adopters; raise price after social proof); 2-month trial; read-only post-trial mode; per-household subscription scope; uniform pricing.
 - **`NATIVE_APP_PLAN.md`:** Open decisions section replaced with finalized business model decisions.
 - **`NATIVE_APP_EXECUTION_PLAN.md`:** New multi-agent execution plan with 11 work packages across 7 batches, model-tier recommendations (Opus/Sonnet/Haiku per WP), branch strategy, human gates, and dependency graph. WP-1 (SSO) and WP-2 (analytics) serialized to avoid App.jsx merge conflicts.
 - **`PAYWALL_SPEC.md`** and **`.gitignore`:** New planning doc gitignored.

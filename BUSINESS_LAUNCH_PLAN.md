@@ -121,7 +121,7 @@
 ### 3.1 RevenueCat Configuration
 - [ ] **Subscription setup:**
   - Product ID: `com.provisionsapp.shoppinglist.premium.annual` (iOS) + Google Play equivalent
-  - Price: $3.99/year (launch price; grandfather existing subscribers at this rate)
+  - Price: $4.99/year (launch price; grandfather existing subscribers at this rate)
   - Renewal: automatic; users can disable in iOS Settings → Subscriptions
   - Trial: 2 months; free then auto-converts to paid (Apple + Google require clear disclosures)
   - Proration: if user cancels mid-month, do they get a refund? (RevenueCat handles; decide now)
@@ -133,32 +133,32 @@
   - RevenueCat aggregates Apple/Google; they pay you net of their fees
   - Apple: 15–30% fee depending on tier; payout ~30 days after month-end
   - Google: 15–30% fee; payout ~35 days after month-end
-  - Example: $3.99 annual sale → Apple takes ~$0.60 (15%) → RevenueCat takes ~$0.20 (5%) → you get ~$3.19
+  - Example: $4.99 annual sale → Apple takes ~$0.75 (15%) → RevenueCat takes ~$0.25 (5%) → you get ~$3.99
   - Bank: Set up ACH direct deposit in RevenueCat console; connects to your business bank account
 
 ### 3.2 Financial Projections
 - [ ] **Baseline scenario (conservative):**
   - Year 1: 500 new users, 10% trial→paid, 50% monthly churn → 25 active subscribers by year-end
-  - Annual recurring revenue (ARR): 25 × $3.99 = ~$100/year (or ~$8/month)
+  - Annual recurring revenue (ARR): 25 × $4.99 = ~$125/year (or ~$10/month)
   - Revenue net of platform fees: ~$60/year
   - This is "proof of concept" stage; focus on growth, not profit
   
 - [ ] **Growth scenario (optimistic):**
   - Year 1: 10K users (via App Store featured + word-of-mouth), 15% conversion, 40% churn → 900 subscribers
-  - ARR: 900 × $3.99 = ~$3,600; net ~$2,160
+  - ARR: 900 × $4.99 = ~$4,500; net ~$2,700
   - Still modest, but starting to cover server costs ($2-3K/month on Firebase Blaze)
   
 - [ ] **Break-even:**
   - Firebase costs: ~$2–3K/month at scale (10k+ households)
   - Server/infrastructure: ~$500–1K/month (monitoring, backups, CDN)
   - Total annual: ~$30–50K
-  - **Break-even revenue needed:** ~$40K ARR (assuming 60% after platform fees) = ~10K subscribers at $3.99
+  - **Break-even revenue needed:** ~$40K ARR (assuming 60% after platform fees) = ~8K subscribers at $4.99
   - **Timeline:** 12–24 months if growth trajectory holds
   
 - [ ] **Pricing strategy for growth:**
-  - Launch at $3.99 to maximize downloads + network effects (more users → more valuable)
+  - Launch at $4.99 to maximize downloads + network effects (more users → more valuable)
   - After 1 year or 5K subscribers: raise to $5.99 (or announce new tier at $9.99 for features)
-  - Grandfather existing $3.99 subscribers; only new/churned users see higher price
+  - Grandfather existing $4.99 subscribers; only new/churned users see higher price
   - Rationale: proven product + user base justifies price increase
 
 ### 3.3 Expense Tracking & Budgeting
@@ -222,7 +222,7 @@
 ### 4.1 App Store & Google Play Submission
 - [ ] **Apple App Store:**
   - [ ] App privacy label (auto-filled from your privacy policy)
-  - [ ] In-app purchase setup (Provisions Premium, $3.99/year, 2-month trial)
+  - [ ] In-app purchase setup (Provisions Premium, $4.99/year, 2-month trial)
   - [ ] App screenshots (4–5 showing key features)
   - [ ] Description + keywords (for App Store search)
   - [ ] Category: Lifestyle (or Productivity if available)
@@ -348,7 +348,7 @@
   - [ ] Profitability path: Are you on track to break even by Year 2?
   - [ ] Team plan: Can you scale with your current bandwidth?
   - [ ] Funding: Do you need investor capital, or are you bootstrapping to profitability?
-  - [ ] Price changes: Is $3.99 still the right price? (data-driven decision)
+  - [ ] Price changes: Is $4.99 still the right price? (data-driven decision)
 
 ---
 
@@ -389,4 +389,4 @@
 
 - **Legal/tax advice disclaimer:** This plan is a checklist, not legal/tax counsel. Your situation may differ (state, income level, corporate structure, international elements). Consult a licensed tax advisor and lawyer before filing anything.
 - **Scope creep:** Don't hire anyone or spend money on marketing until you validate that the product has product-market fit (strong early user reviews + word-of-mouth growth).
-- **Profitability is optional:** Many successful indie apps run at a loss initially to grow the user base. Provisions' unit economics are favorable ($3.99 subscription = low CAC needed to break even); focus on growth Year 1, profit Year 2+.
+- **Profitability is optional:** Many successful indie apps run at a loss initially to grow the user base. Provisions' unit economics are favorable ($4.99 subscription = low CAC needed to break even); focus on growth Year 1, profit Year 2+.
