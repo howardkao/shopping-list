@@ -15,7 +15,7 @@
 | **Build Tool** | Vite 5 | Fast HMR, ESM-native, simple config |
 | **Styling** | Tailwind CSS 3 | Utility-first, no CSS files to manage, responsive breakpoints |
 | **Font** | Plus Jakarta Sans (Google Fonts) | Clean, modern sans-serif suitable for mobile UI |
-| **Auth** | Firebase Auth (email/password) | Managed auth with token refresh, persistence options |
+| **Auth** | Firebase Auth (email/password, Google, Apple) | Managed auth with token refresh, persistence options; SSO via `signInWithPopup` on web |
 | **Primary Database** | Firebase Realtime Database | Real-time listeners (`onValue`), simple JSON model, offline SDK support |
 | **Secondary Database** | Cloud Firestore | Server-side query support for admin role checks |
 | **Offline Storage** | IndexedDB (raw API) | Structured client-side storage for offline-first behavior |
@@ -195,12 +195,26 @@ The verbose placeholder approach was chosen for readability in the Firebase cons
 
 ### Online Flow
 
-1. User enters email/password on the Login screen
-2. Firebase Auth `signInWithEmailAndPassword()` or `createUserWithEmailAndPassword()`
-3. `onAuthStateChanged` listener fires → sets `user` state
-4. Admin check: `getDoc(doc(firestore, 'admins', user.uid))` → sets `isAdmin`
-5. On sign-up: user record written to `/users/{uid}` in Realtime Database
-6. First user: additionally written to Firestore `admins` collection
+1. User signs in via one of three paths on the Login screen:
+   - Email/password: `signInWithEmailAndPassword()` / `createUserWithEmailAndPassword()`
+   - Google SSO: `signInWithPopup(auth, new GoogleAuthProvider())`
+   - Apple SSO: `signInWithPopup(auth, new OAuthProvider('apple.com'))`
+2. `onAuthStateChanged` listener fires → sets `user` state
+3. App reads `/users/{uid}` to resolve `householdId`; admin status = `household.adminUid === uid`
+4. On new-user sign-up (email/password or SSO without prior user record), the shared helper `setupHouseholdForUser(newUser, { signupType, inviteCode, displayName })` writes `/users/{uid}`, either seeds a new household (new admin) or redeems an invite code (joiner)
+
+### SSO specifics
+
+- Custom Firebase Auth domain (`myprovisions.app`, set via `VITE_FIREBASE_AUTH_DOMAIN`) keeps the OAuth consent screen on our brand instead of the raw `*.firebaseapp.com` URL
+- New SSO users in **signin** mode, or existing SSO users without a `/users/{uid}` record, are routed to an in-app "Complete your household setup" screen (`awaitingHousehold` state) that collects displayName and either creates a new household or accepts an invite code — same helper as the email/password path
+- SSO popups can be cancelled; `auth/popup-closed-by-user` and `auth/cancelled-popup-request` are swallowed silently. If the user cancels the post-popup household setup, `deleteUser()` tears down the half-created Firebase Auth account so the next attempt is clean
+- **Account linking:** on `auth/account-exists-with-different-credential`, the pending SSO credential is extracted via `GoogleAuthProvider.credentialFromError()` / `OAuthProvider.credentialFromError()` and stashed in state; the user re-enters their password, and `linkWithCredential()` attaches the SSO provider to the existing email/password account in one round-trip
+
+### Account deletion
+
+- Password accounts: `reauthenticateWithCredential(user, EmailAuthProvider.credential(email, password))`
+- SSO accounts: `reauthenticateWithPopup(user, provider)` where `provider` matches `user.providerData[0].providerId` (`google.com` → `GoogleAuthProvider`, `apple.com` → `OAuthProvider('apple.com')`)
+- Both branches share the same teardown (`finishDeletion`): invite-code index cleanup for admins, household removal for admins, `/users/{uid}` delete, cached-user clear, `deleteUser(auth.currentUser)`
 
 ### Offline-First Auth
 

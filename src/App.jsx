@@ -10,7 +10,13 @@ import {
   sendPasswordResetEmail,
   deleteUser,
   reauthenticateWithCredential,
-  EmailAuthProvider
+  reauthenticateWithRedirect,
+  EmailAuthProvider,
+  GoogleAuthProvider,
+  OAuthProvider,
+  signInWithRedirect,
+  getRedirectResult,
+  linkWithCredential
 } from 'firebase/auth';
 import { ref, set, get, remove, onValue, push, update } from 'firebase/database';
 import {
@@ -115,6 +121,116 @@ const formatLocalDateTimePhrase = (ms) => {
   }
 };
 
+/**
+ * Redeem an invite code or create a new household for a just-authenticated user
+ * (email/password or SSO). Writes `users/{uid}`, `households/{hid}/members/{uid}`,
+ * and seeds taxonomy for new households. Throws human-readable errors on validation
+ * failure; callers are responsible for logging and surfacing messages to the user.
+ */
+async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayName }) {
+  const trimmedName = (displayName || '').trim();
+  if (!trimmedName) {
+    throw new Error('Please enter your name');
+  }
+
+  const now = Date.now();
+
+  if (signupType === 'join') {
+    if (!inviteCode) {
+      throw new Error('Please enter your invitation code.');
+    }
+    const code = inviteCode.trim().toUpperCase();
+    const codeSnapshot = await get(ref(database, `inviteCodes/${code}`));
+    const codeData = codeSnapshot.val();
+    if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
+      throw new Error("That invite code isn't valid or has expired.");
+    }
+    if (codeData.used) {
+      throw new Error('That invite code has already been used.');
+    }
+    const householdId = codeData.householdId;
+
+    await set(ref(database, `inviteCodes/${code}/used`), true);
+    await set(ref(database, `inviteCodes/${code}/usedBy`), newUser.email);
+    await set(ref(database, `inviteCodes/${code}/usedAt`), now);
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}/used`), true);
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedBy`), newUser.email);
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedAt`), now);
+
+    await set(ref(database, `users/${newUser.uid}`), {
+      email: newUser.email,
+      displayName: trimmedName,
+      createdAt: now,
+      householdId
+    });
+    await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
+      displayName: trimmedName,
+      email: newUser.email
+    });
+    return householdId;
+  }
+
+  // Create a new household
+  const newHouseholdRef = push(ref(database, 'households'));
+  const householdId = newHouseholdRef.key;
+  await set(newHouseholdRef, {
+    adminUid: newUser.uid,
+    createdAt: now
+  });
+  await set(ref(database, `users/${newUser.uid}`), {
+    email: newUser.email,
+    displayName: trimmedName,
+    createdAt: now,
+    householdId
+  });
+  await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
+    displayName: trimmedName,
+    email: newUser.email
+  });
+
+  try {
+    const result = await bootstrapHouseholdTaxonomy(householdId);
+    logger.info('Auth', 'Household taxonomy seeded', { householdId, ...result });
+  } catch (seedErr) {
+    logger.error('Auth', 'Household taxonomy seed failed', { householdId, error: seedErr.message });
+  }
+  logger.info('Auth', 'New household created', { householdId, adminUid: newUser.uid });
+
+  return householdId;
+}
+
+const SSO_SESSION_KEY = 'shopping_list_sso_ctx';
+const SSO_LINK_UI_KEY = 'shopping_list_sso_link_ui';
+
+/** OAuth credential for account-exists linking after redirect; not JSON-serializable. */
+let pendingOAuthLink = null;
+
+/** React 18 Strict Mode runs effects twice in dev; concurrent getRedirectResult calls race (second returns null). */
+let getRedirectResultPromise = null;
+function getRedirectResultOnce() {
+  if (!getRedirectResultPromise) {
+    getRedirectResultPromise = getRedirectResult(auth);
+  }
+  return getRedirectResultPromise;
+}
+
+async function deleteAccountDataAndAuth(user, householdId, isAdmin) {
+  if (isAdmin && householdId) {
+    const inviteCodesSnap = await get(ref(database, `households/${householdId}/inviteCodes`));
+    const inviteCodes = inviteCodesSnap.val();
+    if (inviteCodes) {
+      await Promise.all(
+        Object.keys(inviteCodes).map((code) => remove(ref(database, `inviteCodes/${code}`)))
+      );
+    }
+    await remove(ref(database, `households/${householdId}`));
+  }
+  await remove(ref(database, `users/${user.uid}`));
+  await clearCachedUser();
+  await deleteUser(user);
+  logger.info('Auth', 'Account deleted successfully', { uid: user.uid });
+}
+
 function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
   const [mode, setMode] = useState(initialMode ?? 'signin');
   const [signupType, setSignupType] = useState('create'); // 'create' | 'join'
@@ -126,6 +242,46 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  /** SSO account linking: when an SSO attempt fails with account-exists-with-different-credential,
+   *  we stash the SSO credential + email + which provider was attempted, then prompt for the
+   *  existing password so we can sign in + linkWithCredential. */
+  const [pendingCredential, setPendingCredential] = useState(null);
+  const [pendingLinkEmail, setPendingLinkEmail] = useState('');
+  const [pendingLinkProvider, setPendingLinkProvider] = useState('');
+  /** SSO signup on the signin screen: if OAuth succeeds but users/{uid} doesn't exist, we route
+   *  the user into a post-SSO household-choice step (redirect flow resumes via sessionStorage). */
+  const [awaitingHousehold, setAwaitingHousehold] = useState(false);
+
+  useEffect(() => {
+    if (pendingOAuthLink) {
+      const p = pendingOAuthLink;
+      pendingOAuthLink = null;
+      setPendingCredential(p.credential);
+      setPendingLinkEmail(p.email);
+      setPendingLinkProvider(p.providerType);
+      if (p.email) setEmail(p.email);
+      setPassword('');
+      setError(
+        'An account already exists with this email. Enter your password below to link your accounts.'
+      );
+    }
+    try {
+      const raw = sessionStorage.getItem(SSO_SESSION_KEY);
+      if (!raw) return;
+      const ctx = JSON.parse(raw);
+      if (ctx.phase === 'awaiting_household') {
+        setAwaitingHousehold(true);
+        setMode(ctx.mode || 'signup');
+        setSignupType(ctx.signupType || 'create');
+        setInviteCode(ctx.inviteCode || '');
+        setDisplayName(ctx.displayName || '');
+      }
+    } catch {
+      sessionStorage.removeItem(SSO_SESSION_KEY);
+    }
+  }, []);
+
+  const clearMessages = () => { setError(''); setSuccess(''); };
 
   const handleSignIn = async () => {
     setLoading(true);
@@ -171,89 +327,18 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
         setLoading(false);
         return;
       }
-
-      let householdId;
-
-      if (signupType === 'join') {
-        if (!inviteCode) {
-          setError('Please enter your invitation code.');
-          setLoading(false);
-          return;
-        }
-        const code = inviteCode.trim().toUpperCase();
-        const codeSnapshot = await get(ref(database, `inviteCodes/${code}`));
-        const codeData = codeSnapshot.val();
-        if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
-          logger.warn('Auth', 'Sign up failed - invalid/expired invite code');
-          setError("That invite code isn't valid or has expired.");
-          setLoading(false);
-          return;
-        }
-        if (codeData.used) {
-          logger.warn('Auth', 'Sign up failed - invite code already used');
-          setError('That invite code has already been used.');
-          setLoading(false);
-          return;
-        }
-        householdId = codeData.householdId;
-        logger.info('Auth', 'Valid invite code', { householdId });
-
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const newUser = userCredential.user;
-
-        // Mark code used in both global index and household copy
-        const now = Date.now();
-        await set(ref(database, `inviteCodes/${code}/used`), true);
-        await set(ref(database, `inviteCodes/${code}/usedBy`), email);
-        await set(ref(database, `inviteCodes/${code}/usedAt`), now);
-        await set(ref(database, `households/${householdId}/inviteCodes/${code}/used`), true);
-        await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedBy`), email);
-        await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedAt`), now);
-
-        await set(ref(database, `users/${newUser.uid}`), {
-          email: newUser.email,
-          displayName: trimmedName,
-          createdAt: now,
-          householdId
-        });
-        await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
-          displayName: trimmedName,
-          email: newUser.email
-        });
-      } else {
-        // Create a new household
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const newUser = userCredential.user;
-
-        const newHouseholdRef = push(ref(database, 'households'));
-        householdId = newHouseholdRef.key;
-
-        const now = Date.now();
-        await set(newHouseholdRef, {
-          adminUid: newUser.uid,
-          createdAt: now
-        });
-
-        await set(ref(database, `users/${newUser.uid}`), {
-          email: newUser.email,
-          displayName: trimmedName,
-          createdAt: now,
-          householdId
-        });
-        await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
-          displayName: trimmedName,
-          email: newUser.email
-        });
-
-        try {
-          const result = await bootstrapHouseholdTaxonomy(householdId);
-          logger.info('Auth', 'Household taxonomy seeded', { householdId, ...result });
-        } catch (seedErr) {
-          logger.error('Auth', 'Household taxonomy seed failed', { householdId, error: seedErr.message });
-        }
-
-        logger.info('Auth', 'New household created', { householdId, adminUid: newUser.uid });
+      if (signupType === 'join' && !inviteCode) {
+        setError('Please enter your invitation code.');
+        setLoading(false);
+        return;
       }
+
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      await setupHouseholdForUser(userCredential.user, {
+        signupType,
+        inviteCode,
+        displayName: trimmedName
+      });
 
       logger.info('Auth', 'Sign up completed successfully');
       if (onLoginSuccess) onLoginSuccess();
@@ -263,6 +348,165 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
     }
     setLoading(false);
   };
+
+  const buildSsoProvider = (providerType) => {
+    if (providerType === 'google') {
+      const p = new GoogleAuthProvider();
+      p.setCustomParameters({ prompt: 'select_account' });
+      return p;
+    }
+    const p = new OAuthProvider('apple.com');
+    p.addScope('email');
+    p.addScope('name');
+    return p;
+  };
+
+  const handleSsoSignIn = async (providerType) => {
+    setLoading(true);
+    clearMessages();
+    logger.info('Auth', 'SSO sign-in attempt (redirect)', { providerType, mode, signupType });
+    try {
+      sessionStorage.setItem(
+        SSO_SESSION_KEY,
+        JSON.stringify({
+          phase: 'pre_redirect',
+          mode,
+          signupType,
+          inviteCode,
+          displayName,
+          providerType
+        })
+      );
+      await signInWithRedirect(auth, buildSsoProvider(providerType));
+    } catch (err) {
+      sessionStorage.removeItem(SSO_SESSION_KEY);
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+        logger.info('Auth', 'SSO redirect cancelled before navigation', { providerType });
+      } else {
+        logger.error('Auth', 'SSO redirect failed to start', {
+          providerType,
+          error: err.message,
+          code: err.code
+        });
+        setError(humanizeAuthError(err));
+      }
+      setLoading(false);
+    }
+  };
+
+  const handleLinkAccounts = async () => {
+    if (!pendingCredential || !pendingLinkEmail || !password) return;
+    setLoading(true);
+    clearMessages();
+    logger.info('Auth', 'Account linking attempt', {
+      provider: pendingLinkProvider,
+      email: pendingLinkEmail
+    });
+    try {
+      const pwdCred = await signInWithEmailAndPassword(auth, pendingLinkEmail, password);
+      await linkWithCredential(pwdCred.user, pendingCredential);
+      logger.info('Auth', 'Account linking successful', {
+        provider: pendingLinkProvider,
+        uid: pwdCred.user.uid
+      });
+      setPendingCredential(null);
+      setPendingLinkEmail('');
+      setPendingLinkProvider('');
+      sessionStorage.removeItem(SSO_LINK_UI_KEY);
+      if (onLoginSuccess) onLoginSuccess();
+    } catch (err) {
+      logger.error('Auth', 'Account linking failed', {
+        provider: pendingLinkProvider,
+        error: err.message,
+        code: err.code
+      });
+      setError(humanizeAuthError(err));
+    }
+    setLoading(false);
+  };
+
+  const cancelLinking = () => {
+    sessionStorage.removeItem(SSO_LINK_UI_KEY);
+    setPendingCredential(null);
+    setPendingLinkEmail('');
+    setPendingLinkProvider('');
+    setPassword('');
+    clearMessages();
+  };
+
+  const handleCompleteSsoHousehold = async () => {
+    let u = auth.currentUser;
+    if (!u) {
+      const deadline = Date.now() + 2500;
+      while (!u && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 80));
+        u = auth.currentUser;
+      }
+    }
+    if (!u) {
+      setError('Your sign-in session expired. Please try again.');
+      setAwaitingHousehold(false);
+      return;
+    }
+    setLoading(true);
+    clearMessages();
+    try {
+      const trimmedName = displayName.trim();
+      if (!trimmedName) {
+        setError('Please enter your name');
+        setLoading(false);
+        return;
+      }
+      if (signupType === 'join' && !inviteCode) {
+        setError('Please enter your invitation code.');
+        setLoading(false);
+        return;
+      }
+      await setupHouseholdForUser(u, {
+        signupType,
+        inviteCode,
+        displayName: trimmedName
+      });
+      logger.info('Auth', 'SSO household setup completed', { signupType });
+      sessionStorage.removeItem(SSO_SESSION_KEY);
+      setAwaitingHousehold(false);
+      if (onLoginSuccess) onLoginSuccess();
+    } catch (err) {
+      logger.error('Auth', 'SSO household setup failed', { error: err.message, code: err.code });
+      setError(humanizeAuthError(err));
+    }
+    setLoading(false);
+  };
+
+  const cancelSsoHouseholdSetup = async () => {
+    const current = auth.currentUser;
+    setLoading(true);
+    clearMessages();
+    try {
+      if (current) {
+        await deleteUser(current).catch((err) => {
+          logger.warn('Auth', 'Could not delete incomplete SSO user; signing out instead', {
+            error: err.message
+          });
+          return firebaseSignOut(auth);
+        });
+      }
+    } finally {
+      sessionStorage.removeItem(SSO_SESSION_KEY);
+      setAwaitingHousehold(false);
+      setDisplayName('');
+      setInviteCode('');
+      setPassword('');
+      setMode('signin');
+      setLoading(false);
+    }
+  };
+
+  const subtitle = pendingCredential
+    ? 'Link your account'
+    : awaitingHousehold
+      ? 'Finish setting up your account'
+      : mode === 'signin' ? 'Sign in to your account' : 'Create your account';
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#F7F7F7' }}>
@@ -274,70 +518,214 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
           <h1 className="text-3xl font-bold text-gray-800 mb-2">
             <a href="/" style={{ color: 'inherit', textDecoration: 'none' }}>Provisions</a>
           </h1>
-          <p className="text-gray-600 font-medium">{mode === 'signin' ? 'Sign in to your account' : 'Create your account'}</p>
+          <p className="text-gray-600 font-medium">{subtitle}</p>
         </div>
-        <div className="space-y-4">
-          {mode === 'signup' && (
-            <div className="flex rounded-xl overflow-hidden border-2 border-gray-200">
-              <button onClick={() => { setSignupType('create'); setError(''); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'create' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'create' ? { backgroundColor: '#FF7A7A' } : {}}>New household</button>
-              <button onClick={() => { setSignupType('join'); setError(''); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'join' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'join' ? { backgroundColor: '#FF7A7A' } : {}}>Join with code</button>
+
+        {pendingCredential && (
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!loading && password) handleLinkAccounts();
+            }}
+          >
+            <p className="text-sm text-gray-700 bg-amber-50 border border-amber-200 rounded-xl p-4 leading-relaxed">
+              An account for <span className="font-semibold">{pendingLinkEmail}</span> already exists with a password. Sign in with your password to link {pendingLinkProvider === 'google' ? 'Google' : 'Apple'} sign-in to it.
+            </p>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
+                  autoComplete="current-password"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(s => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-gray-700 rounded-lg"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
-          )}
-          {mode === 'signup' && (
+            {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
+            <button
+              type="submit"
+              disabled={loading || !password}
+              className="w-full text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
+              style={{ backgroundColor: (loading || !password) ? undefined : '#FF7A7A' }}
+            >
+              {loading ? 'Linking...' : 'Sign in and link'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelLinking}
+              disabled={loading}
+              className="w-full text-sm font-semibold text-gray-600 hover:underline transition-colors"
+            >
+              Cancel
+            </button>
+          </form>
+        )}
+
+        {!pendingCredential && awaitingHousehold && (
+          <div className="space-y-4">
+            <div className="flex rounded-xl overflow-hidden border-2 border-gray-200">
+              <button onClick={() => { setSignupType('create'); clearMessages(); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'create' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'create' ? { backgroundColor: '#FF7A7A' } : {}}>New household</button>
+              <button onClick={() => { setSignupType('join'); clearMessages(); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'join' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'join' ? { backgroundColor: '#FF7A7A' } : {}}>Join with code</button>
+            </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Your name</label>
               <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Jane" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors" />
             </div>
-          )}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Email</label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-3 text-gray-400" size={20} />
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors" />
-            </div>
+            {signupType === 'join' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Invitation Code</label>
+                <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} placeholder="16-character code" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider" />
+              </div>
+            )}
+            {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
+            <button
+              onClick={handleCompleteSsoHousehold}
+              disabled={loading}
+              className="w-full text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
+              style={{ backgroundColor: loading ? undefined : '#FF7A7A' }}
+            >
+              {loading ? 'Loading...' : signupType === 'create' ? 'Create Household' : 'Join Household'}
+            </button>
+            <button
+              onClick={cancelSsoHouseholdSetup}
+              disabled={loading}
+              className="w-full text-sm font-semibold text-gray-600 hover:underline transition-colors"
+            >
+              Cancel and sign out
+            </button>
           </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
-                onKeyDown={(e) => e.key === 'Enter' && (mode === 'signin' ? handleSignIn() : handleSignUp())}
-              />
+        )}
+
+        {!pendingCredential && !awaitingHousehold && (
+          <div className="space-y-4">
+            <div className="space-y-3">
               <button
                 type="button"
-                onClick={() => setShowPassword(s => !s)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-gray-700 rounded-lg"
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                onClick={() => handleSsoSignIn('google')}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-3 py-3 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 transition-colors"
               >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                </svg>
+                <span>Continue with Google</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSsoSignIn('apple')}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-3 py-3 rounded-xl font-semibold text-white bg-black hover:bg-gray-900 disabled:opacity-50 transition-colors"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
+                </svg>
+                <span>{mode === 'signin' ? 'Sign in with Apple' : 'Sign up with Apple'}</span>
               </button>
             </div>
-          </div>
-          {mode === 'signup' && signupType === 'join' && (
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Invitation Code</label>
-              <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} placeholder="16-character code" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider" />
+
+            <div className="flex items-center gap-3 py-1">
+              <div className="h-px bg-gray-200 flex-1" />
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">or</span>
+              <div className="h-px bg-gray-200 flex-1" />
             </div>
-          )}
-          {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
-          {success && <div className="bg-green-50 text-green-600 px-4 py-3 rounded-xl text-sm font-medium border border-green-200">{success}</div>}
-          <button onClick={mode === 'signin' ? handleSignIn : handleSignUp} disabled={loading} className="w-full text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90" style={{ backgroundColor: loading ? undefined : '#FF7A7A' }}>
-            {loading ? 'Loading...' : mode === 'signin' ? 'Sign In' : signupType === 'create' ? 'Create Household' : 'Join Household'}
-          </button>
-          {mode === 'signin' && (
-            <button onClick={handleResetPassword} disabled={loading} className="w-full text-sm font-semibold hover:underline text-gray-600 transition-colors">
-              Forgot password?
-            </button>
-          )}
-          <button onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); setSuccess(''); }} className="w-full text-sm font-semibold hover:underline" style={{ color: '#FF7A7A' }}>
-            {mode === 'signin' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
-          </button>
-        </div>
+
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (loading) return;
+                if (mode === 'signin') handleSignIn();
+                else handleSignUp();
+              }}
+            >
+              {mode === 'signup' && (
+                <div className="flex rounded-xl overflow-hidden border-2 border-gray-200">
+                  <button type="button" onClick={() => { setSignupType('create'); clearMessages(); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'create' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'create' ? { backgroundColor: '#FF7A7A' } : {}}>New household</button>
+                  <button type="button" onClick={() => { setSignupType('join'); clearMessages(); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'join' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'join' ? { backgroundColor: '#FF7A7A' } : {}}>Join with code</button>
+                </div>
+              )}
+              {mode === 'signup' && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Your name</label>
+                  <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Jane" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors" />
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Email</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-3 text-gray-400" size={20} />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
+                    autoComplete={mode === 'signin' ? 'username' : 'email'}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
+                    autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(s => !s)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-gray-700 rounded-lg"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+              {mode === 'signup' && signupType === 'join' && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Invitation Code</label>
+                  <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} placeholder="16-character code" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider" />
+                </div>
+              )}
+              {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
+              {success && <div className="bg-green-50 text-green-600 px-4 py-3 rounded-xl text-sm font-medium border border-green-200">{success}</div>}
+              <button type="submit" disabled={loading} className="w-full text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90" style={{ backgroundColor: loading ? undefined : '#FF7A7A' }}>
+                {loading ? 'Loading...' : mode === 'signin' ? 'Sign In' : signupType === 'create' ? 'Create Household' : 'Join Household'}
+              </button>
+              {mode === 'signin' && (
+                <button type="button" onClick={handleResetPassword} disabled={loading} className="w-full text-sm font-semibold hover:underline text-gray-600 transition-colors">
+                  Forgot password?
+                </button>
+              )}
+              <button type="button" onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); clearMessages(); }} className="w-full text-sm font-semibold hover:underline" style={{ color: '#FF7A7A' }}>
+                {mode === 'signin' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+              </button>
+            </form>
+          </div>
+        )}
+
         <p className="mt-8 pt-6 border-t border-gray-100 text-center text-xs text-gray-500 leading-relaxed">
           By continuing, you agree to the{' '}
           <button type="button" onClick={onOpenTerms} className="font-semibold underline decoration-gray-300 hover:decoration-gray-600 text-gray-600">
@@ -1275,44 +1663,63 @@ function ItemBottomSheet({ item, members, lastPurchasedTs, aisles, categories, o
 }
 
 function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) {
+  const providerId = user?.providerData?.[0]?.providerId || 'password';
+  const isSso = providerId === 'google.com' || providerId === 'apple.com';
+  const providerLabel = providerId === 'google.com' ? 'Google' : providerId === 'apple.com' ? 'Apple' : '';
+
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleDelete = async () => {
+  const finishDeletion = async () => {
+    await deleteAccountDataAndAuth(user, householdId, isAdmin);
+    onDeleted();
+  };
+
+  const handleDeletePassword = async () => {
     if (!password) return;
     setLoading(true);
     setError('');
-    logger.info('Auth', 'Account deletion initiated', { uid: user.uid, isAdmin });
+    logger.info('Auth', 'Account deletion initiated', { uid: user.uid, isAdmin, provider: 'password' });
     try {
       const credential = EmailAuthProvider.credential(user.email, password);
       await reauthenticateWithCredential(auth.currentUser, credential);
-
-      if (isAdmin && householdId) {
-        // Delete global invite code index entries first (while user record still exists for auth)
-        const inviteCodesSnap = await get(ref(database, `households/${householdId}/inviteCodes`));
-        const inviteCodes = inviteCodesSnap.val();
-        if (inviteCodes) {
-          await Promise.all(Object.keys(inviteCodes).map(code =>
-            remove(ref(database, `inviteCodes/${code}`))
-          ));
-        }
-        // Delete household
-        await remove(ref(database, `households/${householdId}`));
-      }
-
-      // Delete user record (must happen before deleteUser so auth is still valid)
-      await remove(ref(database, `users/${user.uid}`));
-
-      // Clear local cache before deleting auth account
-      await clearCachedUser();
-
-      // Delete Firebase Auth account (signs user out automatically)
-      await deleteUser(auth.currentUser);
-
-      logger.info('Auth', 'Account deleted successfully', { uid: user.uid });
-      onDeleted();
+      await finishDeletion();
     } catch (err) {
+      logger.error('Auth', 'Account deletion failed', { uid: user.uid, error: err.message, code: err.code });
+      setError(humanizeAuthError(err));
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteSso = async () => {
+    setLoading(true);
+    setError('');
+    logger.info('Auth', 'Account deletion initiated (redirect reauth)', {
+      uid: user.uid,
+      isAdmin,
+      provider: providerId
+    });
+    try {
+      sessionStorage.setItem(
+        SSO_SESSION_KEY,
+        JSON.stringify({
+          phase: 'delete_account',
+          uid: user.uid,
+          householdId,
+          isAdmin
+        })
+      );
+      const provider = providerId === 'google.com'
+        ? new GoogleAuthProvider()
+        : new OAuthProvider('apple.com');
+      await reauthenticateWithRedirect(auth.currentUser, provider);
+    } catch (err) {
+      sessionStorage.removeItem(SSO_SESSION_KEY);
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+        setLoading(false);
+        return;
+      }
       logger.error('Auth', 'Account deletion failed', { uid: user.uid, error: err.message, code: err.code });
       setError(humanizeAuthError(err));
       setLoading(false);
@@ -1332,32 +1739,53 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
               ? 'Your account and all household data will be permanently deleted — including the shopping list, history, and all pinned items. Other household members will lose access.'
               : 'Your account will be removed. The household and its data will remain accessible to other members.'}
           </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Enter your password to confirm</label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full pl-10 pr-4 py-3 border-2 border-red-200 rounded-xl focus:border-red-400 focus:outline-none transition-colors"
-                onKeyDown={(e) => e.key === 'Enter' && handleDelete()}
-                autoFocus
-              />
+          {isSso ? (
+            <div className="text-sm text-gray-700 font-medium">
+              Reauthenticate with {providerLabel} to confirm deletion.
             </div>
-          </div>
+          ) : (
+            <form
+              id="delete-account-password-form"
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!loading && password) handleDeletePassword();
+              }}
+            >
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Enter your password to confirm</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-red-200 rounded-xl focus:border-red-400 focus:outline-none transition-colors"
+                    autoComplete="current-password"
+                    autoFocus
+                  />
+                </div>
+              </div>
+            </form>
+          )}
           {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
         </div>
         <div className="p-6 border-t border-gray-200 flex gap-3">
-          <button onClick={onClose} disabled={loading} className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-300 transition-colors disabled:opacity-50">Cancel</button>
+          <button type="button" onClick={onClose} disabled={loading} className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-300 transition-colors disabled:opacity-50">Cancel</button>
           <button
-            onClick={handleDelete}
-            disabled={loading || !password}
+            type={isSso ? 'button' : 'submit'}
+            form={isSso ? undefined : 'delete-account-password-form'}
+            onClick={isSso ? handleDeleteSso : undefined}
+            disabled={loading || (!isSso && !password)}
             className="flex-1 text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
-            style={{ backgroundColor: loading || !password ? undefined : '#EF4444' }}
+            style={{ backgroundColor: loading || (!isSso && !password) ? undefined : '#EF4444' }}
           >
-            {loading ? 'Deleting...' : 'Delete Account'}
+            {loading
+              ? 'Deleting...'
+              : isSso
+                ? `Reauthenticate with ${providerLabel} & Delete`
+                : 'Delete Account'}
           </button>
         </div>
       </div>
@@ -1759,33 +2187,156 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    logger.info('Auth', 'Auth initialization started');
+    let cancelled = false;
+    let unsubscribe = null;
 
-    // Load cached user immediately (offline-first)
-    loadCachedUser().then(cachedUser => {
-      if (cachedUser && !authResolvedRef.current) {
-        logger.info('Auth', 'Loaded cached user', {
-          uid: cachedUser.uid,
-          email: cachedUser.email,
-          isAdmin: cachedUser.isAdmin
-        });
-        // Use cached user info while Firebase auth is loading
-        setUser({
-          uid: cachedUser.uid,
-          email: cachedUser.email,
-          cached: true
-        });
-        setIsAdmin(cachedUser.isAdmin || false);
-        setHouseholdId(cachedUser.householdId || null);
-        logger.setUserId(cachedUser.uid);
-      } else {
-        logger.debug('Auth', 'No cached user found or user already set');
+    const goAppAfterSso = () => {
+      if (cancelled) return;
+      setShowLoginExplicitly(false);
+      setLoginLegalView(null);
+      window.history.replaceState({}, '', '/app');
+      setCurrentPage('list');
+      setQuickAddMode(false);
+    };
+
+    const processOAuthRedirect = async () => {
+      try {
+        const result = await getRedirectResultOnce();
+        if (cancelled) return;
+
+        const raw = sessionStorage.getItem(SSO_SESSION_KEY);
+        if (!raw) return;
+
+        let ctx;
+        try {
+          ctx = JSON.parse(raw);
+        } catch {
+          sessionStorage.removeItem(SSO_SESSION_KEY);
+          return;
+        }
+
+        if (ctx.phase === 'delete_account') {
+          sessionStorage.removeItem(SSO_SESSION_KEY);
+          if (result?.user?.uid === ctx.uid) {
+            try {
+              await deleteAccountDataAndAuth(result.user, ctx.householdId, ctx.isAdmin);
+            } catch (e) {
+              logger.error('Auth', 'Delete account after SSO redirect failed', {
+                error: e.message,
+                code: e.code
+              });
+            }
+          }
+          return;
+        }
+
+        if (ctx.phase === 'awaiting_household') {
+          return;
+        }
+
+        if (ctx.phase !== 'pre_redirect') {
+          sessionStorage.removeItem(SSO_SESSION_KEY);
+          return;
+        }
+
+        if (!result) {
+          sessionStorage.removeItem(SSO_SESSION_KEY);
+          return;
+        }
+
+        sessionStorage.removeItem(SSO_SESSION_KEY);
+
+        const ssoUser = result.user;
+        const { mode, signupType, inviteCode, displayName: storedName } = ctx;
+
+        const userRecSnap = await get(ref(database, `users/${ssoUser.uid}`));
+        const existing = userRecSnap.val();
+        if (existing?.householdId) {
+          logger.info('Auth', 'SSO returning user (redirect), proceeding to app');
+          goAppAfterSso();
+          return;
+        }
+
+        const ssoDisplayName = (ssoUser.displayName || '').trim();
+        const storedTrim = (storedName || '').trim();
+        if (mode === 'signup' && (ssoDisplayName || storedTrim)) {
+          await setupHouseholdForUser(ssoUser, {
+            signupType,
+            inviteCode,
+            displayName: ssoDisplayName || storedTrim
+          });
+          goAppAfterSso();
+          return;
+        }
+
+        sessionStorage.setItem(
+          SSO_SESSION_KEY,
+          JSON.stringify({
+            phase: 'awaiting_household',
+            mode,
+            signupType,
+            inviteCode,
+            displayName: ssoDisplayName || storedTrim
+          })
+        );
+        setShowLoginExplicitly(true);
+      } catch (err) {
+        sessionStorage.removeItem(SSO_SESSION_KEY);
+        if (err.code === 'auth/account-exists-with-different-credential') {
+          const providerType = err.customData?.providerId === 'google.com' ? 'google' : 'apple';
+          const cred =
+            providerType === 'google'
+              ? GoogleAuthProvider.credentialFromError(err)
+              : OAuthProvider.credentialFromError(err);
+          pendingOAuthLink = {
+            credential: cred,
+            email: err.customData?.email || '',
+            providerType
+          };
+          sessionStorage.setItem(SSO_LINK_UI_KEY, '1');
+          setShowLoginExplicitly(true);
+        } else if (
+          err.code !== 'auth/popup-closed-by-user' &&
+          err.code !== 'auth/cancelled-popup-request'
+        ) {
+          logger.error('Auth', 'OAuth redirect getRedirectResult failed', {
+            error: err.message,
+            code: err.code
+          });
+        }
       }
-    }).catch(err => {
-      logger.error('Auth', 'Failed to load cached user', { error: err.message });
-    });
+    };
 
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    (async () => {
+      logger.info('Auth', 'Auth initialization started');
+      await processOAuthRedirect();
+      if (cancelled) return;
+      await auth.authStateReady();
+      if (cancelled) return;
+
+      loadCachedUser().then(cachedUser => {
+        if (cachedUser && !authResolvedRef.current) {
+          logger.info('Auth', 'Loaded cached user', {
+            uid: cachedUser.uid,
+            email: cachedUser.email,
+            isAdmin: cachedUser.isAdmin
+          });
+          setUser({
+            uid: cachedUser.uid,
+            email: cachedUser.email,
+            cached: true
+          });
+          setIsAdmin(cachedUser.isAdmin || false);
+          setHouseholdId(cachedUser.householdId || null);
+          logger.setUserId(cachedUser.uid);
+        } else {
+          logger.debug('Auth', 'No cached user found or user already set');
+        }
+      }).catch(err => {
+        logger.error('Auth', 'Failed to load cached user', { error: err.message });
+      });
+
+      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       authResolvedRef.current = true;
       logger.info('Auth', 'onAuthStateChanged fired', {
         hasUser: !!firebaseUser,
@@ -1793,65 +2344,83 @@ export default function App() {
         email: firebaseUser?.email
       });
 
+      let blockDismissLogin = sessionStorage.getItem(SSO_LINK_UI_KEY) === '1';
+      try {
+        const pending = sessionStorage.getItem(SSO_SESSION_KEY);
+        if (pending) {
+          const o = JSON.parse(pending);
+          if (o.phase === 'awaiting_household') blockDismissLogin = true;
+        }
+      } catch {
+        /* ignore */
+      }
+
       if (firebaseUser) {
         setUser(firebaseUser);
-        setShowLoginExplicitly(false);
+        if (!blockDismissLogin) setShowLoginExplicitly(false);
         logger.setUserId(firebaseUser.uid);
+
+        // End splash immediately: profile/household RTDB reads are not needed to paint the shell.
+        setAuthLoading(false);
+        logger.debug('Auth', 'Auth loading completed');
 
         // Load household membership and derive admin status from household record.
         // Retry a few times: onAuthStateChanged fires immediately after createUserWithEmailAndPassword,
         // before the signup handler has finished writing the user record to the DB.
-        let isAdminUser = false;
-        let userHouseholdId = null;
-        try {
-          let userRecord = await get(ref(database, `users/${firebaseUser.uid}`));
-          let retries = 0;
-          while (!userRecord.val() && retries < 4) {
-            await new Promise(r => setTimeout(r, 400));
-            userRecord = await get(ref(database, `users/${firebaseUser.uid}`));
-            retries++;
-            if (!userRecord.val()) {
-              logger.debug('Auth', 'User record not yet written, retrying', { retries });
+        void (async () => {
+          let isAdminUser = false;
+          let userHouseholdId = null;
+          try {
+            let userRecord = await get(ref(database, `users/${firebaseUser.uid}`));
+            let retries = 0;
+            while (!userRecord.val() && retries < 4) {
+              await new Promise(r => setTimeout(r, 120));
+              userRecord = await get(ref(database, `users/${firebaseUser.uid}`));
+              retries++;
+              if (!userRecord.val()) {
+                logger.debug('Auth', 'User record not yet written, retrying', { retries });
+              }
             }
+            userHouseholdId = userRecord.val()?.householdId || null;
+            if (!userRecord.val()?.displayName) {
+              setNeedsDisplayName(true);
+            }
+            if (userHouseholdId) {
+              const adminSnap = await get(ref(database, `households/${userHouseholdId}/adminUid`));
+              isAdminUser = adminSnap.val() === firebaseUser.uid;
+            }
+          } catch (err) {
+            logger.error('Auth', 'Failed to load household/admin status, using cached value', {
+              error: err.message,
+              code: err.code
+            });
+            const cachedUser = await loadCachedUser().catch(() => null);
+            isAdminUser = cachedUser?.isAdmin || false;
+            userHouseholdId = cachedUser?.householdId || null;
           }
-          userHouseholdId = userRecord.val()?.householdId || null;
-          if (!userRecord.val()?.displayName) {
-            setNeedsDisplayName(true);
-          }
-          if (userHouseholdId) {
-            const adminSnap = await get(ref(database, `households/${userHouseholdId}/adminUid`));
-            isAdminUser = adminSnap.val() === firebaseUser.uid;
-          }
-        } catch (err) {
-          logger.error('Auth', 'Failed to load household/admin status, using cached value', {
-            error: err.message,
-            code: err.code
+          setIsAdmin(isAdminUser);
+          setHouseholdId(userHouseholdId);
+
+          logger.info('Auth', 'User authenticated', {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            householdId: userHouseholdId,
+            isAdmin: isAdminUser
           });
-          const cachedUser = await loadCachedUser().catch(() => null);
-          isAdminUser = cachedUser?.isAdmin || false;
-          userHouseholdId = cachedUser?.householdId || null;
-        }
-        setIsAdmin(isAdminUser);
-        setHouseholdId(userHouseholdId);
 
-        logger.info('Auth', 'User authenticated', {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          householdId: userHouseholdId,
-          isAdmin: isAdminUser
-        });
-
-        // Save user info to IndexedDB for offline-first auth
-        await saveCachedUser({
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          isAdmin: isAdminUser,
-          householdId: userHouseholdId
-        }).then(() => {
-          logger.debug('Auth', 'Cached user saved to IndexedDB');
-        }).catch(err => {
-          logger.error('Auth', 'Failed to save cached user', { error: err.message });
-        });
+          saveCachedUser({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            isAdmin: isAdminUser,
+            householdId: userHouseholdId
+          })
+            .then(() => {
+              logger.debug('Auth', 'Cached user saved to IndexedDB');
+            })
+            .catch((err) => {
+              logger.error('Auth', 'Failed to save cached user', { error: err.message });
+            });
+        })();
       } else {
         // No Firebase session — stop RTDB log writes (avoids PERMISSION_DENIED after sign-out or token loss)
         logger.setUserId(null);
@@ -1874,11 +2443,16 @@ export default function App() {
           // We keep the 'user' state as the cached user (set during init)
           // This prevents aggressive logouts when token refresh fails
         }
+        setAuthLoading(false);
+        logger.debug('Auth', 'Auth loading completed');
       }
-      setAuthLoading(false);
-      logger.debug('Auth', 'Auth loading completed');
     });
-    return () => unsubscribe();
+    })();
+
+    return () => {
+      cancelled = true;
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   // Register PWA update callbacks
@@ -2057,6 +2631,7 @@ export default function App() {
           stack: error.stack
         });
         setLocalDataLoaded(true);
+        setLoading(false);
       }
     }
 
@@ -3481,8 +4056,11 @@ export default function App() {
     || Object.keys(categoriesV2).length > 0
   );
   
-  // We need re-auth if we are online but have no user, and we've finished checking auth
-  const needsReauth = hasCachedData && !user && !authLoading && navigator.onLine;
+  // Re-auth when we have local list data but no Firebase session. Use auth.currentUser
+  // (not React `user`) so we don't flash "Session Expired" after OAuth redirect while
+  // onAuthStateChanged / setUser haven't run yet.
+  const needsReauth =
+    hasCachedData && !auth.currentUser && !authLoading && navigator.onLine;
 
   // Show login screen if:
   // 1. Explicitly requested

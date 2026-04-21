@@ -34,9 +34,13 @@ const config = {
 
 const authRedirectScript = `  <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-    import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+    import { getAuth, getRedirectResult, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
     const app = initializeApp(${JSON.stringify(config)});
-    onAuthStateChanged(getAuth(app), user => { if (user) window.location.replace('/app'); });
+    const auth = getAuth(app);
+    try {
+      await getRedirectResult(auth);
+    } catch (e) { /* ignore */ }
+    onAuthStateChanged(auth, user => { if (user) window.location.replace('/app'); });
   </script>`;
 
 let html = readFileSync('landing.html', 'utf8');
