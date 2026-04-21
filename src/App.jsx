@@ -27,6 +27,7 @@ import {
   clearCachedUser
 } from './offlineStorage';
 import { logger } from './logger';
+import { trackEvent, setAnalyticsUserId, setAnalyticsUserProperties } from './analytics';
 import { humanizeAuthError } from './authErrors';
 import DebugPanel from './DebugPanel';
 import SuggestionsEditor from './SuggestionsEditor';
@@ -163,6 +164,8 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
     setError('');
     setSuccess('');
     logger.info('Auth', 'Sign up attempt', { email, signupType });
+    const signupFlow = signupType === 'join' ? 'join' : 'new_household';
+    trackEvent('signup_started', { method: 'email', flow: signupFlow });
 
     try {
       const trimmedName = displayName.trim();
@@ -185,12 +188,22 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
         const codeData = codeSnapshot.val();
         if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
           logger.warn('Auth', 'Sign up failed - invalid/expired invite code');
+          trackEvent('signup_abandoned', {
+            method: 'email',
+            flow: signupFlow,
+            step: 'invalid_invite',
+          });
           setError("That invite code isn't valid or has expired.");
           setLoading(false);
           return;
         }
         if (codeData.used) {
           logger.warn('Auth', 'Sign up failed - invite code already used');
+          trackEvent('signup_abandoned', {
+            method: 'email',
+            flow: signupFlow,
+            step: 'invite_used',
+          });
           setError('That invite code has already been used.');
           setLoading(false);
           return;
@@ -256,9 +269,18 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
       }
 
       logger.info('Auth', 'Sign up completed successfully');
+      trackEvent('signup_completed', { method: 'email', flow: signupFlow });
+      if (signupType === 'join') {
+        trackEvent('invite_code_redeemed', {});
+      }
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
       logger.error('Auth', 'Sign up failed', { email, error: err.message, code: err.code });
+      trackEvent('signup_abandoned', {
+        method: 'email',
+        flow: signupFlow,
+        step: String(err.code || 'error'),
+      });
       setError(humanizeAuthError(err));
     }
     setLoading(false);
@@ -749,6 +771,7 @@ function AdminPanel({ onClose, householdId }) {
     await set(ref(database, `households/${householdId}/inviteCodes/${code}`), codeData);
     // Write to global lookup index (for signup validation without auth)
     await set(ref(database, `inviteCodes/${code}`), { householdId, expiresAt: expiresAt.toISOString(), used: false, createdAt: Date.now() });
+    trackEvent('invite_code_generated', {});
     setCreating(false);
   };
 
@@ -1567,6 +1590,10 @@ export default function App() {
   const shopAisleDefaultsHouseholdIdRef = useRef(null);
   /** Shop mode: previous snapshot of whether each aisle had any list items (for auto-collapse when emptied). */
   const prevShopAisleHadItemsRef = useRef({});
+  /** First timestamp when onboarding UI is shown (for `onboarding_completed` duration). */
+  const onboardingEnteredAtRef = useRef(null);
+  /** `null` until first post-auth mode baseline; then used to emit `mode_switched` only on real toggles. */
+  const quickAddModeAnalyticsRef = useRef(null);
   /** Per-aisle Plan search inputs — measure for autocomplete flip (design review 4.3). */
   const aisleAddSearchInputRefs = useRef({});
   const prevAisleAutocompleteOpenRef = useRef({});
@@ -1778,6 +1805,7 @@ export default function App() {
         setIsAdmin(cachedUser.isAdmin || false);
         setHouseholdId(cachedUser.householdId || null);
         logger.setUserId(cachedUser.uid);
+        setAnalyticsUserId(cachedUser.uid);
       } else {
         logger.debug('Auth', 'No cached user found or user already set');
       }
@@ -1797,6 +1825,7 @@ export default function App() {
         setUser(firebaseUser);
         setShowLoginExplicitly(false);
         logger.setUserId(firebaseUser.uid);
+        setAnalyticsUserId(firebaseUser.uid);
 
         // Load household membership and derive admin status from household record.
         // Retry a few times: onAuthStateChanged fires immediately after createUserWithEmailAndPassword,
@@ -1855,6 +1884,7 @@ export default function App() {
       } else {
         // No Firebase session — stop RTDB log writes (avoids PERMISSION_DENIED after sign-out or token loss)
         logger.setUserId(null);
+        setAnalyticsUserId(null);
         logger.warn('Auth', 'Firebase auth returned null user');
 
         // Be more lenient: if we have a cached user, keep using it even if online
@@ -2393,6 +2423,9 @@ export default function App() {
       quantityLabel: (defaultQuantity || '').trim() || undefined,
     });
     void ensureListItemNameInLibrary(name, categoryIdResolved);
+    const gaSource =
+      source === 'quickAdd' ? 'quick_add' : source === 'search' ? 'search' : 'typed';
+    trackEvent('list_item_added', { source: gaSource });
   };
 
   const getItemCategoryId = (item) => item?.categoryId || categoryIdByName[item?.category] || null;
@@ -2417,6 +2450,9 @@ export default function App() {
         qty: Number(target.quantity) || 1,
         quantityLabel: (target.quantity || '').trim() || undefined,
       });
+      if (!target.done) {
+        trackEvent('list_item_checked', {});
+      }
     }
   };
 
@@ -2959,7 +2995,8 @@ export default function App() {
     let catId = suggestion.catId;
     if (!catId) catId = (v2CategoriesByAisle[aisleId] || [])[0] || null;
     const categoryName = catId ? v2CategoryNameById[catId] : (aislesV2[aisleId]?.name || '');
-    addItem(suggestion.name, categoryName, 'typed', generateId(), catId);
+    const addSource = suggestion.suggestionId != null ? 'search' : 'typed';
+    addItem(suggestion.name, categoryName, addSource, generateId(), catId);
     setCategorySearches(prev => ({ ...prev, [aisleId]: '' }));
   };
 
@@ -3401,6 +3438,44 @@ export default function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, [currentPage]);
 
+  useEffect(() => {
+    const inOnboarding =
+      Boolean(user) &&
+      !needsDisplayName &&
+      Object.keys(aislesV2).length > 0 &&
+      Object.keys(categoriesV2).length > 0 &&
+      onboardingCompleted === false;
+    if (inOnboarding) {
+      if (onboardingEnteredAtRef.current == null) {
+        onboardingEnteredAtRef.current = Date.now();
+      }
+    } else if (!user || onboardingCompleted === true) {
+      onboardingEnteredAtRef.current = null;
+    }
+  }, [user, needsDisplayName, aislesV2, categoriesV2, onboardingCompleted]);
+
+  useEffect(() => {
+    if (!user?.uid || !householdId) return;
+    setAnalyticsUserProperties({
+      platform: 'web',
+      household_role: isAdmin ? 'admin' : 'member',
+    });
+  }, [user?.uid, householdId, isAdmin]);
+
+  useEffect(() => {
+    if (!user?.uid || !householdId) {
+      quickAddModeAnalyticsRef.current = null;
+      return;
+    }
+    if (quickAddModeAnalyticsRef.current === null) {
+      quickAddModeAnalyticsRef.current = quickAddMode;
+      return;
+    }
+    if (quickAddModeAnalyticsRef.current === quickAddMode) return;
+    quickAddModeAnalyticsRef.current = quickAddMode;
+    trackEvent('mode_switched', { to: quickAddMode ? 'add' : 'shop' });
+  }, [quickAddMode, user?.uid, householdId]);
+
   const toggleCategory = (cat) => {
     setExpandedCategories(prev => ({ ...prev, [cat]: !prev[cat] }));
   };
@@ -3453,6 +3528,7 @@ export default function App() {
     try {
       await logger.flush();
       logger.setUserId(null);
+      setAnalyticsUserId(null);
       // Clear IndexedDB auth before signOut so onAuthStateChanged never re-adopts a stale cached user
       await clearCachedUser();
       await firebaseSignOut(auth);
@@ -3694,8 +3770,13 @@ export default function App() {
 
   const completeOnboarding = async () => {
     if (!householdId) return;
+    const startedAt = onboardingEnteredAtRef.current;
     try {
       await set(ref(database, `households/${householdId}/taxonomy/onboarding_completed`), true);
+      const durationSeconds =
+        startedAt != null ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : 0;
+      trackEvent('onboarding_completed', { duration_seconds: durationSeconds });
+      onboardingEnteredAtRef.current = null;
     } catch (err) {
       logger.error('Firebase', 'Failed to mark onboarding complete', { error: err.message });
     }
