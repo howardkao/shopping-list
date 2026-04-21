@@ -13,6 +13,10 @@
  *
  * **Native Google Sign-In (WP-5):** Add `GoogleService-Info.plist` (iOS) and `google-services.json` (Android)
  * from Firebase Console → Project settings → Your apps. Without them, Google SSO fails at runtime on device/simulator.
+ *
+ * **WP-6 (Firebase Analytics, iOS):** `analytics_default_allow_ad_personalization_signals: false` is applied in
+ * `ios/App/App/Info.plist` as `GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS` = NO (Capacitor config
+ * does not merge arbitrary plist keys).
  */
 
 import type { CapacitorConfig } from '@capacitor/cli';
