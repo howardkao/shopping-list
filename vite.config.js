@@ -5,6 +5,19 @@ import { VitePWA } from 'vite-plugin-pwa'
 export default defineConfig({
   plugins: [
     react(),
+    {
+      name: 'legal-routes-spa-fallback',
+      configureServer(server) {
+        server.middlewares.use((req, _res, next) => {
+          const raw = req.url || '';
+          const [pathOnly, query] = raw.split('?');
+          if (pathOnly === '/privacy' || pathOnly === '/terms') {
+            req.url = '/index.html' + (query != null && query !== '' ? `?${query}` : '');
+          }
+          next();
+        });
+      },
+    },
     VitePWA({
       registerType: 'prompt',
       includeAssets: ['icon.svg'],
@@ -37,7 +50,7 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/app.html',
-        navigateFallbackAllowlist: [/^\/app(\/|$)/, /^\/signin$/, /^\/signup$/],
+        navigateFallbackAllowlist: [/^\/app(\/|$)/, /^\/signin$/, /^\/signup$/, /^\/privacy$/, /^\/terms$/],
         // Cache all static assets
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         // Runtime caching for Firebase and other APIs

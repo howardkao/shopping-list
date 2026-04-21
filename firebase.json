@@ -27,6 +27,14 @@
         "destination": "/app.html"
       },
       {
+        "source": "/privacy",
+        "destination": "/app.html"
+      },
+      {
+        "source": "/terms",
+        "destination": "/app.html"
+      },
+      {
         "source": "**",
         "destination": "/landing.html"
       }

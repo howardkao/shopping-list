@@ -50,6 +50,16 @@ import {
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
+/** Public SPA routes for legal pages (Firebase hosting rewrites + in-app history). */
+const LEGAL_PATH_PRIVACY = '/privacy';
+const LEGAL_PATH_TERMS = '/terms';
+
+function legalViewFromPathname(pathname) {
+  if (pathname === LEGAL_PATH_PRIVACY) return 'privacy';
+  if (pathname === LEGAL_PATH_TERMS) return 'terms';
+  return null;
+}
+
 /** RTDB may return shopping-list as an object with numeric keys instead of a true array. */
 function snapshotShoppingListToArray(val) {
   if (val == null) return [];
@@ -344,18 +354,18 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
   );
 }
 
-function AuthLoginScreen({ onLoginSuccess, legalView, onLegalViewChange, initialMode }) {
+function AuthLoginScreen({ onLoginSuccess, legalView, onOpenLegal, onCloseLegal, initialMode }) {
   if (legalView === 'privacy') {
-    return <PrivacyPolicyPage onBack={() => onLegalViewChange(null)} />;
+    return <PrivacyPolicyPage onBack={onCloseLegal} />;
   }
   if (legalView === 'terms') {
-    return <TermsOfServicePage onBack={() => onLegalViewChange(null)} />;
+    return <TermsOfServicePage onBack={onCloseLegal} />;
   }
   return (
     <Login
       onLoginSuccess={onLoginSuccess}
-      onOpenPrivacy={() => onLegalViewChange('privacy')}
-      onOpenTerms={() => onLegalViewChange('terms')}
+      onOpenPrivacy={() => onOpenLegal('privacy')}
+      onOpenTerms={() => onOpenLegal('terms')}
       initialMode={initialMode}
     />
   );
@@ -1518,7 +1528,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
-  const [currentPage, setCurrentPage] = useState('list');
+  const [currentPage, setCurrentPage] = useState(() => legalViewFromPathname(window.location.pathname) || 'list');
   const [showMenu, setShowMenu] = useState(false);
   const [list, setList] = useState([]);
   const [aislesV2, setAislesV2] = useState({});
@@ -1548,6 +1558,8 @@ export default function App() {
   /** Clear chip first-run tooltip: shows once per device when chip first appears. localStorage-gated. */
   const [showClearChipTooltip, setShowClearChipTooltip] = useState(false);
   const scrollTimeoutRef = useRef(null);
+  /** When leaving in-app Privacy/ToS via browser back, restore this `currentPage`. */
+  const legalReturnPageRef = useRef('list');
   const prevQuickAddMode = useRef(quickAddMode);
   /** Last aisle-id key we applied shop default expansion for (empty = not yet seeded in shop). */
   const shopAisleDefaultsKeyRef = useRef('');
@@ -1574,10 +1586,10 @@ export default function App() {
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showLoginExplicitly, setShowLoginExplicitly] = useState(
-    () => ['/signin', '/signup'].includes(window.location.pathname)
+    () => ['/signin', '/signup', LEGAL_PATH_PRIVACY, LEGAL_PATH_TERMS].includes(window.location.pathname)
   );
   const loginInitialMode = window.location.pathname === '/signup' ? 'signup' : 'signin';
-  const [loginLegalView, setLoginLegalView] = useState(null);
+  const [loginLegalView, setLoginLegalView] = useState(() => legalViewFromPathname(window.location.pathname));
   const [needsDisplayName, setNeedsDisplayName] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState('');
   const [members, setMembers] = useState({});
@@ -1692,6 +1704,31 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const path = window.location.pathname;
+      const legal = legalViewFromPathname(path);
+
+      if (path === '/signin' || path === '/signup') {
+        setLoginLegalView(null);
+        return;
+      }
+      if (path === LEGAL_PATH_PRIVACY || path === LEGAL_PATH_TERMS) {
+        setLoginLegalView(legal);
+        setCurrentPage(legal);
+        return;
+      }
+      if (path === '/app' || path.startsWith('/app/')) {
+        setLoginLegalView(null);
+        setCurrentPage((prev) =>
+          prev === 'privacy' || prev === 'terms' ? (legalReturnPageRef.current || 'list') : prev
+        );
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   // Track whether a text-input element is focused so bottom-fixed chrome can
@@ -3377,6 +3414,37 @@ export default function App() {
     setQuickAddMode(false);
   }, []);
 
+  const openLoginLegalView = useCallback((view) => {
+    const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
+    window.history.pushState({ loginLegal: view }, '', path);
+    setLoginLegalView(view);
+  }, []);
+
+  const closeLoginLegalView = useCallback(() => {
+    if (window.history.state?.loginLegal) {
+      window.history.back();
+      return;
+    }
+    window.history.replaceState({}, '', '/signin');
+    setLoginLegalView(null);
+  }, []);
+
+  const openAppLegalPage = useCallback((page) => {
+    legalReturnPageRef.current = currentPage;
+    setCurrentPage(page);
+    const path = page === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
+    window.history.pushState({ appLegal: true }, '', path);
+  }, [currentPage]);
+
+  const closeAppLegalPage = useCallback(() => {
+    if (window.history.state?.appLegal) {
+      window.history.back();
+      return;
+    }
+    window.history.replaceState({}, '', '/app');
+    setCurrentPage(legalReturnPageRef.current || 'account');
+  }, []);
+
   const handleSignOut = async () => {
     setShowMenu(false);
     setCurrentPage('list');
@@ -3393,6 +3461,9 @@ export default function App() {
       setHouseholdId(null);
       setShowLoginExplicitly(true);
       setLoginLegalView(null);
+      if (legalViewFromPathname(window.location.pathname)) {
+        window.history.replaceState({}, '', '/signin');
+      }
       logger.info('Auth', 'Sign out successful, cached user cleared');
     } catch (error) {
       logger.error('Auth', 'Sign out failed', {
@@ -3423,7 +3494,8 @@ export default function App() {
       <AuthLoginScreen
         onLoginSuccess={handleLoginSuccess}
         legalView={loginLegalView}
-        onLegalViewChange={setLoginLegalView}
+        onOpenLegal={openLoginLegalView}
+        onCloseLegal={closeLoginLegalView}
         initialMode={loginInitialMode}
       />
     );
@@ -3440,7 +3512,8 @@ export default function App() {
         <AuthLoginScreen
           onLoginSuccess={handleLoginSuccess}
           legalView={loginLegalView}
-          onLegalViewChange={setLoginLegalView}
+          onOpenLegal={openLoginLegalView}
+          onCloseLegal={closeLoginLegalView}
           initialMode={loginInitialMode}
         />
       );
@@ -3869,9 +3942,9 @@ export default function App() {
           }`}
         >
           {currentPage === 'privacy' ? (
-            <PrivacyPolicyPage onBack={() => setCurrentPage('account')} />
+            <PrivacyPolicyPage onBack={closeAppLegalPage} />
           ) : currentPage === 'terms' ? (
-            <TermsOfServicePage onBack={() => setCurrentPage('account')} />
+            <TermsOfServicePage onBack={closeAppLegalPage} />
           ) : currentPage === 'account' ? (
             <div className="max-w-2xl mx-auto px-4 flex min-h-[calc(100dvh-5.5rem)] flex-col">
               <div className="space-y-3 shrink-0">
@@ -3887,7 +3960,7 @@ export default function App() {
               <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs text-gray-500 pt-6 shrink-0">
                 <button
                   type="button"
-                  onClick={() => { setCurrentPage('privacy'); setShowMenu(false); }}
+                  onClick={() => { openAppLegalPage('privacy'); setShowMenu(false); }}
                   className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
                 >
                   Privacy Policy
@@ -3897,7 +3970,7 @@ export default function App() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => { setCurrentPage('terms'); setShowMenu(false); }}
+                  onClick={() => { openAppLegalPage('terms'); setShowMenu(false); }}
                   className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
                 >
                   Terms of Service
