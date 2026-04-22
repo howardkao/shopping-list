@@ -1,6 +1,10 @@
 App/build
 App/Pods
 
+# Local release artifacts (same idea as *.apk / *.aab on Android)
+*.ipa
+*.xcarchive
+
 # Firebase iOS client config (download from Firebase Console; do not commit publicly)
 App/App/GoogleService-Info.plist
 App/output
