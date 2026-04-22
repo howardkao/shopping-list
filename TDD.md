@@ -559,9 +559,31 @@ VITE_FIREBASE_MESSAGING_SENDER_ID
 VITE_FIREBASE_APP_ID
 VITE_RECAPTCHA_SITE_KEY          # App Check (reCAPTCHA v3); required in production
 # VITE_APPCHECK_DEBUG_TOKEN      # optional; dev-only fixed App Check debug token
+# VITE_FIREBASE_MEASUREMENT_ID    # optional; GA4 web
+# VITE_REVENUECAT_IOS_KEY         # native iOS RevenueCat public SDK key (appl_…)
+# VITE_REVENUECAT_ANDROID_KEY     # native Android RevenueCat public SDK key (goog_…)
+# VITE_REVENUECAT_OFFERING        # optional; override default offering id ("main")
+# VITE_STRIPE_CHECKOUT_URL        # optional; web Stripe checkout stub (web gating not enforced yet)
 ```
 
-These are **not secrets** (Firebase client config is public by design). Security is enforced by Firebase security rules, not by hiding the config. The reCAPTCHA **site key** is also public by design; it is still required for App Check to initialize in production.
+These are **not secrets** (Firebase client config is public by design). Security is enforced by Firebase security rules, not by hiding the config. The reCAPTCHA **site key** is also public by design; it is still required for App Check to initialize in production. RevenueCat **public SDK keys** are also safe to ship in the client.
+
+---
+
+## 11b. Subscriptions (RevenueCat)
+
+`src/subscriptions.js` wraps `@revenuecat/purchases-capacitor`. Initialization uses **household ID** as the RevenueCat App User ID so the entitlement is per-household; all members of the household share the same subscription without mirroring state to RTDB.
+
+Flow:
+
+1. On native (`Capacitor.isNativePlatform()`), after household load, `initSubscriptions(householdId)` calls `Purchases.configure({ apiKey, appUserID: householdId })` and registers a `CustomerInfo` listener.
+2. `isWriteAllowed()` is the single source of truth for write gating. It returns `true` on web (no enforcement until Stripe/web SDK lands), `true` on native when customerInfo has not yet loaded (avoids a UX stall in the first few hundred ms after init), and `!!customerInfo.entitlements.active.premium` once loaded.
+3. `assertWriteAllowed(trigger)` is the gate used at every handler site in `App.jsx` (see PAYWALL_SPEC.md §4). If blocked, it fires `openPaywall(trigger)` which renders the `PaywallSheet` component with `paywall_viewed` analytics.
+4. Paywall actions: `purchaseSubscription()` calls `Purchases.purchasePackage({ aPackage })` with the offering's annual package (fallback: first `availablePackages`); `restorePurchases()` satisfies Apple's restore requirement. Web `purchaseSubscription()` delegates to `src/stripe-checkout.js` (stub — redirects to `VITE_STRIPE_CHECKOUT_URL` when configured).
+5. Lifecycle analytics: `trial_started`, `subscription_started`, `subscription_cancelled`, `subscription_renewed` fire from the listener when the entitlement transitions.
+6. Sign-out calls `shutdownSubscriptions()` which removes the listener and `Purchases.logOut()`s; the next household's admin triggers a fresh `configure` / `logIn`.
+
+Web enforcement and native App Check attestation are both **future work**. The web path currently does not gate writes.
 
 ---
 

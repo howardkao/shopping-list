@@ -42,6 +42,18 @@ import {
 } from './offlineStorage';
 import { logger } from './logger';
 import { trackEvent, setAnalyticsUserId, setAnalyticsUserProperties } from './analytics';
+import {
+  initSubscriptions,
+  shutdownSubscriptions,
+  listenToSubscriptionChanges,
+  getSubscriptionStatus,
+  assertWriteAllowed,
+  openPaywall,
+  setPaywallOpener,
+  purchaseSubscription,
+  restorePurchases,
+  getAnnualPackageDisplay,
+} from './subscriptions';
 import { humanizeAuthError } from './authErrors';
 import DebugPanel from './DebugPanel';
 import SuggestionsEditor from './SuggestionsEditor';
@@ -1551,6 +1563,7 @@ function AdminPanel({ onClose, householdId }) {
 
   const createInvitation = async () => {
     if (!householdId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     setCreating(true);
     const code = generateCode();
     const expiresAt = new Date();
@@ -1566,6 +1579,7 @@ function AdminPanel({ onClose, householdId }) {
   };
 
   const deleteInvitation = async (code) => {
+    if (!assertWriteAllowed('gated_action')) return;
     await remove(ref(database, `households/${householdId}/inviteCodes/${code}`));
     await remove(ref(database, `inviteCodes/${code}`));
   };
@@ -2232,6 +2246,161 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
   );
 }
 
+function PaywallSheet({ trigger, status, onClose, onOpenLegal }) {
+  const [priceDisplay, setPriceDisplay] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [errorText, setErrorText] = useState('');
+  const [successText, setSuccessText] = useState('');
+  const isNative = Capacitor.isNativePlatform();
+  const wasInTrial = Boolean(status?.inTrial);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (isNative) {
+      getAnnualPackageDisplay().then((d) => {
+        if (!cancelled && d?.priceString) setPriceDisplay(d.priceString);
+      }).catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [isNative]);
+
+  const priceLine = priceDisplay || '$3.99 per year';
+
+  const handleSubscribe = async () => {
+    setErrorText('');
+    setSuccessText('');
+    setLoading(true);
+    try {
+      const result = await purchaseSubscription();
+      if (result?.success) {
+        setSuccessText('You\'re all set. Thanks for subscribing!');
+        setTimeout(() => onClose?.(), 900);
+      } else if (result?.cancelled) {
+        // user cancelled — silent
+      } else if (result?.unavailable) {
+        setErrorText('Subscription checkout is not yet available on the web. Please use the iOS or Android app.');
+      } else {
+        setErrorText('Purchase failed. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    setErrorText('');
+    setSuccessText('');
+    setRestoring(true);
+    try {
+      const result = await restorePurchases();
+      if (result?.success) {
+        const active = result.customerInfo?.entitlements?.active?.premium;
+        if (active) {
+          setSuccessText('Subscription restored.');
+          setTimeout(() => onClose?.(), 900);
+        } else {
+          setErrorText('No active subscription found on this account.');
+        }
+      } else if (result?.unavailable) {
+        setErrorText('Restore is not available on the web.');
+      } else {
+        setErrorText('Could not restore purchases. Please try again.');
+      }
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const headline = wasInTrial
+    ? 'Subscribe to keep editing Provisions'
+    : 'Your trial has ended';
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center sm:p-4 z-50">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-xl w-full sm:max-w-md border-t sm:border border-gray-200 max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-center py-3 sm:hidden">
+          <div className="w-10 h-1.5 bg-gray-300 rounded-full" />
+        </div>
+        <div className="px-6 pt-2 pb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800">{headline}</h2>
+            <p className="text-gray-600 font-medium mt-1 text-sm">
+              You can still shop your list and check items off. Subscribe to add items, edit shortcuts, and invite family.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 text-gray-400 hover:text-gray-600"
+            aria-label="Close"
+          >
+            <X size={22} />
+          </button>
+        </div>
+        <div className="px-6 pb-2">
+          <div className="rounded-2xl border border-gray-200 p-5 bg-gray-50">
+            <div className="text-3xl font-bold text-gray-800">{priceLine}</div>
+            <div className="text-sm text-gray-600 font-medium mt-1">
+              2 months free, then billed annually.
+            </div>
+          </div>
+        </div>
+        <ul className="px-6 py-4 space-y-2 text-sm text-gray-700 font-medium">
+          <li className="flex items-start gap-2">
+            <Check size={18} className="mt-0.5 flex-shrink-0" style={{ color: '#FF7A7A' }} />
+            <span>Real-time household sync</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <Check size={18} className="mt-0.5 flex-shrink-0" style={{ color: '#FF7A7A' }} />
+            <span>Unlimited items and shortcuts</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <Check size={18} className="mt-0.5 flex-shrink-0" style={{ color: '#FF7A7A' }} />
+            <span>Invite household members</span>
+          </li>
+        </ul>
+        {(errorText || successText) && (
+          <div className="px-6 pb-2">
+            {errorText && (
+              <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{errorText}</div>
+            )}
+            {successText && (
+              <div className="bg-green-50 text-green-700 px-4 py-3 rounded-xl text-sm font-medium border border-green-200">{successText}</div>
+            )}
+          </div>
+        )}
+        <div className="px-6 py-4 space-y-3">
+          <button
+            type="button"
+            onClick={handleSubscribe}
+            disabled={loading || restoring}
+            className="w-full text-white py-3.5 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
+            style={{ backgroundColor: loading || restoring ? undefined : '#FF7A7A' }}
+          >
+            {loading ? 'Starting…' : 'Subscribe'}
+          </button>
+          <button
+            type="button"
+            onClick={handleRestore}
+            disabled={loading || restoring}
+            className="w-full text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-100 transition-colors disabled:opacity-50"
+          >
+            {restoring ? 'Restoring…' : 'Restore purchases'}
+          </button>
+        </div>
+        <div className="px-6 pb-6 text-xs text-gray-500 text-center">
+          By subscribing you agree to our{' '}
+          <button type="button" className="underline" onClick={() => onOpenLegal?.('terms')}>Terms of Service</button>
+          {' '}and{' '}
+          <button type="button" className="underline" onClick={() => onOpenLegal?.('privacy')}>Privacy Policy</button>.
+          {trigger ? <span className="sr-only"> Trigger: {trigger}.</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PurchaseHistory({ householdId, liveBucketMonthKey, liveBucketVal, aisles = {}, categories = {} }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -2393,6 +2562,8 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [householdId, setHouseholdId] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [paywallTrigger, setPaywallTrigger] = useState(null);
+  const [subscriptionStatus, setSubscriptionStatus] = useState(() => getSubscriptionStatus());
   const [showAdmin, setShowAdmin] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [currentPage, setCurrentPage] = useState(() => legalViewFromPathname(window.location.pathname) || 'list');
@@ -3401,6 +3572,7 @@ export default function App() {
   };
 
   const addItem = (name, category, source = 'quickAdd', itemKey = generateId(), categoryIdOverride = null) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const defaultQuantity = getDefaultQuantityForItem(itemKey, name);
     const categoryIdResolved = categoryIdOverride || categoryIdByName[category] || null;
     const newList = [...list, stampRecord({
@@ -3461,6 +3633,7 @@ export default function App() {
   };
 
   const updateQuantity = (itemKey, qty) => {
+    if (!assertWriteAllowed('gated_action')) return;
     setList((prevList) => {
       const nextList = prevList.map(item =>
         getStableItemKey(item) === itemKey
@@ -3560,6 +3733,7 @@ export default function App() {
   };
 
   const updateItemName = async (itemKey, nextName) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const trimmed = (nextName || '').trim();
     let outcome = null;
     // Run synchronously so `outcome` is set before persistence / item-events (React 18 may defer plain setList updaters).
@@ -3604,6 +3778,7 @@ export default function App() {
 
   const renameTaxonomySuggestionById = (categoryId, suggestionId, trimmed) => {
     if (!categoryId || !suggestionId) return;
+    if (!assertWriteAllowed('gated_action')) return;
 
     const renameIdInList = (arr) => {
       if (!Array.isArray(arr) || !arr.length) return null;
@@ -3640,6 +3815,7 @@ export default function App() {
 
   const moveSuggestionToCategory = async (suggestionId, fromCatId, toCatId) => {
     if (!taxonomyBase || !suggestionId || !fromCatId || !toCatId || fromCatId === toCatId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const fromVis = visibleItemsV2[fromCatId] || [];
     const fromLib = libraryItemsV2[fromCatId] || [];
     const fromVisEntry = fromVis.find(i => i.id === suggestionId);
@@ -3680,6 +3856,7 @@ export default function App() {
 
   const removeSuggestionEverywhere = async (suggestionId, catId) => {
     if (!taxonomyBase || !suggestionId || !catId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const vis = visibleItemsV2[catId] || [];
     const lib = libraryItemsV2[catId] || [];
     const demoted = vis.find(i => i.id === suggestionId);
@@ -3707,6 +3884,7 @@ export default function App() {
     const catId = getItemCategoryId(item);
     const trimmed = String(item.name || '').trim();
     if (!catId || !trimmed || !taxonomyBase) return null;
+    if (!assertWriteAllowed('gated_action')) return null;
     const vis = visibleItemsV2[catId] || [];
     const lib = libraryItemsV2[catId] || [];
     const lower = trimmed.toLowerCase();
@@ -3725,6 +3903,7 @@ export default function App() {
   };
 
   const updateSuggestionQuantity = (itemKey, qty) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const nextDefaults = { ...quantityDefaults };
     const t = String(qty ?? '').trim();
     if (t) nextDefaults[itemKey] = t;
@@ -3943,6 +4122,7 @@ export default function App() {
   const doneCount = list.reduce((n, item) => n + (item.done ? 1 : 0), 0);
 
   const clearDone = () => {
+    if (!assertWriteAllowed('gated_action')) return;
     const newList = list.filter(item => !item.done);
     setList(newList); // Optimistic update
     save('shopping-list', newList);
@@ -3974,6 +4154,7 @@ export default function App() {
   }, [hasDone]);
 
   const removeItem = (id) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const target = list.find(item => item.id === id);
     const newList = list.filter(item => item.id !== id);
     setList(newList); // Optimistic update
@@ -3996,6 +4177,7 @@ export default function App() {
   };
 
   const addFromAisleSearch = (aisleId, suggestion) => {
+    if (!assertWriteAllowed('gated_action')) return;
     let catId = suggestion.catId;
     if (!catId) catId = (v2CategoriesByAisle[aisleId] || [])[0] || null;
     const categoryName = catId ? v2CategoryNameById[catId] : (aislesV2[aisleId]?.name || '');
@@ -4269,6 +4451,7 @@ export default function App() {
 
   const dismissSuggestion = async (key, action) => {
     if (!householdId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const existing = suggestionDismissals[key];
     const count = (existing?.dismissCount || 0) + 1;
     const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
@@ -4289,6 +4472,7 @@ export default function App() {
   /** Density nudge: `dismissCount` stores pinned-item threshold at dismiss (resurface when count ≥ threshold + 4). */
   const recordDensityDismissal = async (aisleId, thresholdAtDismiss) => {
     if (!householdId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const key = `density::${aisleId}`;
     const record = {
       action: 'density-dismissed',
@@ -4305,6 +4489,7 @@ export default function App() {
   };
 
   const enterPinEditMode = (aisleId, dormantHighlightSet = null) => {
+    if (!assertWriteAllowed('gated_action')) return;
     if (typeof window !== 'undefined') pinEditReturnScrollY.current = window.scrollY;
     setPinEditTriggerAisleId(aisleId);
     setPinEditDormantHighlightSet(dormantHighlightSet);
@@ -4369,6 +4554,7 @@ export default function App() {
   }, [quickAddMode, pinEditMode]);
 
   const handlePromotionAccept = async (candidate) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const catId = candidate.categoryId || categoryIdByName[(candidate.category || '').toLowerCase()];
     if (!catId || !taxonomyBase) return;
     const trimmed = (candidate.name || '').trim();
@@ -4391,6 +4577,7 @@ export default function App() {
   };
 
   const handlePromotionDismiss = (candidate) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const key = `${candidate.categoryId || candidate.category}::${(candidate.name || '').toLowerCase()}::promote`;
     dismissSuggestion(key, 'not-interested');
     setPromotionCandidatesCache(prev => prev.filter(c => c.name !== candidate.name || c.category !== candidate.category));
@@ -4467,6 +4654,29 @@ export default function App() {
   }, [user?.uid, householdId, isAdmin]);
 
   useEffect(() => {
+    setPaywallOpener(setPaywallTrigger);
+    return () => setPaywallOpener(null);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = listenToSubscriptionChanges(() => {
+      setSubscriptionStatus(getSubscriptionStatus());
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!householdId) return;
+    let cancelled = false;
+    initSubscriptions(householdId)
+      .then(() => {
+        if (!cancelled) setSubscriptionStatus(getSubscriptionStatus());
+      })
+      .catch((err) => logger.error('Subscriptions', 'init failed', { error: err?.message }));
+    return () => { cancelled = true; };
+  }, [householdId]);
+
+  useEffect(() => {
     if (!user?.uid || !householdId) {
       quickAddModeAnalyticsRef.current = null;
       return;
@@ -4492,6 +4702,11 @@ export default function App() {
     setCurrentPage('list');
     setQuickAddMode(false);
   }, []);
+
+  const enterAddMode = () => {
+    if (!assertWriteAllowed('gated_action')) return;
+    setQuickAddMode(true);
+  };
 
   const openLoginLegalView = useCallback((view) => {
     const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
@@ -4533,6 +4748,8 @@ export default function App() {
       await logger.flush();
       logger.setUserId(null);
       setAnalyticsUserId(null);
+      await shutdownSubscriptions();
+      setSubscriptionStatus(getSubscriptionStatus());
       // Clear IndexedDB auth before signOut so onAuthStateChanged never re-adopts a stale cached user
       await clearCachedUser();
       await firebaseSignOut(auth);
@@ -4729,6 +4946,7 @@ export default function App() {
   const taxonomyBase = householdId ? `households/${householdId}/taxonomy` : null;
   async function taxoRenameAisle(aisleId, name) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const trimmed = (name ?? '').trim();
     const payload = stampRecord({ name: trimmed });
     setAislesV2(prev => ({
@@ -4739,6 +4957,7 @@ export default function App() {
   }
   async function taxoAddAisle(name) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const newRef = push(ref(database, `${taxonomyBase}/aisles`));
     const order = Object.keys(aislesV2).length;
     const trimmed = (name ?? '').trim();
@@ -4751,6 +4970,7 @@ export default function App() {
   }
   async function taxoDeleteAisle(aisleId) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const hasCategories = Object.values(categoriesV2).some((c) => c?.aisleId === aisleId);
     if (hasCategories) return;
     const nextAisles = { ...aislesV2 };
@@ -4760,6 +4980,7 @@ export default function App() {
   }
   async function taxoReorderAisles(orderedIds) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const updates = {};
     orderedIds.forEach((id, i) => { updates[`${taxonomyBase}/aisles/${id}`] = stampRecord({ ...(aislesV2[id] || {}), order: i }); });
     setAislesV2(prev => {
@@ -4773,6 +4994,7 @@ export default function App() {
   }
   async function taxoRenameCategory(catId, name) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const payload = stampRecord({ name });
     setCategoriesV2(prev => ({
       ...prev,
@@ -4782,6 +5004,7 @@ export default function App() {
   }
   async function taxoAddCategory(aisleId, name) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const newRef = push(ref(database, `${taxonomyBase}/categories`));
     const payload = stampRecord({ name, aisleId, hidden: false });
     setCategoriesV2(prev => ({
@@ -4792,6 +5015,7 @@ export default function App() {
   }
   async function taxoMoveCategory(catId, aisleId) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const payload = stampRecord({ aisleId, hidden: false });
     setCategoriesV2(prev => ({
       ...prev,
@@ -4801,6 +5025,7 @@ export default function App() {
   }
   async function taxoMergeCategory(fromCatId, intoCatId) {
     if (!taxonomyBase || !fromCatId || !intoCatId || fromCatId === intoCatId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const fromCat = categoriesV2[fromCatId];
     const toCat = categoriesV2[intoCatId];
     if (!fromCat || !toCat) return;
@@ -4887,6 +5112,7 @@ export default function App() {
   }
   async function taxoRemoveLibraryItem(catId, itemId) {
     if (!taxonomyBase || !catId || !itemId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const lib = libraryItemsV2[catId] || [];
     if (!lib.some(i => i.id === itemId)) return;
     const nextLib = lib.filter(i => i.id !== itemId);
@@ -4898,6 +5124,7 @@ export default function App() {
 
   const completeOnboarding = async () => {
     if (!householdId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const startedAt = onboardingEnteredAtRef.current;
     try {
       await set(ref(database, `households/${householdId}/taxonomy/onboarding_completed`), true);
@@ -5113,7 +5340,7 @@ export default function App() {
                       Shop
                     </button>
                     <button
-                      onClick={() => setQuickAddMode(true)}
+                      onClick={enterAddMode}
                       className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
                       style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
                       aria-pressed={quickAddMode}
@@ -5154,6 +5381,19 @@ export default function App() {
                 {isAdmin && (
                   <button onClick={() => setShowAdmin(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
                     <Shield size={20} />Invite Household Members
+                  </button>
+                )}
+                {Capacitor.isNativePlatform() && (
+                  <button
+                    onClick={() => openPaywall('account_menu')}
+                    className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    <ScrollText size={20} />
+                    <span className="flex-1 text-left">
+                      {subscriptionStatus?.active
+                        ? (subscriptionStatus.inTrial ? 'Subscription (trial)' : 'Subscription active')
+                        : 'Subscribe to Provisions'}
+                    </span>
                   </button>
                 )}
                 <button onClick={handleSignOut} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-red-500 hover:bg-red-50 transition-colors">
@@ -5197,7 +5437,7 @@ export default function App() {
                   <p className="text-sm text-gray-500 mb-5">Tap Plan to start building your list.</p>
                   <button
                     type="button"
-                    onClick={() => setQuickAddMode(true)}
+                    onClick={enterAddMode}
                     className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold"
                     style={{ backgroundColor: '#FF7A7A' }}
                   >
@@ -5637,7 +5877,7 @@ export default function App() {
                     Shop
                   </button>
                   <button
-                    onClick={() => setQuickAddMode(true)}
+                    onClick={enterAddMode}
                     className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
                     style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
                     aria-pressed={quickAddMode}
@@ -5659,6 +5899,19 @@ export default function App() {
           isAdmin={isAdmin}
           onClose={() => setShowDeleteAccount(false)}
           onDeleted={() => setShowDeleteAccount(false)}
+        />
+      )}
+      {paywallTrigger && (
+        <PaywallSheet
+          trigger={paywallTrigger}
+          status={subscriptionStatus}
+          onClose={() => setPaywallTrigger(null)}
+          onOpenLegal={(view) => {
+            const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
+            window.history.pushState({}, '', path);
+            setPaywallTrigger(null);
+            setCurrentPage(view);
+          }}
         />
       )}
       {needsDisplayName && user && (
