@@ -206,6 +206,9 @@ The verbose placeholder approach was chosen for readability in the Firebase cons
 ### SSO specifics
 
 - Custom Firebase Auth domain (`myprovisions.app`, set via `VITE_FIREBASE_AUTH_DOMAIN`) keeps the OAuth consent screen on our brand instead of the raw `*.firebaseapp.com` URL
+- Capacitor native SSO must set the same domain via `plugins.FirebaseAuthentication.authDomain` in `capacitor.config.ts`; otherwise native Apple/Google flows can fall back to the default `*.firebaseapp.com` handler and drift from the redirect URLs registered with the providers
+- Current workaround: `scripts/patch-capacitor-firebase-auth.js` patches `@capacitor-firebase/authentication` on Android because version 8.2.0 applies `setCustomAuthDomain(...)` but fails to read `authDomain` from Capacitor config
+- Capacitor native builds do **not** use the Firebase JS popup/redirect OAuth recovery path. `src/firebase.js` omits `browserPopupRedirectResolver` on native, and `App.jsx` skips `getRedirectResult()` when `Capacitor.isNativePlatform()` so iOS WKWebView does not stall auth initialization waiting on unsupported web redirect behavior.
 - New SSO users in **signin** mode, or existing SSO users without a `/users/{uid}` record, are routed to an in-app "Complete your household setup" screen (`awaitingHousehold` state) that collects displayName and either creates a new household or accepts an invite code — same helper as the email/password path
 - SSO popups can be cancelled; `auth/popup-closed-by-user` and `auth/cancelled-popup-request` are swallowed silently. If the user cancels the post-popup household setup, `deleteUser()` tears down the half-created Firebase Auth account so the next attempt is clean
 - **Account linking:** on `auth/account-exists-with-different-credential`, the pending SSO credential is extracted via `GoogleAuthProvider.credentialFromError()` / `OAuthProvider.credentialFromError()` and stashed in state; the user re-enters their password, and `linkWithCredential()` attaches the SSO provider to the existing email/password account in one round-trip
@@ -503,6 +506,7 @@ The logger automatically captures (no explicit calls needed):
 - **Initialization:** `src/firebase.js` calls `initializeAppCheck` with **reCAPTCHA v3** (`ReCaptchaV3Provider`) immediately after `initializeApp` and before Auth/RTDB so pre-auth reads (e.g. invite code lookup) attach tokens.
 - **Env:** `VITE_RECAPTCHA_SITE_KEY` (required in production — runtime throws on load if missing). Dev-only optional `VITE_APPCHECK_DEBUG_TOKEN` (register the same value under Firebase Console → App Check → Debug tokens); if unset in dev, `self.FIREBASE_APPCHECK_DEBUG_TOKEN = true` so the SDK prints a one-time debug token to the browser console.
 - **Enforcement:** toggled in Firebase Console (Realtime Database, optionally Auth) after monitoring verified traffic; **voice-mcp** uses a service account REST path and is unaffected by web App Check enforcement.
+- **Capacitor native builds:** `src/firebase.js` skips the **web** App Check path entirely on `Capacitor.isNativePlatform()`. The current native shell still uses the Firebase JS SDK for Auth/RTDB, but reCAPTCHA v3 App Check is web-only and caused opaque WKWebView startup failures on iOS. Native App Check attestation remains future work.
 
 ### Firestore (`firestore.rules`)
 

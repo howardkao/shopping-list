@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/generate-landing.js",
+    "postinstall": "node scripts/patch-capacitor-firebase-auth.js",
     "preview": "vite preview",
-    "cap:sync": "npm run build && npx cap sync",
+    "cap:sync": "npm run build && node scripts/patch-capacitor-firebase-auth.js && node scripts/capacitor-web-index.js copy && npx cap sync && node scripts/capacitor-web-index.js clean",
     "cap:ios": "npx cap open ios",
     "cap:android": "npx cap open android",
     "gen-icons": "bash scripts/gen-icons.sh"

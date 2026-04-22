@@ -38,6 +38,9 @@ lerna-debug.log*
 .firebaserc
 firebase-debug.log
 firebase-debug.*.log
+# Native client configs — add locally from Firebase Console (Your apps); do not commit to a public repo
+android/app/google-services.json
+ios/App/App/GoogleService-Info.plist
 
 # Optional npm cache directory
 .npm
@@ -74,6 +77,7 @@ NATIVE_APP_EXECUTION_PLAN.md
 PAYWALL_SPEC.md
 *-mockup.html
 header-mockups.html
+play-store-feature-graphic.html
 INVITE_EMAIL_PLAN.md
 SHOPPING_LIST_EXECUTION_BLUEPRINT_AND_TECHNICAL_SPEC.md
 SHOPPING_LIST_STRATEGY_AND_NORTH_STAR.md

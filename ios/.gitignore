@@ -1,5 +1,8 @@
 App/build
 App/Pods
+
+# Firebase iOS client config (download from Firebase Console; do not commit publicly)
+App/App/GoogleService-Info.plist
 App/output
 App/App/public
 DerivedData

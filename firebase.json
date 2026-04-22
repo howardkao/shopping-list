@@ -35,6 +35,10 @@
         "destination": "/app.html"
       },
       {
+        "source": "/account-deletion",
+        "destination": "/account-deletion.html"
+      },
+      {
         "source": "**",
         "destination": "/landing.html"
       }

@@ -13,6 +13,8 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  verifyPasswordResetCode,
+  confirmPasswordReset,
   deleteUser,
   reauthenticateWithCredential,
   reauthenticateWithRedirect,
@@ -271,6 +273,46 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
   /** SSO signup on the signin screen: if OAuth succeeds but users/{uid} doesn't exist, we route
    *  the user into a post-SSO household-choice step (redirect flow resumes via sessionStorage). */
   const [awaitingHousehold, setAwaitingHousehold] = useState(false);
+  /** `/signin?mode=resetPassword&oobCode=…` — finish reset in-app (avoids racing `getRedirectResult`). */
+  const [passwordLinkAction, setPasswordLinkAction] = useState(null);
+  const [newPasswordFromEmail, setNewPasswordFromEmail] = useState('');
+  const [confirmNewPasswordFromEmail, setConfirmNewPasswordFromEmail] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    let sp;
+    try {
+      sp = new URLSearchParams(window.location.search);
+    } catch {
+      return undefined;
+    }
+    if (sp.get('mode') !== 'resetPassword') return undefined;
+    const oob = sp.get('oobCode');
+    if (!oob) return undefined;
+
+    setPasswordLinkAction('checking');
+    setError('');
+    setSuccess('');
+
+    verifyPasswordResetCode(auth, oob)
+      .then((accountEmail) => {
+        if (cancelled) return;
+        setPasswordLinkAction({ email: accountEmail, oobCode: oob });
+        if (accountEmail) setEmail(accountEmail);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        logger.error('Auth', 'Password reset link verify failed', {
+          error: err.message,
+          code: err.code
+        });
+        setPasswordLinkAction('invalid');
+        setError(humanizeAuthError(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (pendingOAuthLink) {
@@ -304,31 +346,45 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
   const clearMessages = () => { setError(''); setSuccess(''); };
 
   const handleSignIn = async () => {
+    const trimmedEmail = email.trim();
     setLoading(true);
     setError('');
     setSuccess('');
-    logger.info('Auth', 'Sign in attempt', { email });
+    logger.info('Auth', 'Sign in attempt', { email: trimmedEmail });
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      logger.info('Auth', 'Sign in successful', { email });
+      await signInWithEmailAndPassword(auth, trimmedEmail, password);
+      logger.info('Auth', 'Sign in successful', { email: trimmedEmail });
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
-      logger.error('Auth', 'Sign in failed', { email, error: err.message, code: err.code });
+      logger.error('Auth', 'Sign in failed', { email: trimmedEmail, error: err.message, code: err.code });
       setError(humanizeAuthError(err));
     }
     setLoading(false);
   };
 
   const handleResetPassword = async () => {
-    if (!email) { setError('Please enter your email address.'); return; }
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError('Please enter your email address.');
+      return;
+    }
     setLoading(true);
     setError('');
     setSuccess('');
     try {
-      await sendPasswordResetEmail(auth, email);
+      const explicitContinue = (import.meta.env.VITE_PASSWORD_RESET_CONTINUE_URL || '').trim();
+      const continueUrl =
+        explicitContinue ||
+        (typeof window !== 'undefined' && window.location?.origin
+          ? `${window.location.origin}/signin`
+          : '');
+      const actionCodeSettings = continueUrl
+        ? { url: continueUrl, handleCodeInApp: false }
+        : undefined;
+      await sendPasswordResetEmail(auth, trimmedEmail, actionCodeSettings);
       setSuccess('Password reset email sent. Check your inbox.');
     } catch (err) {
-      logger.error('Auth', 'Password reset failed', { email, error: err.message, code: err.code });
+      logger.error('Auth', 'Password reset failed', { email: trimmedEmail, error: err.message, code: err.code });
       setError(humanizeAuthError(err));
     }
     setLoading(false);
@@ -338,7 +394,8 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
     setLoading(true);
     setError('');
     setSuccess('');
-    logger.info('Auth', 'Sign up attempt', { email, signupType });
+    const trimmedEmail = email.trim();
+    logger.info('Auth', 'Sign up attempt', { email: trimmedEmail, signupType });
     const signupFlow = signupType === 'join' ? 'join' : 'new_household';
     trackEvent('signup_started', { method: 'email', flow: signupFlow });
 
@@ -355,7 +412,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
         return;
       }
 
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
       await setupHouseholdForUser(userCredential.user, {
         signupType,
         inviteCode,
@@ -369,7 +426,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
       }
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
-      logger.error('Auth', 'Sign up failed', { email, error: err.message, code: err.code });
+      logger.error('Auth', 'Sign up failed', { email: trimmedEmail, error: err.message, code: err.code });
       trackEvent('signup_abandoned', {
         method: 'email',
         flow: signupFlow,
@@ -552,15 +609,16 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
   };
 
   const handleLinkAccounts = async () => {
-    if (!pendingCredential || !pendingLinkEmail || !password) return;
+    const linkEmail = (pendingLinkEmail || '').trim();
+    if (!pendingCredential || !linkEmail || !password) return;
     setLoading(true);
     clearMessages();
     logger.info('Auth', 'Account linking attempt', {
       provider: pendingLinkProvider,
-      email: pendingLinkEmail
+      email: linkEmail
     });
     try {
-      const pwdCred = await signInWithEmailAndPassword(auth, pendingLinkEmail, password);
+      const pwdCred = await signInWithEmailAndPassword(auth, linkEmail, password);
       await linkWithCredential(pwdCred.user, pendingCredential);
       logger.info('Auth', 'Account linking successful', {
         provider: pendingLinkProvider,
@@ -635,6 +693,49 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
     setLoading(false);
   };
 
+  const dismissPasswordLinkFlow = () => {
+    window.history.replaceState({}, '', '/signin');
+    setPasswordLinkAction(null);
+    setNewPasswordFromEmail('');
+    setConfirmNewPasswordFromEmail('');
+    clearMessages();
+  };
+
+  const handleConfirmPasswordFromEmailLink = async (e) => {
+    e?.preventDefault();
+    if (!passwordLinkAction || passwordLinkAction === 'checking' || passwordLinkAction === 'invalid') {
+      return;
+    }
+    const { oobCode } = passwordLinkAction;
+    if (newPasswordFromEmail !== confirmNewPasswordFromEmail) {
+      setError('Passwords do not match.');
+      return;
+    }
+    if (newPasswordFromEmail.length < 6) {
+      setError(humanizeAuthError({ code: 'auth/weak-password' }));
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      await confirmPasswordReset(auth, oobCode, newPasswordFromEmail);
+      window.history.replaceState({}, '', '/signin');
+      setPasswordLinkAction(null);
+      setNewPasswordFromEmail('');
+      setConfirmNewPasswordFromEmail('');
+      setSuccess('Your password was updated. Sign in below.');
+      logger.info('Auth', 'Password reset from email link completed');
+    } catch (err) {
+      logger.error('Auth', 'confirmPasswordReset failed', {
+        error: err.message,
+        code: err.code
+      });
+      setError(humanizeAuthError(err));
+    }
+    setLoading(false);
+  };
+
   const cancelSsoHouseholdSetup = async () => {
     const current = auth.currentUser;
     setLoading(true);
@@ -659,11 +760,19 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
     }
   };
 
-  const subtitle = pendingCredential
-    ? 'Link your account'
-    : awaitingHousehold
-      ? 'Finish setting up your account'
-      : mode === 'signin' ? 'Sign in to your account' : 'Create your account';
+  const passwordLinkBlocking =
+    passwordLinkAction === 'checking' ||
+    (typeof passwordLinkAction === 'object' && passwordLinkAction !== null);
+
+  const subtitle = passwordLinkBlocking
+    ? 'Set a new password'
+    : pendingCredential
+      ? 'Link your account'
+      : awaitingHousehold
+        ? 'Finish setting up your account'
+        : mode === 'signin'
+          ? 'Sign in to your account'
+          : 'Create your account';
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#F7F7F7' }}>
@@ -678,9 +787,125 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
           <p className="text-gray-600 font-medium">{subtitle}</p>
         </div>
 
+        {passwordLinkAction === 'checking' && (
+          <div className="flex flex-col items-center justify-center gap-4 py-8 text-gray-600">
+            <Loader2 className="animate-spin" size={36} style={{ color: '#FF7A7A' }} aria-hidden />
+            <p className="text-sm font-medium">Verifying reset link…</p>
+          </div>
+        )}
+
+        {passwordLinkAction && typeof passwordLinkAction === 'object' && (
+          <form
+            className="space-y-4"
+            autoComplete="on"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!loading && newPasswordFromEmail && confirmNewPasswordFromEmail) {
+                handleConfirmPasswordFromEmailLink(e);
+              }
+            }}
+          >
+            <p className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-xl p-4 leading-relaxed">
+              Choose a new password for <span className="font-semibold">{passwordLinkAction.email}</span>.
+            </p>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">New password</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
+                <input
+                  name="new-password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={newPasswordFromEmail}
+                  onChange={(e) => setNewPasswordFromEmail(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-gray-700 rounded-lg"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Confirm new password</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
+                <input
+                  name="confirm-new-password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={confirmNewPasswordFromEmail}
+                  onChange={(e) => setConfirmNewPasswordFromEmail(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </div>
+            </div>
+            {error && (
+              <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">
+                {error}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={
+                loading || !newPasswordFromEmail || !confirmNewPasswordFromEmail
+              }
+              className="w-full text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
+              style={{
+                backgroundColor:
+                  loading || !newPasswordFromEmail || !confirmNewPasswordFromEmail
+                    ? undefined
+                    : '#FF7A7A'
+              }}
+            >
+              {loading ? 'Saving…' : 'Save password'}
+            </button>
+            <button
+              type="button"
+              onClick={dismissPasswordLinkFlow}
+              disabled={loading}
+              className="w-full text-sm font-semibold text-gray-600 hover:underline transition-colors"
+            >
+              Cancel
+            </button>
+          </form>
+        )}
+
+        {passwordLinkAction === 'invalid' && (
+          <div className="space-y-4">
+            {error && (
+              <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">
+                {error}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={dismissPasswordLinkFlow}
+              className="w-full text-white py-3 rounded-xl font-bold transition-colors hover:opacity-90"
+              style={{ backgroundColor: '#FF7A7A' }}
+            >
+              Back to sign in
+            </button>
+          </div>
+        )}
+
         {pendingCredential && (
           <form
             className="space-y-4"
+            autoComplete="on"
             onSubmit={(e) => {
               e.preventDefault();
               if (!loading && password) handleLinkAccounts();
@@ -689,17 +914,31 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
             <p className="text-sm text-gray-700 bg-amber-50 border border-amber-200 rounded-xl p-4 leading-relaxed">
               An account for <span className="font-semibold">{pendingLinkEmail}</span> already exists with a password. Sign in with your password to link {pendingLinkProvider === 'google' ? 'Google' : 'Apple'} sign-in to it.
             </p>
+            <input
+              type="email"
+              name="email"
+              value={pendingLinkEmail}
+              autoComplete="username"
+              readOnly
+              hidden
+              aria-hidden="true"
+              tabIndex={-1}
+            />
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
                 <input
+                  name="password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
                   autoComplete="current-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   autoFocus
                 />
                 <button
@@ -767,7 +1006,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
           </div>
         )}
 
-        {!pendingCredential && !awaitingHousehold && (
+        {!pendingCredential && !awaitingHousehold && !passwordLinkBlocking && passwordLinkAction !== 'invalid' && (
           <div className="space-y-4">
             <div className="space-y-3">
               <button
@@ -805,6 +1044,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
 
             <form
               className="space-y-4"
+              autoComplete="on"
               onSubmit={(e) => {
                 e.preventDefault();
                 if (loading) return;
@@ -821,7 +1061,15 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
               {mode === 'signup' && (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Your name</label>
-                  <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Jane" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors" />
+                  <input
+                    type="text"
+                    name="name"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="Jane"
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
+                    autoComplete="name"
+                  />
                 </div>
               )}
               <div>
@@ -830,11 +1078,16 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
                   <Mail className="absolute left-3 top-3 text-gray-400" size={20} />
                   <input
                     type="email"
+                    name="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="you@example.com"
                     className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
                     autoComplete={mode === 'signin' ? 'username' : 'email'}
+                    inputMode="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                 </div>
               </div>
@@ -843,12 +1096,16 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
                 <div className="relative">
                   <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
                   <input
+                    name="password"
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
                     className="w-full pl-10 pr-12 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors"
                     autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                   <button
                     type="button"
@@ -863,7 +1120,17 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
               {mode === 'signup' && signupType === 'join' && (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Invitation Code</label>
-                  <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} placeholder="16-character code" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider" />
+                  <input
+                    type="text"
+                    name="inviteCode"
+                    value={inviteCode}
+                    onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                    placeholder="16-character code"
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider"
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
                 </div>
               )}
               {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
@@ -2378,6 +2645,17 @@ export default function App() {
     };
 
     const processOAuthRedirect = async () => {
+      if (Capacitor.isNativePlatform()) return;
+      // Password-reset emails append ?mode=resetPassword&oobCode=… (e.g. after / → /signin bounce).
+      // Do not run getRedirectResult here: it competes with email-action handling and can break the flow.
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        if (sp.get('mode') === 'resetPassword' && sp.get('oobCode')) {
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
       try {
         const result = await getRedirectResultOnce();
         if (cancelled) return;

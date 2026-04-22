@@ -14,6 +14,9 @@ export default defineConfig({
           if (pathOnly === '/privacy' || pathOnly === '/terms') {
             req.url = '/index.html' + (query != null && query !== '' ? `?${query}` : '');
           }
+          if (pathOnly === '/account-deletion' || pathOnly === '/account-deletion/') {
+            req.url = '/account-deletion.html' + (query != null && query !== '' ? `?${query}` : '');
+          }
           next();
         });
       },

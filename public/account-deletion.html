@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="How to delete your Provisions account and what data is removed or retained."
+    />
+    <title>Account &amp; data deletion — Provisions</title>
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <style>
+      :root {
+        --bg: #f7f7f7;
+        --card: #ffffff;
+        --ink: #111827;
+        --muted: #4b5563;
+        --border: #e5e7eb;
+        --accent: #ff7a7a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.6;
+        font-size: 16px;
+      }
+      main {
+        max-width: 40rem;
+        margin: 0 auto;
+        padding: 2rem 1.25rem 4rem;
+      }
+      h1 {
+        font-size: 1.75rem;
+        font-weight: 800;
+        line-height: 1.25;
+        margin: 0 0 0.5rem;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 0.95rem;
+        margin-bottom: 2rem;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 1rem;
+        padding: 1.5rem 1.5rem 1.25rem;
+        margin-bottom: 1.5rem;
+      }
+      h2 {
+        font-size: 1.1rem;
+        font-weight: 800;
+        margin: 0 0 0.75rem;
+      }
+      ol.steps {
+        margin: 0;
+        padding-left: 1.25rem;
+      }
+      ol.steps li {
+        margin-bottom: 0.65rem;
+      }
+      ol.steps strong {
+        color: var(--ink);
+      }
+      ul {
+        margin: 0.25rem 0 0;
+        padding-left: 1.25rem;
+      }
+      ul li {
+        margin-bottom: 0.4rem;
+      }
+      p {
+        margin: 0 0 0.85rem;
+      }
+      p:last-child {
+        margin-bottom: 0;
+      }
+      a {
+        color: var(--accent);
+        font-weight: 600;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      a:hover {
+        opacity: 0.9;
+      }
+      .note {
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Account &amp; data deletion</h1>
+      <p class="sub">
+        This page describes how to request deletion of your <strong>Provisions</strong> account and
+        related data for the version of Provisions operated at this website (the same app name shown
+        on the store listing).
+      </p>
+
+      <div class="card">
+        <h2>How to request account deletion</h2>
+        <p>Deletion is completed inside the app after you confirm your identity.</p>
+        <ol class="steps">
+          <li>
+            <strong>Open Provisions</strong> on your device (Android app or web) and
+            <strong>sign in</strong> to the account you want removed.
+          </li>
+          <li>
+            Open the <strong>menu</strong> (main navigation) and tap <strong>Account</strong>.
+          </li>
+          <li>
+            Scroll to the bottom of the Account screen and tap <strong>Delete Account</strong>.
+          </li>
+          <li>
+            Read the warning, then confirm. You will be asked to
+            <strong>re-enter your password</strong> or <strong>sign in again with Google or Apple</strong>
+            (depending on how you created your account). This step verifies that you control the
+            account.
+          </li>
+          <li>
+            After confirmation, the app removes your account data as described below and signs you
+            out. You cannot undo this from the app.
+          </li>
+        </ol>
+        <p class="note" style="margin-top: 1rem">
+          If you use someone else&apos;s deployment (for example a self-hosted instance), contact the
+          operator who invited you if you cannot access the app or complete these steps.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>What is deleted</h2>
+        <ul>
+          <li>
+            <strong>Your sign-in account</strong> (Firebase Authentication user) for this Service.
+          </li>
+          <li>
+            <strong>Your user profile</strong> stored for the Service (for example display name and
+            household membership metadata tied to your user id).
+          </li>
+          <li>
+            <strong>If you are the household administrator:</strong> the entire shared household
+            record for that household is deleted, including shopping lists, purchase-related history,
+            pinned items, invite codes, and other household content stored under that household in the
+            Service database. Other members will lose access to that household data.
+          </li>
+          <li>
+            <strong>If you are not the administrator:</strong> only your account and profile are
+            removed. The household and data visible to other members remain.
+          </li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>What may be kept and for how long</h2>
+        <ul>
+          <li>
+            <strong>Operational and security logs</strong> (for example sign-in attempts, errors, and
+            coarse troubleshooting events) may be retained by the operator or infrastructure
+            providers for a <strong>limited period on the order of weeks</strong>, separately from
+            shopping list content. They are not a full copy of your list.
+          </li>
+          <li>
+            <strong>Google Firebase / Google Cloud</strong> may retain certain service logs or backups
+            according to
+            <a href="https://firebase.google.com/support/privacy" rel="noopener noreferrer" target="_blank"
+              >Google&apos;s data processing and privacy documentation</a
+            >. That retention is outside the app&apos;s direct control.
+          </li>
+          <li>
+            <strong>Data on your device</strong> (for example offline cache in the browser or app
+            storage) may persist until you uninstall the app, clear site data, or until the
+            application clears local storage after sign-out.
+          </li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Related policies</h2>
+        <p>
+          For broader privacy practices, see the
+          <a href="/privacy">Privacy Policy</a>. For terms of use, see the
+          <a href="/terms">Terms of Service</a>.
+        </p>
+      </div>
+    </main>
+  </body>
+</html>

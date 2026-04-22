@@ -1,9 +1,9 @@
-import { readFileSync, writeFileSync, renameSync, copyFileSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync } from 'fs';
 
 // --- 1. Rename dist/index.html → dist/app.html ---
 renameSync('dist/index.html', 'dist/app.html');
-// Capacitor loads webDir/index.html; keep a copy so `npx cap sync` works after this script runs.
-copyFileSync('dist/app.html', 'dist/index.html');
+// Do NOT write dist/index.html here: Firebase Hosting serves /index.html for `/` before
+// rewrites, which would bypass landing.html. Use `npm run cap:sync` (copies index for Capacitor).
 
 // --- 2. Patch sw.js precache manifest: index.html → app.html ---
 let sw = readFileSync('dist/sw.js', 'utf8');

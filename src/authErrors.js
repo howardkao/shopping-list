@@ -13,6 +13,8 @@ const AUTH_ERROR_COPY = {
   'auth/too-many-requests': 'Too many attempts. Please wait a few minutes.',
   'auth/network-request-failed': "Can't reach the server. Check your connection.",
   'auth/user-disabled': 'This account has been disabled.',
+  'auth/expired-action-code': 'This reset link has expired. Request a new password reset email.',
+  'auth/invalid-action-code': 'This reset link is invalid or was already used. Request a new password reset email.',
 };
 
 export function humanizeAuthError(err) {

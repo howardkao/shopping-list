@@ -40,11 +40,11 @@ This document tracks the ongoing effort to productize this app for public, multi
 ## Open Decisions
 
 - [x] **Business model**: free trial + annual subscription — decided 2026-04-17
-  - **Price:** $4.99/year at launch. Goal is user acquisition over revenue; raise price later once download counts provide social proof. Grandfather early adopters at $4.99 forever (new price tier, not modifying existing).
+  - **Price:** $3.99/year at launch. Goal is user acquisition over revenue; raise price later once download counts provide social proof. Grandfather early adopters at $3.99 forever (new price tier, not modifying existing).
   - **Trial:** 2 months (~8 weekly shopping trips; enough to build taxonomy investment and invite household members).
   - **Post-trial behavior:** Read-only mode — can view list and check items off at the store; cannot add, edit suggestions, or invite new members. Preserves data investment; not punitive by Apple's standards.
   - **Subscription scope:** Per-household. Admin pays; all members covered. RevenueCat entitlement keyed to household ID as App User ID.
-  - **Web vs in-app pricing:** Uniform $4.99 everywhere. Can't reference web pricing inside iOS app; the IAP vs Stripe fee difference (~$0.60) isn't worth the complexity.
+  - **Web vs in-app pricing:** Uniform $3.99 everywhere. Can't reference web pricing inside iOS app; the IAP vs Stripe fee difference (~$0.60) isn't worth the complexity.
 - [x] **App store strategy**: Capacitor wrapper for both iOS App Store and Google Play — decided 2026-04-12
   - Plan documented in `NATIVE_APP_PLAN.md`
 - [ ] **RTDB vs Firestore for household data**: RTDB is simpler and already used, but Firestore is more cost-efficient at scale and supports finer-grained security rules
@@ -138,8 +138,8 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ## Session Log
 
-### 2026-04-20 — Pricing revised: $3.99 → $4.99/year; custom auth domain for SSO
-- **Pricing:** Launch price bumped from $3.99 to $4.99/year. All strategy docs (`PRODUCTIZATION.md`, `NATIVE_APP_PLAN.md`, `NATIVE_APP_EXECUTION_PLAN.md`, `PAYWALL_SPEC.md`, `BUSINESS_LAUNCH_PLAN.md`, `landing.html`) updated; derived math in `BUSINESS_LAUNCH_PLAN.md` recalculated (per-sale net ~$3.99 after 15% Apple + 5% RevenueCat; 25 subs = ~$125 ARR; 900 subs = ~$4,500 ARR / ~$2,700 net; break-even now ~8K subs). `PRODUCT_MARKETING.md` already reflected $4.99 from earlier session.
+### 2026-04-20 — Pricing revised: $3.99 → $3.99/year; custom auth domain for SSO
+- **Pricing:** Launch price bumped from $3.99 to $3.99/year. All strategy docs (`PRODUCTIZATION.md`, `NATIVE_APP_PLAN.md`, `NATIVE_APP_EXECUTION_PLAN.md`, `PAYWALL_SPEC.md`, `BUSINESS_LAUNCH_PLAN.md`, `landing.html`) updated; derived math in `BUSINESS_LAUNCH_PLAN.md` recalculated (per-sale net ~$3.99 after 15% Apple + 5% RevenueCat; 25 subs = ~$125 ARR; 900 subs = ~$4,500 ARR / ~$2,700 net; break-even now ~8K subs). `PRODUCT_MARKETING.md` already reflected $3.99 from earlier session.
 - **Custom auth domain:** To prep for SSO (WP-1), pointed `myprovisions.app` at Firebase Hosting and added it as an authorized Auth domain. `.env` updated to `VITE_FIREBASE_AUTH_DOMAIN=myprovisions.app` so the OAuth popup shows brand domain instead of `*.firebaseapp.com`. Apple Services ID + Google OAuth client will register against the custom domain.
 
 ### 2026-04-20 — Marketing landing page mockup
@@ -147,7 +147,7 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **Approach chosen:** Option A (problem-led / "PAS" framework) over Option B (product-led). Rationale: the product's insight — routine shopping is 80% of shopping, every other app ignores that — is the conversion lever, not the UI. The value can't be shown in a screenshot; it has to be narrated.
 - **Page structure:** Nav → Hero (typewriter headline) → Insight (2-col with phone mockup) → How it works (3 steps) → Pricing card → Footer.
 - **Headline:** Typewriter animation cycling through common grocery items (milk, eggs, worcestershire, bread, mozzarella, coffee, gnocchi, bananas, sriracha, butter, parmesan, chicken). Mundane items establish the joke; hard-to-spell items are the punchline.
-- **Pricing copy:** "Two months free. $4.99/year after. One price covers your whole household." Dropped "No card required" (sets expectation we may not fulfill) and "Cancel anytime" (implies refund we don't plan to issue).
+- **Pricing copy:** "Two months free. $3.99/year after. One price covers your whole household." Dropped "No card required" (sets expectation we may not fulfill) and "Cancel anytime" (implies refund we don't plan to issue).
 - **Removed:** Problems section (restated what the hero already said), closing quote section (felt forced without real testimonials).
 - **Phone mockup:** Rebuilt to match actual app chrome — white header with coral wordmark, gray content background, aisle cards with per-aisle search + list rows (coral + button, name, chevron), bottom nav pill with Shop/Plan tabs (Plan active). Previous version had coral header, top tab bar, and tile grid — all wrong.
 - **Open:** No domain, no real CTA destination, no real app store links. Landing page is not yet wired to the auth flow. Tagline still unresolved (PRODUCT_MARKETING.md open question).
@@ -165,7 +165,7 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **Updated:** `PRODUCT_MARKETING.md` (naming rationale rewritten, all inline references), `DESIGN_REVIEW.md` (brand name references), `NATIVE_APP_EXECUTION_PLAN.md` (app name, bundle ID `com.larderapp.shoppinglist`, subscription group "Larder Premium", localStorage key), `NATIVE_APP_PLAN.md` (same), `src/App.jsx` (localStorage key `larder.clearChipTooltipSeen.v1`).
 
 ### 2026-04-17 — Native app track: multi-agent execution plan + business model decisions
-- **Business model finalized:** $4.99/year launch price (user acquisition over revenue; grandfather early adopters; raise price after social proof); 2-month trial; read-only post-trial mode; per-household subscription scope; uniform pricing.
+- **Business model finalized:** $3.99/year launch price (user acquisition over revenue; grandfather early adopters; raise price after social proof); 2-month trial; read-only post-trial mode; per-household subscription scope; uniform pricing.
 - **`NATIVE_APP_PLAN.md`:** Open decisions section replaced with finalized business model decisions.
 - **`NATIVE_APP_EXECUTION_PLAN.md`:** New multi-agent execution plan with 11 work packages across 7 batches, model-tier recommendations (Opus/Sonnet/Haiku per WP), branch strategy, human gates, and dependency graph. WP-1 (SSO) and WP-2 (analytics) serialized to avoid App.jsx merge conflicts.
 - **`PAYWALL_SPEC.md`** and **`.gitignore`:** New planning doc gitignored.
@@ -617,6 +617,30 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **`package.json`:** `@capacitor-firebase/authentication`; `firebase` bumped to ^12.6 (peer of the plugin).
 - **`src/App.jsx`:** On `Capacitor.isNativePlatform()`, Google/Apple sign-in and delete-account reauth use `FirebaseAuthentication` with `skipNativeAuth: true` + `signInWithCredential` / `reauthenticateWithCredential`; web keeps redirect-based OAuth.
 - **`capacitor.config.ts`:** `FirebaseAuthentication.providers` for Google + Apple; comment documenting `GoogleService-Info.plist` / `google-services.json` from Firebase Console.
+
+### 2026-04-22 — Android build: deprecated default ProGuard file
+- **`android/app/build.gradle`:** Swapped `getDefaultProguardFile('proguard-android.txt')` for `getDefaultProguardFile('proguard-android-optimize.txt')` so Android Gradle Plugin no longer fails the build on the deprecated non-optimized default config. Existing custom rules still come from `proguard-rules.pro`.
+
+### 2026-04-22 — Login form autofill markup cleanup
+- **`src/App.jsx`:** Added `name` attributes, stronger autocomplete hints, and email/password input metadata on auth forms so password managers have more conventional signals on web and native WebView builds. No auth flow logic changed.
+
+### 2026-04-22 — Native Apple SSO: align Capacitor auth domain with branded Firebase Auth domain
+- **`capacitor.config.ts`:** Added `plugins.FirebaseAuthentication.authDomain = 'myprovisions.app'` so Capacitor native Google/Apple flows use the same Firebase Auth handler domain as the web app.
+- **Generated Capacitor config:** Re-ran `npm run cap:sync`; `android/app/src/main/assets/capacitor.config.json` and `ios/App/App/capacitor.config.json` now both carry `authDomain: "myprovisions.app"`.
+- **Android plugin bug + workaround:** `@capacitor-firebase/authentication` 8.2.0 on Android applies `setCustomAuthDomain(...)` but its config parser ignores `authDomain`. Added `scripts/patch-capacitor-firebase-auth.js` plus `package.json` `postinstall`/`cap:sync` hooks to patch the plugin before native syncs.
+- **`TDD.md`:** Documented that native SSO must mirror the web auth domain and noted the current Android plugin workaround to avoid Apple sign-in failures with "invalid web redirect url".
+
+### 2026-04-22 — iOS native Firebase initialization
+- **`ios/App/App/AppDelegate.swift`:** Imported `FirebaseCore` and added `FirebaseApp.configure()` in `application(_:didFinishLaunchingWithOptions:)` so the Capacitor iOS app initializes the native Firebase default app before Analytics / Auth plugins touch the SDK. This resolves the simulator launch error `The default Firebase app has not yet been configured`.
+
+### 2026-04-22 — Capacitor iOS boot fix: skip web App Check / web Analytics on native
+- **`src/firebase.js`:** Detect `Capacitor.isNativePlatform()` and skip the web-only Firebase App Check (`ReCaptchaV3Provider`) and web GA4 initialization paths inside Capacitor builds. Native analytics already uses `@capacitor-firebase/analytics`; leaving the web paths enabled in WKWebView was causing opaque `Script error` startup failures on iOS and previously triggered Firebase Installations traffic from `capacitor://localhost`.
+- **`TDD.md`:** Documented that the current reCAPTCHA App Check path is web-only and that native App Check attestation is still future work.
+
+### 2026-04-22 — Capacitor iOS auth bootstrap: skip web redirect resolver on native
+- **`src/firebase.js`:** Native Capacitor builds now initialize Firebase Auth without `browserPopupRedirectResolver`.
+- **`src/App.jsx`:** The startup `getRedirectResult()` recovery path now exits early on `Capacitor.isNativePlatform()` so iOS no longer tries to run unsupported web redirect-auth recovery before `onAuthStateChanged` is registered.
+- **`TDD.md`:** Recorded that native SSO uses the Capacitor plugin path only; the Firebase JS redirect recovery path is web-only.
 
 ### 2026-04-10 — Initial productization planning
 - Discussed what's needed to go from single-household personal app to public multi-household product
