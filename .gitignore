@@ -76,8 +76,8 @@ LOGGING.md
 NATIVE_APP_PLAN.md
 NATIVE_APP_EXECUTION_PLAN.md
 PAYWALL_SPEC.md
-*-mockup.html
-header-mockups.html
+# Local HTML mockups / store graphics (not shipped)
+*mockup*.html
 play-store-feature-graphic.html
 INVITE_EMAIL_PLAN.md
 SHOPPING_LIST_EXECUTION_BLUEPRINT_AND_TECHNICAL_SPEC.md
