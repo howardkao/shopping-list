@@ -140,6 +140,12 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ## Session Log
 
+### 2026-04-23 — Batch 5 merge (WP-8 + WP-9 → `main`)
+- **`native/store-assets`:** Fast-forwarded `main` from Batch 4 (`711ddef`) to pick up store metadata + screenshot guide (`store-assets/*`).
+- **`native/build-signing`:** Merged into `main` (`58ed81e`). Brings Android release signing env vars, `scripts/build-android-release.sh`, `scripts/README-signing.md`, and keystore patterns in `.gitignore`.
+- **`PRODUCTIZATION.md`:** Merge conflict in Session Log resolved by keeping both the WP-8 and WP-9 entries and aligning branch notes to Batch 5.
+- **Next:** `NATIVE_APP_EXECUTION_PLAN.md` Batch 6 — WP-10 integration QA.
+
 ### 2026-04-23 — WP-8: App Store metadata + screenshot guide
 - **App Store metadata drafted:** `store-assets/app-store-metadata.md` with complete iOS + Android store listing copy, subscription descriptions, and configuration notes.
   - **iOS:** App name (Provisions), subtitle (Shared household shopping), 4000-char description emphasizing routine-first design + ambient coordination + household sync, keywords (shopping list, household, shared, grocery, family), promotional text, age rating 4+, category Shopping, support + privacy URLs.
