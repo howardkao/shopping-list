@@ -140,6 +140,14 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ## Session Log
 
+### 2026-04-23 — WP-9: Build signing + release scripts
+
+- **`android/app/build.gradle`:** Added `signingConfigs.release` block that reads from four env vars (`ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`). Block is conditional on `keystorePath` being set, so debug/CI builds without the vars still compile; the release buildType only attaches `signingConfig` when the vars are present.
+- **`scripts/build-android-release.sh`:** New executable script. Validates the four required env vars and checks the keystore file exists; runs `npm run cap:sync` (web asset sync) then `./gradlew bundleRelease` from the `android/` dir; reports the AAB output path on success. Output: `android/app/build/outputs/bundle/release/app-release.aab`.
+- **`scripts/README-signing.md`:** Step-by-step release guide for both platforms. iOS: Xcode automatic signing (team already set to Automatic in pbxproj; developer sets Team once in Xcode UI), Archive → Distribute App → TestFlight, App Store review notes (IAP scrutiny, restore button, privacy policy). Android: `keytool` command to generate `provisions-upload.keystore`, 1Password storage instructions, env var setup, build script usage, Play Console upload to internal testing track, promote-to-production flow. Version bump checklist for both platforms.
+- **`.gitignore`:** Added `*.keystore` and `*.jks` to prevent accidental keystore commits.
+- **Branch:** `native/build-signing`. No merge yet — batch 5 (WP-8 + WP-9) merge happens after both are done. WP-8 (`native/store-assets`) is already committed.
+
 ### 2026-04-23 — WP-7 UAT: trial moved out of app stores; spec/exec-plan reconciliation
 - **Decision: free trial is Firebase-tracked, not store-tracked.** New write-once DB field `households/{hid}/trialEndsAt`; set to `now + TRIAL_DAYS` (60 days) at household creation in `setupHouseholdForUser`. Joiners do **not** start a new trial — they inherit. Legacy households (created before this field existed) fall back to `createdAt + TRIAL_DAYS` on load. Rationale: a per-household trial can't be expressed via store-side intro pricing without granting one trial per Apple-ID / Google-account. App Store Connect / Play Console subscription products are now configured **without** any intro / free-trial offer.
 - **Decision: RC entitlement renamed `premium` → `Provisions Pro`.** Subscription group renamed to match. `customerHasPremiumAccess(info)` in `src/subscriptions.js` checks the entitlement first, then falls back to a hardcoded SKU list (`com.provisionsapp.shoppinglist.paid.annual`, `provisions_paid:provisions-202604`) against `activeSubscriptions` / `allPurchasedProductIdentifiers` + `latestExpirationDate`. The fallback covers the StoreKit 2 / restore quirk where `entitlements.active` is empty after a successful purchase.
