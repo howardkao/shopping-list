@@ -140,6 +140,21 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ## Session Log
 
+### 2026-04-23 — WP-8: App Store metadata + screenshot guide
+- **App Store metadata drafted:** `store-assets/app-store-metadata.md` with complete iOS + Android store listing copy, subscription descriptions, and configuration notes.
+  - **iOS:** App name (Provisions), subtitle (Shared household shopping), 4000-char description emphasizing routine-first design + ambient coordination + household sync, keywords (shopping list, household, shared, grocery, family), promotional text, age rating 4+, category Shopping, support + privacy URLs.
+  - **Android:** Title (Provisions: Shared Shopping List), short description (80 chars), 4000-char full description (adapted for Play Store style), content rating all ages.
+  - **Subscription descriptions:** 3-line feature bullets + trial/pricing statement, consistent across both stores and matching the in-app PaywallSheet copy (real-time sync, unlimited items/shortcuts, invite members).
+  - **Configuration guidance:** Trial is Firebase-tracked (no store-side intro pricing); subscription group "Provisions Pro"; product IDs `com.provisionsapp.shoppinglist.paid.annual` (iOS) + `provisions_paid:provisions-202604` (Android); legal URLs must point to live `src/LegalPages.jsx`.
+- **Screenshot capture guide drafted:** `store-assets/screenshot-guide.md` with simulator specs, screen-by-screen capture instructions, and workflow.
+  - **iOS:** iPhone 6.7" (6.7" Pro Max) + 5.5" (SE 2nd gen) simulators; 5 core screens (Shop mode, Add mode, Item sheet, Paywall trial-ending, Account/household).
+  - **Android:** Pixel 8 Pro (6.7") + Pixel 5 (6.0") emulators; same 5 screens, responsive layout.
+  - **Workflow:** Test household setup, seed data checklist, device configuration (light mode, 9:41 AM, 100% battery, full signal), capture via Xcode/Android Studio, image processing (crop, resize to store specs, optional subtle border), overlay text guidance (minimal, only if clarifying).
+  - **Pre-submission checklist:** 6–8 iOS screenshots, 5–6 Android, naming convention, RGB PNG, no debug UI, live account/code.
+- **Messaging aligned:** All copy draws from PRODUCT_MARKETING.md (routine shopping is 80%, ambient coordination, one price per household, magic moment = list is done at the store) and PAYWALL_SPEC.md (trial terms, subscription features, read-only gating post-trial).
+- **Branch:** `native/store-assets` created and committed.
+- **Next step:** Human gate before submission — capture screenshots using the guide, review store metadata for brand/legal accuracy, and coordinate with legal counsel before finalizing URLs.
+
 ### 2026-04-23 — WP-7 UAT: trial moved out of app stores; spec/exec-plan reconciliation
 - **Decision: free trial is Firebase-tracked, not store-tracked.** New write-once DB field `households/{hid}/trialEndsAt`; set to `now + TRIAL_DAYS` (60 days) at household creation in `setupHouseholdForUser`. Joiners do **not** start a new trial — they inherit. Legacy households (created before this field existed) fall back to `createdAt + TRIAL_DAYS` on load. Rationale: a per-household trial can't be expressed via store-side intro pricing without granting one trial per Apple-ID / Google-account. App Store Connect / Play Console subscription products are now configured **without** any intro / free-trial offer.
 - **Decision: RC entitlement renamed `premium` → `Provisions Pro`.** Subscription group renamed to match. `customerHasPremiumAccess(info)` in `src/subscriptions.js` checks the entitlement first, then falls back to a hardcoded SKU list (`com.provisionsapp.shoppinglist.paid.annual`, `provisions_paid:provisions-202604`) against `activeSubscriptions` / `allPurchasedProductIdentifiers` + `latestExpirationDate`. The fallback covers the StoreKit 2 / restore quirk where `entitlements.active` is empty after a successful purchase.
