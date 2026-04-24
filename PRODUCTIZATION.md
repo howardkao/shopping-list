@@ -80,9 +80,9 @@ This document tracks the ongoing effort to productize this app for public, multi
 - [x] **Privacy Policy + Terms of Service** — 2026-04-17 (`src/LegalPages.jsx`; linked from login + Account)
 - [ ] **Legal: final Privacy + ToS pass before public or app-store launch** — Counsel reviews `src/LegalPages.jsx`; add real **operator legal name**, **contact email** (and support process), and **governing law / venue**; verify every described practice matches production (Firebase products in use, optional Analytics, log retention and admin visibility, account deletion, data locations). Update in-app copy after review.
 - [x] **Firebase App Check** — client: reCAPTCHA v3 + `initializeAppCheck` in `src/firebase.js` (2026-04-17). **Console:** register web app in App Check, monitor, then enforce RTDB (optionally Auth); register dev debug tokens.
-- [ ] **Google + Apple SSO** — reduces signup friction; Apple SSO required by guideline 4.8 if Google SSO is offered
+- [x] **Google + Apple SSO** — web (WP-1, 2026-04-18) + native (WP-5, 2026-04-23). Email/password, Google, and Apple sign-in; account linking for SSO-to-email merges; reauthentication for account deletion.
 - [x] **Subscription system (RevenueCat)** — native paywall, read-only gating, RevenueCat SDK wired with householdId as App User ID (`src/subscriptions.js`, `src/App.jsx`, `PaywallSheet`). 2026-04-22, branch `native/subscriptions` (WP-7). Web Stripe flow + RC web SDK enforcement remain stubbed.
-- [ ] **Cross-platform analytics (Firebase Analytics)** — web: `src/analytics.js` + GA4 events in `App.jsx` (2026-04-21, branch `native/analytics`). Native platforms: Capacitor plugin per `NATIVE_APP_EXECUTION_PLAN.md` (WP-5).
+- [x] **Cross-platform analytics (Firebase Analytics)** — web: `src/analytics.js` + GA4 events in `App.jsx` (WP-2, 2026-04-21). Native platforms: Capacitor plugin (WP-6, 2026-04-23).
 
 ### Should-Have
 
