@@ -5021,7 +5021,9 @@ export default function App() {
 
   useEffect(() => {
     // PWA banner: show once per device (web only, not in native Capacitor)
+    // Disabled until apps are approved on App Store + Google Play.
     if (Capacitor.isNativePlatform()) return;
+    return; // Banner gated: enable when native apps are live
 
     const BANNER_KEY = 'provisions.appStoreBannerSeen.v1';
     if (!localStorage.getItem(BANNER_KEY)) {
