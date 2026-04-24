@@ -1,5 +1,10 @@
 apply plugin: 'com.android.application'
 
+// Release signing reads from env vars set by scripts/build-android-release.sh.
+// When ANDROID_KEYSTORE_PATH is absent (e.g. local debug builds), the release
+// buildType is left unsigned — the build succeeds but the AAB cannot be uploaded.
+def keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+
 android {
     namespace = "com.provisionsapp.shoppinglist"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,8 +21,21 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (keystorePath) {
+            release {
+                storeFile file(keystorePath)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
+            if (keystorePath) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }

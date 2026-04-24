@@ -41,6 +41,9 @@ firebase-debug.*.log
 # Native client configs — add locally from Firebase Console (Your apps); do not commit to a public repo
 android/app/google-services.json
 ios/App/App/GoogleService-Info.plist
+# Android signing — keystore lives in 1Password, never in the repo
+*.keystore
+*.jks
 
 # Optional npm cache directory
 .npm
