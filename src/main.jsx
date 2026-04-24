@@ -10,7 +10,9 @@ let offlineReadyCallback = null;
 
 const updateSW = registerSW({
   onNeedRefresh() {
-    // Notify App component that update is available
+    // In Capacitor native apps, updates come via the APK — skip the prompt and let
+    // the service worker apply silently.
+    if (window.Capacitor?.isNativePlatform()) return;
     if (updateAvailableCallback) {
       updateAvailableCallback(updateSW);
     }
