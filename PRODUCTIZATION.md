@@ -140,6 +140,10 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ## Session Log
 
+### 2026-04-24 — Batch 6 merge (WP-10 → `main`)
+- **`native/integration-qa`:** Merged into `main` via `--no-ff` merge commit. Brings the WP-10 static audit report (`store-assets/qa-report.md`) and the three inline fixes in `src/App.jsx` (native analytics `platform` property, Android `StatusBar.setBackgroundColor`, Android back-button paywall + onboarding handling).
+- **Next:** `NATIVE_APP_EXECUTION_PLAN.md` Batch 7 — WP-11 PWA transition banner. Live-device QA items from `qa-report.md` move to the launch-prep playbook (sandbox purchases, SSO on real devices, Dynamic Island + hardware back).
+
 ### 2026-04-24 — WP-10: Integration QA (read-only pass + fixes)
 - **Branch:** `native/integration-qa` (off `main` at `a9e6998`).
 - **Scope:** static cross-platform audit across auth, core list, subscriptions, offline, analytics, platform polish, and Apple 3.1.2 compliance. Three bugs fixed inline; live-device testing deferred to launch prep (report lists the matrix).
