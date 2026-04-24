@@ -2683,6 +2683,8 @@ export default function App() {
   const [itemEventsListenerMonth, setItemEventsListenerMonth] = useState(() => eventMonthKey(Date.now()));
   /** Live snapshot for `itemEventsListenerMonth`; null until first listener callback. */
   const [liveItemEventsMonthVal, setLiveItemEventsMonthVal] = useState(null);
+  /** PWA banner shown once per device via localStorage. */
+  const [showPWABanner, setShowPWABanner] = useState(false);
 
   const orderedV2AisleIds = Object.keys(aislesV2)
     .sort((a, b) => (aislesV2[a]?.order ?? 0) - (aislesV2[b]?.order ?? 0));
@@ -5017,6 +5019,20 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    // PWA banner: show once per device (web only, not in native Capacitor)
+    // Disabled until apps are approved on App Store + Google Play.
+    if (Capacitor.isNativePlatform()) return;
+    return; // Banner gated: enable when native apps are live
+
+    const BANNER_KEY = 'provisions.appStoreBannerSeen.v1';
+    if (!localStorage.getItem(BANNER_KEY)) {
+      setShowPWABanner(true);
+      const timer = setTimeout(() => setShowPWABanner(false), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
   if (showLogin) {
     return (
       <AuthLoginScreen
@@ -5342,6 +5358,27 @@ export default function App() {
         }
       `}</style>
       <div className={`min-h-screen scroll-fade-bg ${isScrolling ? 'is-scrolling' : ''}`} style={{ backgroundColor: isScrolling ? '#FFFFFF' : '#F7F7F7' }}>
+        {/* PWA promotion banner — web only, dismissed after 8s or tap. */}
+        {showPWABanner && (
+          <div className="fixed top-0 left-0 right-0 bg-amber-50 border-b border-amber-200 z-[51] pt-safe">
+            <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-amber-900 flex-1">
+                Provisions is now on the <a href="https://apps.apple.com/app/provisions/id123" className="font-bold underline hover:no-underline">App Store</a> and <a href="https://play.google.com/store/apps/details?id=com.provisionsapp.shoppinglist" className="font-bold underline hover:no-underline">Google Play</a>.
+              </p>
+              <button
+                onClick={() => {
+                  setShowPWABanner(false);
+                  localStorage.setItem('provisions.appStoreBannerSeen.v1', '1');
+                }}
+                className="shrink-0 p-1 hover:bg-amber-100 rounded transition-colors"
+                aria-label="Close"
+              >
+                <X size={18} className="text-amber-900" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Header — hamburger + wordmark only; sync pill top-right. Scrolls off-screen on scroll-down (all breakpoints). */}
         <div
           className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 pt-safe ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}

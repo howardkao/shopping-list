@@ -140,6 +140,20 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 
 ## Session Log
 
+### 2026-04-24 — WP-11: PWA transition banner
+- **Branch:** `native/pwa-banner` (off `main`).
+- **Scope:** Dismissible banner on web app promoting App Store and Google Play stores.
+- **Implementation:**
+  - Added `showPWABanner` state initialized from localStorage key `provisions.appStoreBannerSeen.v1`.
+  - Effect checks `Capacitor.isNativePlatform()` to hide banner on native builds.
+  - Auto-dismisses after 8 seconds via `setTimeout`.
+  - User can close manually via X button, which also sets localStorage flag (prevents re-showing).
+  - Amber styling, positioned above header (z-51), matches alert UI pattern.
+  - Store links use placeholder URLs pending live app store listings.
+  - **Gated:** Early return disables banner until apps are approved; remove gate when App Store + Google Play approvals arrive.
+- **Verification:** `npm run build` clean. Diff scope: one file, `src/App.jsx` +37 lines.
+- **Next:** Merge to `main` as Batch 7; enable when app approvals confirmed.
+
 ### 2026-04-24 — Batch 6 merge (WP-10 → `main`)
 - **`native/integration-qa`:** Merged into `main` via `--no-ff` merge commit. Brings the WP-10 static audit report (`store-assets/qa-report.md`) and the three inline fixes in `src/App.jsx` (native analytics `platform` property, Android `StatusBar.setBackgroundColor`, Android back-button paywall + onboarding handling).
 - **Next:** `NATIVE_APP_EXECUTION_PLAN.md` Batch 7 — WP-11 PWA transition banner. Live-device QA items from `qa-report.md` move to the launch-prep playbook (sandbox purchases, SSO on real devices, Dynamic Island + hardware back).
