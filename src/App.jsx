@@ -4727,7 +4727,7 @@ export default function App() {
   useEffect(() => {
     if (!user?.uid || !householdId) return;
     setAnalyticsUserProperties({
-      platform: 'web',
+      platform: Capacitor.getPlatform(),
       household_role: isAdmin ? 'admin' : 'member',
     });
   }, [user?.uid, householdId, isAdmin]);
@@ -4912,6 +4912,8 @@ export default function App() {
     onboardingActive,
     needsReauth,
     setShowLoginExplicitly,
+    paywallTrigger,
+    setPaywallTrigger,
   };
 
   useEffect(() => {
@@ -4925,11 +4927,11 @@ export default function App() {
     void (async () => {
       try {
         await StatusBar.setStyle({ style: Style.Light });
-        if (Capacitor.getPlatform() === 'ios') {
-          await StatusBar.setBackgroundColor({ color: '#FF7A7A' });
-        }
         if (Capacitor.getPlatform() === 'android') {
           await StatusBar.setOverlaysWebContent({ overlay: false });
+          // setBackgroundColor is Android-only (no-op / throws on iOS). Match the white app
+          // header so the status bar flows visually with it; Style.Light keeps icons dark.
+          await StatusBar.setBackgroundColor({ color: '#FFFFFF' });
         }
       } catch (err) {
         if (!cancelled) {
@@ -4944,17 +4946,28 @@ export default function App() {
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') return;
-    if (!showLogin && onboardingActive) return undefined;
 
     const sub = CapacitorApp.addListener('backButton', () => {
       const r = androidNavRef.current;
       if (!r) return;
+
+      // Highest-priority: modal surfaces that should close without further navigation.
+      if (r.paywallTrigger) {
+        r.setPaywallTrigger(null);
+        return;
+      }
 
       if (r.showLogin) {
         if (r.loginLegalView) {
           r.closeLoginLegalView();
           return;
         }
+        void CapacitorApp.exitApp();
+        return;
+      }
+
+      if (r.onboardingActive) {
+        // Onboarding has no prior screen; back closes the app (matches default Android behavior).
         void CapacitorApp.exitApp();
         return;
       }
@@ -5002,7 +5015,7 @@ export default function App() {
     return () => {
       void sub.remove();
     };
-  }, [showLogin, onboardingActive]);
+  }, []);
 
   if (showLogin) {
     return (
