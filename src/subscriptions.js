@@ -3,8 +3,14 @@ import { Purchases, LOG_LEVEL, PURCHASES_ERROR_CODE } from '@revenuecat/purchase
 import { trackEvent } from './analytics';
 import { logger } from './logger';
 
-const ENTITLEMENT_ID = 'premium';
-const OFFERING_ID = (import.meta.env.VITE_REVENUECAT_OFFERING || 'main').trim();
+const ENTITLEMENT_ID = 'Provisions Pro';
+const OFFERING_ID = (import.meta.env.VITE_REVENUECAT_OFFERING || 'default').trim();
+
+/** Store product IDs that unlock premium (fallback when `entitlements.active` is empty — e.g. Xcode StoreKit 2 + restore). */
+const PREMIUM_SUBSCRIPTION_PRODUCT_IDS = [
+  'com.provisionsapp.shoppinglist.paid.annual', // iOS
+  'provisions_paid:provisions-202604',           // Android
+];
 
 function nativePlatformKey() {
   if (!Capacitor.isNativePlatform()) return null;
@@ -14,6 +20,8 @@ function nativePlatformKey() {
   return null;
 }
 
+const TRIAL_DAYS = 60;
+
 /** Module state: latest CustomerInfo from RevenueCat, or null before first fetch. */
 let latestCustomerInfo = null;
 let configuredAppUserId = null;
@@ -21,11 +29,39 @@ let listenerId = null;
 let subscribers = new Set();
 let paywallOpener = null;
 let lastEntitlementActive = null;
+/** Unix ms timestamp when the household's trial ends; null until loaded. */
+let householdTrialEndsAt = null;
 
-function entitlementIsActive(info) {
-  if (!info || !info.entitlements) return false;
-  const active = info.entitlements.active || {};
-  return Boolean(active[ENTITLEMENT_ID]);
+/** Called by App.jsx once trialEndsAt (or a createdAt-based fallback) is known. */
+export function setHouseholdTrialEndsAt(ts) {
+  householdTrialEndsAt = (typeof ts === 'number' && !Number.isNaN(ts)) ? ts : null;
+}
+
+export { TRIAL_DAYS };
+
+/**
+ * Whether CustomerInfo grants premium access. Prefer RC entitlements; fall back to active SKUs /
+ * latest expiration when the entitlement map is empty (known quirk after restore in some
+ * StoreKit test / SK2 paths even though POST /receipts succeeded).
+ */
+export function customerHasPremiumAccess(info) {
+  if (!info) return false;
+  const entActive = info.entitlements?.active?.[ENTITLEMENT_ID];
+  if (entActive) return true;
+
+  const subs = info.activeSubscriptions;
+  if (Array.isArray(subs) && subs.some((id) => PREMIUM_SUBSCRIPTION_PRODUCT_IDS.includes(id))) {
+    return true;
+  }
+
+  const allIds = info.allPurchasedProductIdentifiers;
+  if (!Array.isArray(allIds) || !PREMIUM_SUBSCRIPTION_PRODUCT_IDS.some((id) => allIds.includes(id))) {
+    return false;
+  }
+  const latest = info.latestExpirationDate;
+  if (!latest) return false;
+  const t = new Date(latest).getTime();
+  return !Number.isNaN(t) && t > Date.now();
 }
 
 function entitlementInTrial(info) {
@@ -39,8 +75,19 @@ function entitlementInTrial(info) {
 function handleCustomerInfoUpdate(info) {
   const prev = latestCustomerInfo;
   latestCustomerInfo = info || null;
+  if (import.meta.env.DEV && info) {
+    const ent = info.entitlements?.active?.[ENTITLEMENT_ID];
+    logger.info('Subscriptions', 'CustomerInfo update', {
+      platform: Capacitor.getPlatform(),
+      entitlementActive: !!ent,
+      entitlementStore: ent?.store ?? null,
+      activeSubscriptions: info.activeSubscriptions,
+      allPurchasedProductIdentifiers: info.allPurchasedProductIdentifiers,
+      latestExpirationDate: info.latestExpirationDate,
+    });
+  }
 
-  const nowActive = entitlementIsActive(latestCustomerInfo);
+  const nowActive = customerHasPremiumAccess(latestCustomerInfo);
   if (lastEntitlementActive !== null && lastEntitlementActive !== nowActive) {
     if (nowActive) {
       const platform = Capacitor.getPlatform();
@@ -79,6 +126,14 @@ export async function initSubscriptions(householdId) {
     return;
   }
   try {
+    // If the household is changing, immediately clear stale customer info and
+    // notify subscribers so the UI shows "Loading…" instead of the previous
+    // household's data while RC fetches fresh data for the new App User ID.
+    if (configuredAppUserId !== householdId && latestCustomerInfo !== null) {
+      latestCustomerInfo = null;
+      for (const cb of subscribers) { try { cb(null); } catch { /* ignore */ } }
+    }
+
     if (configuredAppUserId && configuredAppUserId !== householdId) {
       await Purchases.logOut().catch(() => {});
       configuredAppUserId = null;
@@ -126,6 +181,7 @@ export async function shutdownSubscriptions() {
     configuredAppUserId = null;
     latestCustomerInfo = null;
     lastEntitlementActive = null;
+    householdTrialEndsAt = null;
   }
 }
 
@@ -135,17 +191,30 @@ export function getSubscriptionStatus() {
     // Web: entitlement enforcement not wired (Stripe + RC web SDK is future work).
     return { active: true, inTrial: false, expiresAt: null, loaded: false, platform: 'web' };
   }
+
+  // RC takes precedence: if a paid subscription is already active, show that — not trial.
+  if (latestCustomerInfo && customerHasPremiumAccess(latestCustomerInfo)) {
+    const ent = latestCustomerInfo.entitlements?.active?.[ENTITLEMENT_ID] || null;
+    let expiresAt = ent?.expirationDateMillis ?? null;
+    if (expiresAt == null && latestCustomerInfo.latestExpirationDate) {
+      const parsed = Date.parse(latestCustomerInfo.latestExpirationDate);
+      if (!Number.isNaN(parsed)) expiresAt = parsed;
+    }
+    // 'APP_STORE' | 'PLAY_STORE' | 'STRIPE' | 'PROMOTIONAL' | null
+    const store = ent?.store ?? null;
+    return { active: true, inTrial: false, expiresAt, store, loaded: true, platform: 'native' };
+  }
+
+  // No active paid subscription — check the Firebase trial window.
+  if (householdTrialEndsAt !== null && Date.now() < householdTrialEndsAt) {
+    return { active: true, inTrial: true, expiresAt: householdTrialEndsAt, loaded: true, platform: 'native' };
+  }
+
+  // Trial over and no RC entitlement.
   if (!latestCustomerInfo) {
     return { active: false, inTrial: false, expiresAt: null, loaded: false, platform: 'native' };
   }
-  const ent = latestCustomerInfo.entitlements?.active?.[ENTITLEMENT_ID] || null;
-  return {
-    active: Boolean(ent),
-    inTrial: entitlementInTrial(latestCustomerInfo),
-    expiresAt: ent?.expirationDateMillis ?? null,
-    loaded: true,
-    platform: 'native',
-  };
+  return { active: false, inTrial: false, expiresAt: null, loaded: true, platform: 'native' };
 }
 
 /**
@@ -153,15 +222,18 @@ export function getSubscriptionStatus() {
  *
  * Policy:
  * - Web: allow (no enforcement until Stripe/web SDK lands).
+ * - Within trial window (household.trialEndsAt): allow regardless of RC state.
  * - Native before first customerInfo response: allow (avoids blocking signup/onboarding
  *   during the ~hundreds-of-ms RC init window; expired users get gated once info arrives).
- * - Native with loaded customerInfo: allow only when `premium` entitlement is active
- *   (includes trial/intro periods).
+ * - Native with loaded customerInfo: allow only when premium access is present
+ *   (entitlement active, or active subscription SKU / valid expiration fallback).
  */
 export function isWriteAllowed() {
   if (!Capacitor.isNativePlatform()) return true;
+  if (latestCustomerInfo && customerHasPremiumAccess(latestCustomerInfo)) return true;
+  if (householdTrialEndsAt !== null && Date.now() < householdTrialEndsAt) return true;
   if (!latestCustomerInfo) return true;
-  return entitlementIsActive(latestCustomerInfo);
+  return false;
 }
 
 /** Gate helper: if blocked, fires paywall and returns false. */
@@ -182,6 +254,17 @@ export function openPaywall(trigger = 'gated_action') {
     try { paywallOpener(trigger); } catch { /* ignore */ }
   } else {
     logger.warn('Subscriptions', 'openPaywall called with no registered opener', { trigger });
+  }
+}
+
+/** Re-fetch CustomerInfo from RC and notify subscribers. No-op on web or before init. */
+export async function refreshCustomerInfo() {
+  if (!Capacitor.isNativePlatform() || !configuredAppUserId) return;
+  try {
+    const { customerInfo } = await Purchases.getCustomerInfo();
+    handleCustomerInfoUpdate(customerInfo);
+  } catch (err) {
+    logger.warn('Subscriptions', 'refreshCustomerInfo failed', { message: err?.message });
   }
 }
 

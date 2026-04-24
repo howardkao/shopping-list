@@ -53,6 +53,10 @@ import {
   purchaseSubscription,
   restorePurchases,
   getAnnualPackageDisplay,
+  customerHasPremiumAccess,
+  setHouseholdTrialEndsAt,
+  refreshCustomerInfo,
+  TRIAL_DAYS,
 } from './subscriptions';
 import { humanizeAuthError } from './authErrors';
 import DebugPanel from './DebugPanel';
@@ -161,8 +165,10 @@ async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayN
       throw new Error('Please enter your invitation code.');
     }
     const code = inviteCode.trim().toUpperCase();
+    logger.info('Auth', 'Join: reading invite code', { code, uid: newUser.uid });
     const codeSnapshot = await get(ref(database, `inviteCodes/${code}`));
     const codeData = codeSnapshot.val();
+    logger.info('Auth', 'Join: invite code data', { found: !!codeData, used: codeData?.used, hasHouseholdId: !!codeData?.householdId });
     if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
       throw new Error("That invite code isn't valid or has expired.");
     }
@@ -171,23 +177,29 @@ async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayN
     }
     const householdId = codeData.householdId;
 
-    await set(ref(database, `inviteCodes/${code}/used`), true);
-    await set(ref(database, `inviteCodes/${code}/usedBy`), newUser.email);
-    await set(ref(database, `inviteCodes/${code}/usedAt`), now);
-    await set(ref(database, `households/${householdId}/inviteCodes/${code}/used`), true);
-    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedBy`), newUser.email);
-    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedAt`), now);
-
+    // Write user record first so the security rule check on /inviteCodes (which
+    // requires auth.uid's householdId to match) passes for the subsequent writes.
+    logger.info('Auth', 'Join: writing user record', { uid: newUser.uid, householdId });
     await set(ref(database, `users/${newUser.uid}`), {
       email: newUser.email,
       displayName: trimmedName,
       createdAt: now,
       householdId
     });
+    logger.info('Auth', 'Join: user record written, marking invite code used');
+    await set(ref(database, `inviteCodes/${code}/used`), true);
+    await set(ref(database, `inviteCodes/${code}/usedBy`), newUser.email);
+    await set(ref(database, `inviteCodes/${code}/usedAt`), now);
+    logger.info('Auth', 'Join: invite code marked used, writing household copies');
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}/used`), true);
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedBy`), newUser.email);
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedAt`), now);
+    logger.info('Auth', 'Join: writing member record', { householdId, uid: newUser.uid });
     await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
       displayName: trimmedName,
       email: newUser.email
     });
+    logger.info('Auth', 'Join: complete', { householdId, uid: newUser.uid });
     return householdId;
   }
 
@@ -196,7 +208,8 @@ async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayN
   const householdId = newHouseholdRef.key;
   await set(newHouseholdRef, {
     adminUid: newUser.uid,
-    createdAt: now
+    createdAt: now,
+    trialEndsAt: now + TRIAL_DAYS * 24 * 60 * 60 * 1000,
   });
   await set(ref(database, `users/${newUser.uid}`), {
     email: newUser.email,
@@ -222,6 +235,8 @@ async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayN
 
 const SSO_SESSION_KEY = 'shopping_list_sso_ctx';
 const SSO_LINK_UI_KEY = 'shopping_list_sso_link_ui';
+/** Set while email signup is in flight so onAuthStateChanged doesn't dismiss the login screen before household setup completes. */
+const EMAIL_SIGNUP_IN_PROGRESS_KEY = 'shopping_list_email_signup_in_progress';
 
 /** OAuth credential for account-exists linking after redirect; not JSON-serializable. */
 let pendingOAuthLink = null;
@@ -424,6 +439,29 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
         return;
       }
 
+      // Pre-validate invite code BEFORE creating the auth user. /inviteCodes is
+      // publicly readable, so this works without auth. Doing it here prevents
+      // creating an orphaned Firebase Auth account when the code is wrong.
+      if (signupType === 'join') {
+        const code = inviteCode.trim().toUpperCase();
+        const codeSnap = await get(ref(database, `inviteCodes/${code}`));
+        const codeData = codeSnap.val();
+        if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
+          setError("That invite code isn't valid or has expired.");
+          setLoading(false);
+          return;
+        }
+        if (codeData.used) {
+          setError('That invite code has already been used.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Block onAuthStateChanged from dismissing the login screen until household
+      // setup finishes. Without this, the login UI disappears as soon as the auth
+      // user is created, silently swallowing any error from setupHouseholdForUser.
+      sessionStorage.setItem(EMAIL_SIGNUP_IN_PROGRESS_KEY, '1');
       const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
       await setupHouseholdForUser(userCredential.user, {
         signupType,
@@ -436,8 +474,10 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
       if (signupType === 'join') {
         trackEvent('invite_code_redeemed', {});
       }
+      sessionStorage.removeItem(EMAIL_SIGNUP_IN_PROGRESS_KEY);
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
+      sessionStorage.removeItem(EMAIL_SIGNUP_IN_PROGRESS_KEY);
       logger.error('Auth', 'Sign up failed', { email: trimmedEmail, error: err.message, code: err.code });
       trackEvent('signup_abandoned', {
         method: 'email',
@@ -996,7 +1036,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
             {signupType === 'join' && (
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Invitation Code</label>
-                <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} placeholder="16-character code" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider" />
+                <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1'))} placeholder="16-character code" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider" />
               </div>
             )}
             {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
@@ -1136,7 +1176,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
                     type="text"
                     name="inviteCode"
                     value={inviteCode}
-                    onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                    onChange={(e) => setInviteCode(e.target.value.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1'))}
                     placeholder="16-character code"
                     className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider"
                     autoCapitalize="characters"
@@ -1555,7 +1595,8 @@ function AdminPanel({ onClose, householdId }) {
   }, [householdId]);
 
   const generateCode = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    // Exclude visually ambiguous chars: O (vs 0), I (vs 1), L (vs 1)
+    const chars = 'ABCDEFGHJKMNPQRSTVWXYZ0123456789';
     let code = '';
     for (let i = 0; i < 16; i++) code += chars[Math.floor(Math.random() * chars.length)];
     return code;
@@ -2246,7 +2287,7 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
   );
 }
 
-function PaywallSheet({ trigger, status, onClose, onOpenLegal }) {
+function PaywallSheet({ trigger, status, onClose, onOpenLegal, onSubscriptionChanged }) {
   const [priceDisplay, setPriceDisplay] = useState(null);
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
@@ -2274,6 +2315,7 @@ function PaywallSheet({ trigger, status, onClose, onOpenLegal }) {
     try {
       const result = await purchaseSubscription();
       if (result?.success) {
+        onSubscriptionChanged?.();
         setSuccessText('You\'re all set. Thanks for subscribing!');
         setTimeout(() => onClose?.(), 900);
       } else if (result?.cancelled) {
@@ -2295,8 +2337,9 @@ function PaywallSheet({ trigger, status, onClose, onOpenLegal }) {
     try {
       const result = await restorePurchases();
       if (result?.success) {
-        const active = result.customerInfo?.entitlements?.active?.premium;
+        const active = customerHasPremiumAccess(result.customerInfo);
         if (active) {
+          onSubscriptionChanged?.();
           setSuccessText('Subscription restored.');
           setTimeout(() => onClose?.(), 900);
         } else {
@@ -2635,6 +2678,7 @@ export default function App() {
   const [needsDisplayName, setNeedsDisplayName] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState('');
   const [members, setMembers] = useState({});
+  const [householdCreatedAt, setHouseholdCreatedAt] = useState(null);
   /** Calendar month for RTDB `onValue` on `item-events-by-month/{month}` (rollover ~45s). */
   const [itemEventsListenerMonth, setItemEventsListenerMonth] = useState(() => eventMonthKey(Date.now()));
   /** Live snapshot for `itemEventsListenerMonth`; null until first listener callback. */
@@ -2972,7 +3016,9 @@ export default function App() {
         email: firebaseUser?.email
       });
 
-      let blockDismissLogin = sessionStorage.getItem(SSO_LINK_UI_KEY) === '1';
+      let blockDismissLogin =
+        sessionStorage.getItem(SSO_LINK_UI_KEY) === '1' ||
+        sessionStorage.getItem(EMAIL_SIGNUP_IN_PROGRESS_KEY) === '1';
       try {
         const pending = sessionStorage.getItem(SSO_SESSION_KEY);
         if (pending) {
@@ -3015,8 +3061,20 @@ export default function App() {
               setNeedsDisplayName(true);
             }
             if (userHouseholdId) {
-              const adminSnap = await get(ref(database, `households/${userHouseholdId}/adminUid`));
+              const [adminSnap, trialSnap, createdAtSnap] = await Promise.all([
+                get(ref(database, `households/${userHouseholdId}/adminUid`)),
+                get(ref(database, `households/${userHouseholdId}/trialEndsAt`)),
+                get(ref(database, `households/${userHouseholdId}/createdAt`)),
+              ]);
               isAdminUser = adminSnap.val() === firebaseUser.uid;
+              const rawTrialEndsAt = trialSnap.val();
+              const rawCreatedAt = createdAtSnap.val();
+              if (rawCreatedAt) setHouseholdCreatedAt(rawCreatedAt);
+              // Prefer explicit trialEndsAt; fall back to createdAt + TRIAL_DAYS for households
+              // created before this field existed.
+              const effectiveTrialEndsAt = rawTrialEndsAt
+                ?? (rawCreatedAt ? rawCreatedAt + TRIAL_DAYS * 24 * 60 * 60 * 1000 : null);
+              setHouseholdTrialEndsAt(effectiveTrialEndsAt);
             }
           } catch (err) {
             logger.error('Auth', 'Failed to load household/admin status, using cached value', {
@@ -3438,6 +3496,25 @@ export default function App() {
       logger.error('Firebase', 'Onboarding flag listener error', { error: error.message, code: error.code });
     });
 
+    const trialEndsAtRef = ref(database, `${hPath}/trialEndsAt`);
+    const unsubTrialEndsAt = onValue(trialEndsAtRef, (snap) => {
+      const val = snap.val();
+      setHouseholdTrialEndsAt(typeof val === 'number' ? val : null);
+      setSubscriptionStatus(getSubscriptionStatus());
+    });
+
+    // When any household member subscribes or cancels, they write subscriptionUpdatedAt.
+    // All other members hear this and re-fetch from RevenueCat so their gating stays current.
+    let lastSubscriptionUpdatedAt = null;
+    const subscriptionUpdatedAtRef = ref(database, `${hPath}/subscriptionUpdatedAt`);
+    const unsubSubscriptionUpdatedAt = onValue(subscriptionUpdatedAtRef, (snap) => {
+      const val = snap.val();
+      if (val && val !== lastSubscriptionUpdatedAt) {
+        lastSubscriptionUpdatedAt = val;
+        refreshCustomerInfo().then(() => setSubscriptionStatus(getSubscriptionStatus()));
+      }
+    });
+
     setLoading(false);
 
     return () => {
@@ -3453,6 +3530,8 @@ export default function App() {
       unsubVisible();
       unsubLibrary();
       unsubOnboarding();
+      unsubTrialEndsAt();
+      unsubSubscriptionUpdatedAt();
     };
   }, [user?.uid, householdId]);
 
@@ -4676,6 +4755,20 @@ export default function App() {
     return () => { cancelled = true; };
   }, [householdId]);
 
+  const handleSubscriptionChanged = useCallback(() => {
+    if (!householdId) return;
+    set(ref(database, `households/${householdId}/subscriptionUpdatedAt`), Date.now()).catch(() => {});
+  }, [householdId]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listener = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive) return;
+      refreshCustomerInfo().then(() => setSubscriptionStatus(getSubscriptionStatus()));
+    });
+    return () => { listener.then((h) => h.remove()); };
+  }, []);
+
   useEffect(() => {
     if (!user?.uid || !householdId) {
       quickAddModeAnalyticsRef.current = null;
@@ -4756,6 +4849,7 @@ export default function App() {
       setUser(null);
       setIsAdmin(false);
       setHouseholdId(null);
+      setHouseholdCreatedAt(null);
       setShowLoginExplicitly(true);
       setLoginLegalView(null);
       if (legalViewFromPathname(window.location.pathname)) {
@@ -5124,7 +5218,9 @@ export default function App() {
 
   const completeOnboarding = async () => {
     if (!householdId) return;
-    if (!assertWriteAllowed('gated_action')) return;
+    // Do not gate this behind premium: native users without entitlement would hit
+    // assertWriteAllowed → paywall_viewed analytics while PaywallSheet is not mounted
+    // (onboarding uses an early return), so Done would appear to do nothing.
     const startedAt = onboardingEnteredAtRef.current;
     try {
       await set(ref(database, `households/${householdId}/taxonomy/onboarding_completed`), true);
@@ -5139,24 +5235,57 @@ export default function App() {
 
   if (onboardingActive) {
     return (
-      <Onboarding
-        displayName={members?.[user.uid]?.displayName}
-        aisles={aislesV2}
-        categories={categoriesV2}
-        visibleItems={visibleItemsV2}
-        libraryItems={libraryItemsV2}
-        onRenameAisle={taxoRenameAisle}
-        onAddAisle={taxoAddAisle}
-        onDeleteAisle={taxoDeleteAisle}
-        onReorderAisles={taxoReorderAisles}
-        onRenameCategory={taxoRenameCategory}
-        onAddCategory={taxoAddCategory}
-        onMoveCategory={taxoMoveCategory}
-        onMergeCategory={taxoMergeCategory}
-        onComplete={completeOnboarding}
-      />
+      <>
+        <Onboarding
+          displayName={members?.[user.uid]?.displayName}
+          aisles={aislesV2}
+          categories={categoriesV2}
+          visibleItems={visibleItemsV2}
+          libraryItems={libraryItemsV2}
+          onRenameAisle={taxoRenameAisle}
+          onAddAisle={taxoAddAisle}
+          onDeleteAisle={taxoDeleteAisle}
+          onReorderAisles={taxoReorderAisles}
+          onRenameCategory={taxoRenameCategory}
+          onAddCategory={taxoAddCategory}
+          onMoveCategory={taxoMoveCategory}
+          onMergeCategory={taxoMergeCategory}
+          onComplete={completeOnboarding}
+        />
+        {paywallTrigger && (
+          <PaywallSheet
+            trigger={paywallTrigger}
+            status={subscriptionStatus}
+            onClose={() => setPaywallTrigger(null)}
+            onSubscriptionChanged={handleSubscriptionChanged}
+            onOpenLegal={(view) => {
+              const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
+              window.history.pushState({}, '', path);
+              setPaywallTrigger(null);
+              setCurrentPage(view);
+            }}
+          />
+        )}
+      </>
     );
   }
+
+  // Account page derived values
+  const accountDisplayName = members?.[user?.uid]?.displayName || user?.displayName || '';
+  const accountSub = subscriptionStatus;
+  const accountManageUrl = Capacitor.getPlatform() === 'ios'
+    ? 'https://apps.apple.com/account/subscriptions'
+    : 'https://play.google.com/store/account/subscriptions';
+  const currentPlatformStore = Capacitor.getPlatform() === 'ios' ? 'APP_STORE' : 'PLAY_STORE';
+  const subStore = accountSub?.store ?? null;
+  const subOnOtherPlatform = accountSub?.active && !accountSub?.inTrial
+    && subStore && subStore !== 'PROMOTIONAL' && subStore !== currentPlatformStore;
+  const subStoreName = subStore === 'APP_STORE' ? 'App Store'
+    : subStore === 'PLAY_STORE' ? 'Google Play'
+    : null;
+  const fmtDate = (ms) => ms
+    ? new Date(ms).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : '—';
 
   return (
     <>
@@ -5378,22 +5507,94 @@ export default function App() {
           ) : currentPage === 'account' ? (
             <div className="max-w-2xl mx-auto px-4 flex min-h-[calc(100dvh-5.5rem)] flex-col">
               <div className="space-y-3 shrink-0">
+
+                {/* Account info */}
+                <div className="bg-white rounded-2xl border border-gray-200 px-6 py-4 space-y-2">
+                  <div>
+                    <p className="font-semibold text-gray-800">{user?.email}</p>
+                    {accountDisplayName && <p className="text-sm text-gray-500">{accountDisplayName}</p>}
+                  </div>
+                  {householdId && (
+                    <div className="border-t border-gray-100 pt-2 space-y-1">
+                      <span className="text-xs text-gray-400 uppercase tracking-wide">Household</span>
+                      <button
+                        className="flex items-center gap-1.5 text-xs font-mono text-gray-500 hover:text-gray-700 transition-colors"
+                        onClick={() => navigator.clipboard?.writeText(householdId)}
+                        title="Tap to copy household ID"
+                      >
+                        {householdId}
+                        <Copy size={11} className="shrink-0 text-gray-400" />
+                      </button>
+                      {householdCreatedAt && (
+                        <p className="text-xs text-gray-400">Created {fmtDate(householdCreatedAt)}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Subscription status (native only) */}
+                {Capacitor.isNativePlatform() && (
+                  <div className="bg-white rounded-2xl border border-gray-200 px-6 py-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        {accountSub?.inTrial ? (
+                          <>
+                            <p className="font-semibold text-gray-800">Free trial</p>
+                            <p className="text-sm text-gray-500">Ends {fmtDate(accountSub.expiresAt)}</p>
+                          </>
+                        ) : accountSub?.active ? (
+                          <>
+                            <p className="font-semibold text-gray-800">Provisions Pro</p>
+                            <p className="text-sm text-gray-500">{accountSub.expiresAt ? `Renews ${fmtDate(accountSub.expiresAt)}` : 'Active'}</p>
+                          </>
+                        ) : accountSub?.loaded ? (
+                          <>
+                            <p className="font-semibold text-gray-800">No active subscription</p>
+                            <p className="text-sm text-gray-500">Your free trial has ended</p>
+                          </>
+                        ) : (
+                          <p className="text-sm text-gray-400">Loading…</p>
+                        )}
+                      </div>
+                      {accountSub?.active && !accountSub?.inTrial && (
+                        subOnOtherPlatform ? (
+                          <span className="text-xs text-gray-400 shrink-0 mt-0.5 text-right">
+                            via {subStoreName || 'other platform'}
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => window.open(accountManageUrl, '_system')}
+                            className="text-sm font-semibold shrink-0 mt-0.5"
+                            style={{ color: '#FF7A7A' }}
+                          >
+                            Manage
+                          </button>
+                        )
+                      )}
+                    </div>
+                    {accountSub?.loaded && (accountSub?.inTrial || !accountSub?.active) && (
+                      <div className="border-t border-gray-100 pt-3 space-y-2">
+                        <button
+                          onClick={() => openPaywall('account_subscribe')}
+                          className="w-full py-2.5 rounded-xl font-semibold text-sm text-white transition-colors"
+                          style={{ backgroundColor: '#FF7A7A' }}
+                        >
+                          Subscribe — $3.99/year
+                        </button>
+                        <button
+                          onClick={() => openPaywall('account_restore')}
+                          className="w-full py-2 text-sm font-semibold text-gray-500 hover:text-gray-700 transition-colors"
+                        >
+                          Restore purchases
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {isAdmin && (
                   <button onClick={() => setShowAdmin(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
                     <Shield size={20} />Invite Household Members
-                  </button>
-                )}
-                {Capacitor.isNativePlatform() && (
-                  <button
-                    onClick={() => openPaywall('account_menu')}
-                    className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    <ScrollText size={20} />
-                    <span className="flex-1 text-left">
-                      {subscriptionStatus?.active
-                        ? (subscriptionStatus.inTrial ? 'Subscription (trial)' : 'Subscription active')
-                        : 'Subscribe to Provisions'}
-                    </span>
                   </button>
                 )}
                 <button onClick={handleSignOut} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-red-500 hover:bg-red-50 transition-colors">
@@ -5425,6 +5626,7 @@ export default function App() {
                 </button>
               </div>
             </div>
+
           ) : currentPage === 'list' ? (
             <div className="max-w-2xl mx-auto px-4">
               {/* Shop/Plan: mobile = bottom fixed bar; desktop = top fixed bar (see block after header). */}
@@ -5906,6 +6108,7 @@ export default function App() {
           trigger={paywallTrigger}
           status={subscriptionStatus}
           onClose={() => setPaywallTrigger(null)}
+          onSubscriptionChanged={handleSubscriptionChanged}
           onOpenLegal={(view) => {
             const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
             window.history.pushState({}, '', path);
