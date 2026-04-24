@@ -23,6 +23,10 @@
 
         "adminUid":  { ".validate": "newData.isString() && newData.val().length <= 50" },
         "createdAt": { ".validate": "newData.isNumber()" },
+        "trialEndsAt": {
+          ".write": "!data.exists()",
+          ".validate": "newData.isNumber()"
+        },
 
         "taxonomy": {
           "migrated":     { ".validate": "newData.isBoolean()" },

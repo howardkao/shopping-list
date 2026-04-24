@@ -1,0 +1,45 @@
+{
+  "identifier": "A8F3C21E",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_storeKitErrors": [],
+    "_timeRate": 0
+  },
+  "subscriptionGroups": [
+    {
+      "id": "B9D41A7C",
+      "localizations": [],
+      "name": "Provisions Premium",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "29.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "C7E5029A",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Annual subscription for Provisions premium features.",
+              "displayName": "Annual",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.provisionsapp.shoppinglist.paid.annual",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Annual",
+          "subscriptionGroupID": "B9D41A7C",
+          "type": "RecurringSubscription",
+          "winbackOffers": []
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

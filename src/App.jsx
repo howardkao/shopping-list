@@ -42,6 +42,22 @@ import {
 } from './offlineStorage';
 import { logger } from './logger';
 import { trackEvent, setAnalyticsUserId, setAnalyticsUserProperties } from './analytics';
+import {
+  initSubscriptions,
+  shutdownSubscriptions,
+  listenToSubscriptionChanges,
+  getSubscriptionStatus,
+  assertWriteAllowed,
+  openPaywall,
+  setPaywallOpener,
+  purchaseSubscription,
+  restorePurchases,
+  getAnnualPackageDisplay,
+  customerHasPremiumAccess,
+  setHouseholdTrialEndsAt,
+  refreshCustomerInfo,
+  TRIAL_DAYS,
+} from './subscriptions';
 import { humanizeAuthError } from './authErrors';
 import DebugPanel from './DebugPanel';
 import SuggestionsEditor from './SuggestionsEditor';
@@ -149,8 +165,10 @@ async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayN
       throw new Error('Please enter your invitation code.');
     }
     const code = inviteCode.trim().toUpperCase();
+    logger.info('Auth', 'Join: reading invite code', { code, uid: newUser.uid });
     const codeSnapshot = await get(ref(database, `inviteCodes/${code}`));
     const codeData = codeSnapshot.val();
+    logger.info('Auth', 'Join: invite code data', { found: !!codeData, used: codeData?.used, hasHouseholdId: !!codeData?.householdId });
     if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
       throw new Error("That invite code isn't valid or has expired.");
     }
@@ -159,23 +177,29 @@ async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayN
     }
     const householdId = codeData.householdId;
 
-    await set(ref(database, `inviteCodes/${code}/used`), true);
-    await set(ref(database, `inviteCodes/${code}/usedBy`), newUser.email);
-    await set(ref(database, `inviteCodes/${code}/usedAt`), now);
-    await set(ref(database, `households/${householdId}/inviteCodes/${code}/used`), true);
-    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedBy`), newUser.email);
-    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedAt`), now);
-
+    // Write user record first so the security rule check on /inviteCodes (which
+    // requires auth.uid's householdId to match) passes for the subsequent writes.
+    logger.info('Auth', 'Join: writing user record', { uid: newUser.uid, householdId });
     await set(ref(database, `users/${newUser.uid}`), {
       email: newUser.email,
       displayName: trimmedName,
       createdAt: now,
       householdId
     });
+    logger.info('Auth', 'Join: user record written, marking invite code used');
+    await set(ref(database, `inviteCodes/${code}/used`), true);
+    await set(ref(database, `inviteCodes/${code}/usedBy`), newUser.email);
+    await set(ref(database, `inviteCodes/${code}/usedAt`), now);
+    logger.info('Auth', 'Join: invite code marked used, writing household copies');
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}/used`), true);
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedBy`), newUser.email);
+    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedAt`), now);
+    logger.info('Auth', 'Join: writing member record', { householdId, uid: newUser.uid });
     await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
       displayName: trimmedName,
       email: newUser.email
     });
+    logger.info('Auth', 'Join: complete', { householdId, uid: newUser.uid });
     return householdId;
   }
 
@@ -184,7 +208,8 @@ async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayN
   const householdId = newHouseholdRef.key;
   await set(newHouseholdRef, {
     adminUid: newUser.uid,
-    createdAt: now
+    createdAt: now,
+    trialEndsAt: now + TRIAL_DAYS * 24 * 60 * 60 * 1000,
   });
   await set(ref(database, `users/${newUser.uid}`), {
     email: newUser.email,
@@ -210,6 +235,8 @@ async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayN
 
 const SSO_SESSION_KEY = 'shopping_list_sso_ctx';
 const SSO_LINK_UI_KEY = 'shopping_list_sso_link_ui';
+/** Set while email signup is in flight so onAuthStateChanged doesn't dismiss the login screen before household setup completes. */
+const EMAIL_SIGNUP_IN_PROGRESS_KEY = 'shopping_list_email_signup_in_progress';
 
 /** OAuth credential for account-exists linking after redirect; not JSON-serializable. */
 let pendingOAuthLink = null;
@@ -412,6 +439,29 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
         return;
       }
 
+      // Pre-validate invite code BEFORE creating the auth user. /inviteCodes is
+      // publicly readable, so this works without auth. Doing it here prevents
+      // creating an orphaned Firebase Auth account when the code is wrong.
+      if (signupType === 'join') {
+        const code = inviteCode.trim().toUpperCase();
+        const codeSnap = await get(ref(database, `inviteCodes/${code}`));
+        const codeData = codeSnap.val();
+        if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
+          setError("That invite code isn't valid or has expired.");
+          setLoading(false);
+          return;
+        }
+        if (codeData.used) {
+          setError('That invite code has already been used.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Block onAuthStateChanged from dismissing the login screen until household
+      // setup finishes. Without this, the login UI disappears as soon as the auth
+      // user is created, silently swallowing any error from setupHouseholdForUser.
+      sessionStorage.setItem(EMAIL_SIGNUP_IN_PROGRESS_KEY, '1');
       const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
       await setupHouseholdForUser(userCredential.user, {
         signupType,
@@ -424,8 +474,10 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
       if (signupType === 'join') {
         trackEvent('invite_code_redeemed', {});
       }
+      sessionStorage.removeItem(EMAIL_SIGNUP_IN_PROGRESS_KEY);
       if (onLoginSuccess) onLoginSuccess();
     } catch (err) {
+      sessionStorage.removeItem(EMAIL_SIGNUP_IN_PROGRESS_KEY);
       logger.error('Auth', 'Sign up failed', { email: trimmedEmail, error: err.message, code: err.code });
       trackEvent('signup_abandoned', {
         method: 'email',
@@ -984,7 +1036,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
             {signupType === 'join' && (
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Invitation Code</label>
-                <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} placeholder="16-character code" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider" />
+                <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1'))} placeholder="16-character code" className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider" />
               </div>
             )}
             {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
@@ -1124,7 +1176,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
                     type="text"
                     name="inviteCode"
                     value={inviteCode}
-                    onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                    onChange={(e) => setInviteCode(e.target.value.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1'))}
                     placeholder="16-character code"
                     className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider"
                     autoCapitalize="characters"
@@ -1543,7 +1595,8 @@ function AdminPanel({ onClose, householdId }) {
   }, [householdId]);
 
   const generateCode = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    // Exclude visually ambiguous chars: O (vs 0), I (vs 1), L (vs 1)
+    const chars = 'ABCDEFGHJKMNPQRSTVWXYZ0123456789';
     let code = '';
     for (let i = 0; i < 16; i++) code += chars[Math.floor(Math.random() * chars.length)];
     return code;
@@ -1551,6 +1604,7 @@ function AdminPanel({ onClose, householdId }) {
 
   const createInvitation = async () => {
     if (!householdId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     setCreating(true);
     const code = generateCode();
     const expiresAt = new Date();
@@ -1566,6 +1620,7 @@ function AdminPanel({ onClose, householdId }) {
   };
 
   const deleteInvitation = async (code) => {
+    if (!assertWriteAllowed('gated_action')) return;
     await remove(ref(database, `households/${householdId}/inviteCodes/${code}`));
     await remove(ref(database, `inviteCodes/${code}`));
   };
@@ -2232,6 +2287,163 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
   );
 }
 
+function PaywallSheet({ trigger, status, onClose, onOpenLegal, onSubscriptionChanged }) {
+  const [priceDisplay, setPriceDisplay] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [errorText, setErrorText] = useState('');
+  const [successText, setSuccessText] = useState('');
+  const isNative = Capacitor.isNativePlatform();
+  const wasInTrial = Boolean(status?.inTrial);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (isNative) {
+      getAnnualPackageDisplay().then((d) => {
+        if (!cancelled && d?.priceString) setPriceDisplay(d.priceString);
+      }).catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [isNative]);
+
+  const priceLine = priceDisplay || '$3.99 per year';
+
+  const handleSubscribe = async () => {
+    setErrorText('');
+    setSuccessText('');
+    setLoading(true);
+    try {
+      const result = await purchaseSubscription();
+      if (result?.success) {
+        onSubscriptionChanged?.();
+        setSuccessText('You\'re all set. Thanks for subscribing!');
+        setTimeout(() => onClose?.(), 900);
+      } else if (result?.cancelled) {
+        // user cancelled — silent
+      } else if (result?.unavailable) {
+        setErrorText('Subscription checkout is not yet available on the web. Please use the iOS or Android app.');
+      } else {
+        setErrorText('Purchase failed. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    setErrorText('');
+    setSuccessText('');
+    setRestoring(true);
+    try {
+      const result = await restorePurchases();
+      if (result?.success) {
+        const active = customerHasPremiumAccess(result.customerInfo);
+        if (active) {
+          onSubscriptionChanged?.();
+          setSuccessText('Subscription restored.');
+          setTimeout(() => onClose?.(), 900);
+        } else {
+          setErrorText('No active subscription found on this account.');
+        }
+      } else if (result?.unavailable) {
+        setErrorText('Restore is not available on the web.');
+      } else {
+        setErrorText('Could not restore purchases. Please try again.');
+      }
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const headline = wasInTrial
+    ? 'Subscribe to keep editing Provisions'
+    : 'Your trial has ended';
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center sm:p-4 z-50">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-xl w-full sm:max-w-md border-t sm:border border-gray-200 max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-center py-3 sm:hidden">
+          <div className="w-10 h-1.5 bg-gray-300 rounded-full" />
+        </div>
+        <div className="px-6 pt-2 pb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800">{headline}</h2>
+            <p className="text-gray-600 font-medium mt-1 text-sm">
+              You can still shop your list and check items off. Subscribe to add items, edit shortcuts, and invite family.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 text-gray-400 hover:text-gray-600"
+            aria-label="Close"
+          >
+            <X size={22} />
+          </button>
+        </div>
+        <div className="px-6 pb-2">
+          <div className="rounded-2xl border border-gray-200 p-5 bg-gray-50">
+            <div className="text-3xl font-bold text-gray-800">{priceLine}</div>
+            <div className="text-sm text-gray-600 font-medium mt-1">
+              2 months free, then billed annually.
+            </div>
+          </div>
+        </div>
+        <ul className="px-6 py-4 space-y-2 text-sm text-gray-700 font-medium">
+          <li className="flex items-start gap-2">
+            <Check size={18} className="mt-0.5 flex-shrink-0" style={{ color: '#FF7A7A' }} />
+            <span>Real-time household sync</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <Check size={18} className="mt-0.5 flex-shrink-0" style={{ color: '#FF7A7A' }} />
+            <span>Unlimited items and shortcuts</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <Check size={18} className="mt-0.5 flex-shrink-0" style={{ color: '#FF7A7A' }} />
+            <span>Invite household members</span>
+          </li>
+        </ul>
+        {(errorText || successText) && (
+          <div className="px-6 pb-2">
+            {errorText && (
+              <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{errorText}</div>
+            )}
+            {successText && (
+              <div className="bg-green-50 text-green-700 px-4 py-3 rounded-xl text-sm font-medium border border-green-200">{successText}</div>
+            )}
+          </div>
+        )}
+        <div className="px-6 py-4 space-y-3">
+          <button
+            type="button"
+            onClick={handleSubscribe}
+            disabled={loading || restoring}
+            className="w-full text-white py-3.5 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
+            style={{ backgroundColor: loading || restoring ? undefined : '#FF7A7A' }}
+          >
+            {loading ? 'Starting…' : 'Subscribe'}
+          </button>
+          <button
+            type="button"
+            onClick={handleRestore}
+            disabled={loading || restoring}
+            className="w-full text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-100 transition-colors disabled:opacity-50"
+          >
+            {restoring ? 'Restoring…' : 'Restore purchases'}
+          </button>
+        </div>
+        <div className="px-6 pb-6 text-xs text-gray-500 text-center">
+          By subscribing you agree to our{' '}
+          <button type="button" className="underline" onClick={() => onOpenLegal?.('terms')}>Terms of Service</button>
+          {' '}and{' '}
+          <button type="button" className="underline" onClick={() => onOpenLegal?.('privacy')}>Privacy Policy</button>.
+          {trigger ? <span className="sr-only"> Trigger: {trigger}.</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PurchaseHistory({ householdId, liveBucketMonthKey, liveBucketVal, aisles = {}, categories = {} }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -2393,6 +2605,8 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [householdId, setHouseholdId] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [paywallTrigger, setPaywallTrigger] = useState(null);
+  const [subscriptionStatus, setSubscriptionStatus] = useState(() => getSubscriptionStatus());
   const [showAdmin, setShowAdmin] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [currentPage, setCurrentPage] = useState(() => legalViewFromPathname(window.location.pathname) || 'list');
@@ -2464,6 +2678,7 @@ export default function App() {
   const [needsDisplayName, setNeedsDisplayName] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState('');
   const [members, setMembers] = useState({});
+  const [householdCreatedAt, setHouseholdCreatedAt] = useState(null);
   /** Calendar month for RTDB `onValue` on `item-events-by-month/{month}` (rollover ~45s). */
   const [itemEventsListenerMonth, setItemEventsListenerMonth] = useState(() => eventMonthKey(Date.now()));
   /** Live snapshot for `itemEventsListenerMonth`; null until first listener callback. */
@@ -2801,7 +3016,9 @@ export default function App() {
         email: firebaseUser?.email
       });
 
-      let blockDismissLogin = sessionStorage.getItem(SSO_LINK_UI_KEY) === '1';
+      let blockDismissLogin =
+        sessionStorage.getItem(SSO_LINK_UI_KEY) === '1' ||
+        sessionStorage.getItem(EMAIL_SIGNUP_IN_PROGRESS_KEY) === '1';
       try {
         const pending = sessionStorage.getItem(SSO_SESSION_KEY);
         if (pending) {
@@ -2844,8 +3061,20 @@ export default function App() {
               setNeedsDisplayName(true);
             }
             if (userHouseholdId) {
-              const adminSnap = await get(ref(database, `households/${userHouseholdId}/adminUid`));
+              const [adminSnap, trialSnap, createdAtSnap] = await Promise.all([
+                get(ref(database, `households/${userHouseholdId}/adminUid`)),
+                get(ref(database, `households/${userHouseholdId}/trialEndsAt`)),
+                get(ref(database, `households/${userHouseholdId}/createdAt`)),
+              ]);
               isAdminUser = adminSnap.val() === firebaseUser.uid;
+              const rawTrialEndsAt = trialSnap.val();
+              const rawCreatedAt = createdAtSnap.val();
+              if (rawCreatedAt) setHouseholdCreatedAt(rawCreatedAt);
+              // Prefer explicit trialEndsAt; fall back to createdAt + TRIAL_DAYS for households
+              // created before this field existed.
+              const effectiveTrialEndsAt = rawTrialEndsAt
+                ?? (rawCreatedAt ? rawCreatedAt + TRIAL_DAYS * 24 * 60 * 60 * 1000 : null);
+              setHouseholdTrialEndsAt(effectiveTrialEndsAt);
             }
           } catch (err) {
             logger.error('Auth', 'Failed to load household/admin status, using cached value', {
@@ -3267,6 +3496,25 @@ export default function App() {
       logger.error('Firebase', 'Onboarding flag listener error', { error: error.message, code: error.code });
     });
 
+    const trialEndsAtRef = ref(database, `${hPath}/trialEndsAt`);
+    const unsubTrialEndsAt = onValue(trialEndsAtRef, (snap) => {
+      const val = snap.val();
+      setHouseholdTrialEndsAt(typeof val === 'number' ? val : null);
+      setSubscriptionStatus(getSubscriptionStatus());
+    });
+
+    // When any household member subscribes or cancels, they write subscriptionUpdatedAt.
+    // All other members hear this and re-fetch from RevenueCat so their gating stays current.
+    let lastSubscriptionUpdatedAt = null;
+    const subscriptionUpdatedAtRef = ref(database, `${hPath}/subscriptionUpdatedAt`);
+    const unsubSubscriptionUpdatedAt = onValue(subscriptionUpdatedAtRef, (snap) => {
+      const val = snap.val();
+      if (val && val !== lastSubscriptionUpdatedAt) {
+        lastSubscriptionUpdatedAt = val;
+        refreshCustomerInfo().then(() => setSubscriptionStatus(getSubscriptionStatus()));
+      }
+    });
+
     setLoading(false);
 
     return () => {
@@ -3282,6 +3530,8 @@ export default function App() {
       unsubVisible();
       unsubLibrary();
       unsubOnboarding();
+      unsubTrialEndsAt();
+      unsubSubscriptionUpdatedAt();
     };
   }, [user?.uid, householdId]);
 
@@ -3401,6 +3651,7 @@ export default function App() {
   };
 
   const addItem = (name, category, source = 'quickAdd', itemKey = generateId(), categoryIdOverride = null) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const defaultQuantity = getDefaultQuantityForItem(itemKey, name);
     const categoryIdResolved = categoryIdOverride || categoryIdByName[category] || null;
     const newList = [...list, stampRecord({
@@ -3461,6 +3712,7 @@ export default function App() {
   };
 
   const updateQuantity = (itemKey, qty) => {
+    if (!assertWriteAllowed('gated_action')) return;
     setList((prevList) => {
       const nextList = prevList.map(item =>
         getStableItemKey(item) === itemKey
@@ -3560,6 +3812,7 @@ export default function App() {
   };
 
   const updateItemName = async (itemKey, nextName) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const trimmed = (nextName || '').trim();
     let outcome = null;
     // Run synchronously so `outcome` is set before persistence / item-events (React 18 may defer plain setList updaters).
@@ -3604,6 +3857,7 @@ export default function App() {
 
   const renameTaxonomySuggestionById = (categoryId, suggestionId, trimmed) => {
     if (!categoryId || !suggestionId) return;
+    if (!assertWriteAllowed('gated_action')) return;
 
     const renameIdInList = (arr) => {
       if (!Array.isArray(arr) || !arr.length) return null;
@@ -3640,6 +3894,7 @@ export default function App() {
 
   const moveSuggestionToCategory = async (suggestionId, fromCatId, toCatId) => {
     if (!taxonomyBase || !suggestionId || !fromCatId || !toCatId || fromCatId === toCatId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const fromVis = visibleItemsV2[fromCatId] || [];
     const fromLib = libraryItemsV2[fromCatId] || [];
     const fromVisEntry = fromVis.find(i => i.id === suggestionId);
@@ -3680,6 +3935,7 @@ export default function App() {
 
   const removeSuggestionEverywhere = async (suggestionId, catId) => {
     if (!taxonomyBase || !suggestionId || !catId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const vis = visibleItemsV2[catId] || [];
     const lib = libraryItemsV2[catId] || [];
     const demoted = vis.find(i => i.id === suggestionId);
@@ -3707,6 +3963,7 @@ export default function App() {
     const catId = getItemCategoryId(item);
     const trimmed = String(item.name || '').trim();
     if (!catId || !trimmed || !taxonomyBase) return null;
+    if (!assertWriteAllowed('gated_action')) return null;
     const vis = visibleItemsV2[catId] || [];
     const lib = libraryItemsV2[catId] || [];
     const lower = trimmed.toLowerCase();
@@ -3725,6 +3982,7 @@ export default function App() {
   };
 
   const updateSuggestionQuantity = (itemKey, qty) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const nextDefaults = { ...quantityDefaults };
     const t = String(qty ?? '').trim();
     if (t) nextDefaults[itemKey] = t;
@@ -3943,6 +4201,7 @@ export default function App() {
   const doneCount = list.reduce((n, item) => n + (item.done ? 1 : 0), 0);
 
   const clearDone = () => {
+    if (!assertWriteAllowed('gated_action')) return;
     const newList = list.filter(item => !item.done);
     setList(newList); // Optimistic update
     save('shopping-list', newList);
@@ -3974,6 +4233,7 @@ export default function App() {
   }, [hasDone]);
 
   const removeItem = (id) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const target = list.find(item => item.id === id);
     const newList = list.filter(item => item.id !== id);
     setList(newList); // Optimistic update
@@ -3996,6 +4256,7 @@ export default function App() {
   };
 
   const addFromAisleSearch = (aisleId, suggestion) => {
+    if (!assertWriteAllowed('gated_action')) return;
     let catId = suggestion.catId;
     if (!catId) catId = (v2CategoriesByAisle[aisleId] || [])[0] || null;
     const categoryName = catId ? v2CategoryNameById[catId] : (aislesV2[aisleId]?.name || '');
@@ -4269,6 +4530,7 @@ export default function App() {
 
   const dismissSuggestion = async (key, action) => {
     if (!householdId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const existing = suggestionDismissals[key];
     const count = (existing?.dismissCount || 0) + 1;
     const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
@@ -4289,6 +4551,7 @@ export default function App() {
   /** Density nudge: `dismissCount` stores pinned-item threshold at dismiss (resurface when count ≥ threshold + 4). */
   const recordDensityDismissal = async (aisleId, thresholdAtDismiss) => {
     if (!householdId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const key = `density::${aisleId}`;
     const record = {
       action: 'density-dismissed',
@@ -4305,6 +4568,7 @@ export default function App() {
   };
 
   const enterPinEditMode = (aisleId, dormantHighlightSet = null) => {
+    if (!assertWriteAllowed('gated_action')) return;
     if (typeof window !== 'undefined') pinEditReturnScrollY.current = window.scrollY;
     setPinEditTriggerAisleId(aisleId);
     setPinEditDormantHighlightSet(dormantHighlightSet);
@@ -4369,6 +4633,7 @@ export default function App() {
   }, [quickAddMode, pinEditMode]);
 
   const handlePromotionAccept = async (candidate) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const catId = candidate.categoryId || categoryIdByName[(candidate.category || '').toLowerCase()];
     if (!catId || !taxonomyBase) return;
     const trimmed = (candidate.name || '').trim();
@@ -4391,6 +4656,7 @@ export default function App() {
   };
 
   const handlePromotionDismiss = (candidate) => {
+    if (!assertWriteAllowed('gated_action')) return;
     const key = `${candidate.categoryId || candidate.category}::${(candidate.name || '').toLowerCase()}::promote`;
     dismissSuggestion(key, 'not-interested');
     setPromotionCandidatesCache(prev => prev.filter(c => c.name !== candidate.name || c.category !== candidate.category));
@@ -4467,6 +4733,43 @@ export default function App() {
   }, [user?.uid, householdId, isAdmin]);
 
   useEffect(() => {
+    setPaywallOpener(setPaywallTrigger);
+    return () => setPaywallOpener(null);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = listenToSubscriptionChanges(() => {
+      setSubscriptionStatus(getSubscriptionStatus());
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!householdId) return;
+    let cancelled = false;
+    initSubscriptions(householdId)
+      .then(() => {
+        if (!cancelled) setSubscriptionStatus(getSubscriptionStatus());
+      })
+      .catch((err) => logger.error('Subscriptions', 'init failed', { error: err?.message }));
+    return () => { cancelled = true; };
+  }, [householdId]);
+
+  const handleSubscriptionChanged = useCallback(() => {
+    if (!householdId) return;
+    set(ref(database, `households/${householdId}/subscriptionUpdatedAt`), Date.now()).catch(() => {});
+  }, [householdId]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listener = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive) return;
+      refreshCustomerInfo().then(() => setSubscriptionStatus(getSubscriptionStatus()));
+    });
+    return () => { listener.then((h) => h.remove()); };
+  }, []);
+
+  useEffect(() => {
     if (!user?.uid || !householdId) {
       quickAddModeAnalyticsRef.current = null;
       return;
@@ -4492,6 +4795,11 @@ export default function App() {
     setCurrentPage('list');
     setQuickAddMode(false);
   }, []);
+
+  const enterAddMode = () => {
+    if (!assertWriteAllowed('gated_action')) return;
+    setQuickAddMode(true);
+  };
 
   const openLoginLegalView = useCallback((view) => {
     const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
@@ -4533,12 +4841,15 @@ export default function App() {
       await logger.flush();
       logger.setUserId(null);
       setAnalyticsUserId(null);
+      await shutdownSubscriptions();
+      setSubscriptionStatus(getSubscriptionStatus());
       // Clear IndexedDB auth before signOut so onAuthStateChanged never re-adopts a stale cached user
       await clearCachedUser();
       await firebaseSignOut(auth);
       setUser(null);
       setIsAdmin(false);
       setHouseholdId(null);
+      setHouseholdCreatedAt(null);
       setShowLoginExplicitly(true);
       setLoginLegalView(null);
       if (legalViewFromPathname(window.location.pathname)) {
@@ -4729,6 +5040,7 @@ export default function App() {
   const taxonomyBase = householdId ? `households/${householdId}/taxonomy` : null;
   async function taxoRenameAisle(aisleId, name) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const trimmed = (name ?? '').trim();
     const payload = stampRecord({ name: trimmed });
     setAislesV2(prev => ({
@@ -4739,6 +5051,7 @@ export default function App() {
   }
   async function taxoAddAisle(name) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const newRef = push(ref(database, `${taxonomyBase}/aisles`));
     const order = Object.keys(aislesV2).length;
     const trimmed = (name ?? '').trim();
@@ -4751,6 +5064,7 @@ export default function App() {
   }
   async function taxoDeleteAisle(aisleId) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const hasCategories = Object.values(categoriesV2).some((c) => c?.aisleId === aisleId);
     if (hasCategories) return;
     const nextAisles = { ...aislesV2 };
@@ -4760,6 +5074,7 @@ export default function App() {
   }
   async function taxoReorderAisles(orderedIds) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const updates = {};
     orderedIds.forEach((id, i) => { updates[`${taxonomyBase}/aisles/${id}`] = stampRecord({ ...(aislesV2[id] || {}), order: i }); });
     setAislesV2(prev => {
@@ -4773,6 +5088,7 @@ export default function App() {
   }
   async function taxoRenameCategory(catId, name) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const payload = stampRecord({ name });
     setCategoriesV2(prev => ({
       ...prev,
@@ -4782,6 +5098,7 @@ export default function App() {
   }
   async function taxoAddCategory(aisleId, name) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const newRef = push(ref(database, `${taxonomyBase}/categories`));
     const payload = stampRecord({ name, aisleId, hidden: false });
     setCategoriesV2(prev => ({
@@ -4792,6 +5109,7 @@ export default function App() {
   }
   async function taxoMoveCategory(catId, aisleId) {
     if (!taxonomyBase) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const payload = stampRecord({ aisleId, hidden: false });
     setCategoriesV2(prev => ({
       ...prev,
@@ -4801,6 +5119,7 @@ export default function App() {
   }
   async function taxoMergeCategory(fromCatId, intoCatId) {
     if (!taxonomyBase || !fromCatId || !intoCatId || fromCatId === intoCatId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const fromCat = categoriesV2[fromCatId];
     const toCat = categoriesV2[intoCatId];
     if (!fromCat || !toCat) return;
@@ -4887,6 +5206,7 @@ export default function App() {
   }
   async function taxoRemoveLibraryItem(catId, itemId) {
     if (!taxonomyBase || !catId || !itemId) return;
+    if (!assertWriteAllowed('gated_action')) return;
     const lib = libraryItemsV2[catId] || [];
     if (!lib.some(i => i.id === itemId)) return;
     const nextLib = lib.filter(i => i.id !== itemId);
@@ -4898,6 +5218,9 @@ export default function App() {
 
   const completeOnboarding = async () => {
     if (!householdId) return;
+    // Do not gate this behind premium: native users without entitlement would hit
+    // assertWriteAllowed → paywall_viewed analytics while PaywallSheet is not mounted
+    // (onboarding uses an early return), so Done would appear to do nothing.
     const startedAt = onboardingEnteredAtRef.current;
     try {
       await set(ref(database, `households/${householdId}/taxonomy/onboarding_completed`), true);
@@ -4912,24 +5235,57 @@ export default function App() {
 
   if (onboardingActive) {
     return (
-      <Onboarding
-        displayName={members?.[user.uid]?.displayName}
-        aisles={aislesV2}
-        categories={categoriesV2}
-        visibleItems={visibleItemsV2}
-        libraryItems={libraryItemsV2}
-        onRenameAisle={taxoRenameAisle}
-        onAddAisle={taxoAddAisle}
-        onDeleteAisle={taxoDeleteAisle}
-        onReorderAisles={taxoReorderAisles}
-        onRenameCategory={taxoRenameCategory}
-        onAddCategory={taxoAddCategory}
-        onMoveCategory={taxoMoveCategory}
-        onMergeCategory={taxoMergeCategory}
-        onComplete={completeOnboarding}
-      />
+      <>
+        <Onboarding
+          displayName={members?.[user.uid]?.displayName}
+          aisles={aislesV2}
+          categories={categoriesV2}
+          visibleItems={visibleItemsV2}
+          libraryItems={libraryItemsV2}
+          onRenameAisle={taxoRenameAisle}
+          onAddAisle={taxoAddAisle}
+          onDeleteAisle={taxoDeleteAisle}
+          onReorderAisles={taxoReorderAisles}
+          onRenameCategory={taxoRenameCategory}
+          onAddCategory={taxoAddCategory}
+          onMoveCategory={taxoMoveCategory}
+          onMergeCategory={taxoMergeCategory}
+          onComplete={completeOnboarding}
+        />
+        {paywallTrigger && (
+          <PaywallSheet
+            trigger={paywallTrigger}
+            status={subscriptionStatus}
+            onClose={() => setPaywallTrigger(null)}
+            onSubscriptionChanged={handleSubscriptionChanged}
+            onOpenLegal={(view) => {
+              const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
+              window.history.pushState({}, '', path);
+              setPaywallTrigger(null);
+              setCurrentPage(view);
+            }}
+          />
+        )}
+      </>
     );
   }
+
+  // Account page derived values
+  const accountDisplayName = members?.[user?.uid]?.displayName || user?.displayName || '';
+  const accountSub = subscriptionStatus;
+  const accountManageUrl = Capacitor.getPlatform() === 'ios'
+    ? 'https://apps.apple.com/account/subscriptions'
+    : 'https://play.google.com/store/account/subscriptions';
+  const currentPlatformStore = Capacitor.getPlatform() === 'ios' ? 'APP_STORE' : 'PLAY_STORE';
+  const subStore = accountSub?.store ?? null;
+  const subOnOtherPlatform = accountSub?.active && !accountSub?.inTrial
+    && subStore && subStore !== 'PROMOTIONAL' && subStore !== currentPlatformStore;
+  const subStoreName = subStore === 'APP_STORE' ? 'App Store'
+    : subStore === 'PLAY_STORE' ? 'Google Play'
+    : null;
+  const fmtDate = (ms) => ms
+    ? new Date(ms).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : '—';
 
   return (
     <>
@@ -5113,7 +5469,7 @@ export default function App() {
                       Shop
                     </button>
                     <button
-                      onClick={() => setQuickAddMode(true)}
+                      onClick={enterAddMode}
                       className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
                       style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
                       aria-pressed={quickAddMode}
@@ -5151,6 +5507,91 @@ export default function App() {
           ) : currentPage === 'account' ? (
             <div className="max-w-2xl mx-auto px-4 flex min-h-[calc(100dvh-5.5rem)] flex-col">
               <div className="space-y-3 shrink-0">
+
+                {/* Account info */}
+                <div className="bg-white rounded-2xl border border-gray-200 px-6 py-4 space-y-2">
+                  <div>
+                    <p className="font-semibold text-gray-800">{user?.email}</p>
+                    {accountDisplayName && <p className="text-sm text-gray-500">{accountDisplayName}</p>}
+                  </div>
+                  {householdId && (
+                    <div className="border-t border-gray-100 pt-2 space-y-1">
+                      <span className="text-xs text-gray-400 uppercase tracking-wide">Household</span>
+                      <button
+                        className="flex items-center gap-1.5 text-xs font-mono text-gray-500 hover:text-gray-700 transition-colors"
+                        onClick={() => navigator.clipboard?.writeText(householdId)}
+                        title="Tap to copy household ID"
+                      >
+                        {householdId}
+                        <Copy size={11} className="shrink-0 text-gray-400" />
+                      </button>
+                      {householdCreatedAt && (
+                        <p className="text-xs text-gray-400">Created {fmtDate(householdCreatedAt)}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Subscription status (native only) */}
+                {Capacitor.isNativePlatform() && (
+                  <div className="bg-white rounded-2xl border border-gray-200 px-6 py-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        {accountSub?.inTrial ? (
+                          <>
+                            <p className="font-semibold text-gray-800">Free trial</p>
+                            <p className="text-sm text-gray-500">Ends {fmtDate(accountSub.expiresAt)}</p>
+                          </>
+                        ) : accountSub?.active ? (
+                          <>
+                            <p className="font-semibold text-gray-800">Provisions Pro</p>
+                            <p className="text-sm text-gray-500">{accountSub.expiresAt ? `Renews ${fmtDate(accountSub.expiresAt)}` : 'Active'}</p>
+                          </>
+                        ) : accountSub?.loaded ? (
+                          <>
+                            <p className="font-semibold text-gray-800">No active subscription</p>
+                            <p className="text-sm text-gray-500">Your free trial has ended</p>
+                          </>
+                        ) : (
+                          <p className="text-sm text-gray-400">Loading…</p>
+                        )}
+                      </div>
+                      {accountSub?.active && !accountSub?.inTrial && (
+                        subOnOtherPlatform ? (
+                          <span className="text-xs text-gray-400 shrink-0 mt-0.5 text-right">
+                            via {subStoreName || 'other platform'}
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => window.open(accountManageUrl, '_system')}
+                            className="text-sm font-semibold shrink-0 mt-0.5"
+                            style={{ color: '#FF7A7A' }}
+                          >
+                            Manage
+                          </button>
+                        )
+                      )}
+                    </div>
+                    {accountSub?.loaded && (accountSub?.inTrial || !accountSub?.active) && (
+                      <div className="border-t border-gray-100 pt-3 space-y-2">
+                        <button
+                          onClick={() => openPaywall('account_subscribe')}
+                          className="w-full py-2.5 rounded-xl font-semibold text-sm text-white transition-colors"
+                          style={{ backgroundColor: '#FF7A7A' }}
+                        >
+                          Subscribe — $3.99/year
+                        </button>
+                        <button
+                          onClick={() => openPaywall('account_restore')}
+                          className="w-full py-2 text-sm font-semibold text-gray-500 hover:text-gray-700 transition-colors"
+                        >
+                          Restore purchases
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {isAdmin && (
                   <button onClick={() => setShowAdmin(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
                     <Shield size={20} />Invite Household Members
@@ -5185,6 +5626,7 @@ export default function App() {
                 </button>
               </div>
             </div>
+
           ) : currentPage === 'list' ? (
             <div className="max-w-2xl mx-auto px-4">
               {/* Shop/Plan: mobile = bottom fixed bar; desktop = top fixed bar (see block after header). */}
@@ -5197,7 +5639,7 @@ export default function App() {
                   <p className="text-sm text-gray-500 mb-5">Tap Plan to start building your list.</p>
                   <button
                     type="button"
-                    onClick={() => setQuickAddMode(true)}
+                    onClick={enterAddMode}
                     className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold"
                     style={{ backgroundColor: '#FF7A7A' }}
                   >
@@ -5637,7 +6079,7 @@ export default function App() {
                     Shop
                   </button>
                   <button
-                    onClick={() => setQuickAddMode(true)}
+                    onClick={enterAddMode}
                     className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-bold text-sm transition-all ${quickAddMode ? 'text-white' : 'text-gray-600'}`}
                     style={{ backgroundColor: quickAddMode ? '#FF7A7A' : 'transparent' }}
                     aria-pressed={quickAddMode}
@@ -5659,6 +6101,20 @@ export default function App() {
           isAdmin={isAdmin}
           onClose={() => setShowDeleteAccount(false)}
           onDeleted={() => setShowDeleteAccount(false)}
+        />
+      )}
+      {paywallTrigger && (
+        <PaywallSheet
+          trigger={paywallTrigger}
+          status={subscriptionStatus}
+          onClose={() => setPaywallTrigger(null)}
+          onSubscriptionChanged={handleSubscriptionChanged}
+          onOpenLegal={(view) => {
+            const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
+            window.history.pushState({}, '', path);
+            setPaywallTrigger(null);
+            setCurrentPage(view);
+          }}
         />
       )}
       {needsDisplayName && user && (

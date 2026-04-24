@@ -559,9 +559,62 @@ VITE_FIREBASE_MESSAGING_SENDER_ID
 VITE_FIREBASE_APP_ID
 VITE_RECAPTCHA_SITE_KEY          # App Check (reCAPTCHA v3); required in production
 # VITE_APPCHECK_DEBUG_TOKEN      # optional; dev-only fixed App Check debug token
+# VITE_FIREBASE_MEASUREMENT_ID    # optional; GA4 web
+# VITE_REVENUECAT_IOS_KEY         # native iOS RevenueCat public SDK key (appl_…)
+# VITE_REVENUECAT_ANDROID_KEY     # native Android RevenueCat public SDK key (goog_…)
+# VITE_REVENUECAT_OFFERING        # optional; override default offering id ("main")
+# VITE_STRIPE_CHECKOUT_URL        # optional; web Stripe checkout stub (web gating not enforced yet)
 ```
 
-These are **not secrets** (Firebase client config is public by design). Security is enforced by Firebase security rules, not by hiding the config. The reCAPTCHA **site key** is also public by design; it is still required for App Check to initialize in production.
+These are **not secrets** (Firebase client config is public by design). Security is enforced by Firebase security rules, not by hiding the config. The reCAPTCHA **site key** is also public by design; it is still required for App Check to initialize in production. RevenueCat **public SDK keys** are also safe to ship in the client.
+
+---
+
+## 11b. Subscriptions (RevenueCat + Firebase trial)
+
+`src/subscriptions.js` wraps `@revenuecat/purchases-capacitor`. Initialization uses **household ID** as the RevenueCat App User ID so the paid entitlement is per-household; all members of the household share the same subscription without mirroring state to RTDB.
+
+The **free trial** is **Firebase-tracked**, not store-tracked — the store products carry no intro/trial offer. Rationale: trial must be per-household (not per-Apple-ID / Google-account); store-side intro pricing would either grant duplicate trials per platform or fail the per-household model. PAYWALL_SPEC.md §1a is the normative description.
+
+### Identity / data
+
+| Field | Where | Notes |
+|-------|-------|-------|
+| RC App User ID | `Purchases.configure({ appUserID: householdId })` | Per-household, not per-uid. |
+| RC entitlement | **`Provisions Pro`** | Renamed from `premium` during WP-7 UAT. Identifies a *paid* subscription only. |
+| iOS product ID | `com.provisionsapp.shoppinglist.paid.annual` | Hardcoded fallback in `PREMIUM_SUBSCRIPTION_PRODUCT_IDS`. |
+| Android product ID | `provisions_paid:provisions-202604` | Hardcoded fallback in `PREMIUM_SUBSCRIPTION_PRODUCT_IDS`. |
+| Trial timestamp | `households/{hid}/trialEndsAt` | Unix ms. **Write-once** rule: `".write": "!data.exists()"`. Set to `now + TRIAL_DAYS` in `setupHouseholdForUser` for `signupType === 'new'`. Joiners do not start a new trial. |
+| Trial length | `TRIAL_DAYS = 60` (`src/subscriptions.js`) | Single source. Doc references should not duplicate the number elsewhere. |
+| Cross-member broadcast | `households/{hid}/subscriptionUpdatedAt` | Written by the buyer after a successful purchase / restore; every member listens and calls `refreshCustomerInfo()` to re-evaluate gating. RC remains the source of entitlement truth. |
+
+### Flow
+
+1. On native (`Capacitor.isNativePlatform()`), after household load:
+   - `initSubscriptions(householdId)` calls `Purchases.configure({ apiKey, appUserID: householdId })` and registers a `CustomerInfo` listener.
+   - App.jsx reads `households/{hid}/trialEndsAt` (with fallback to `createdAt + TRIAL_DAYS` for legacy households) and passes it to `setHouseholdTrialEndsAt(ts)` so the trial window is available to gating without a round-trip to RC.
+2. `isWriteAllowed()` is the single source of truth for write gating. Resolution order:
+   - **Web** → `true` (deliberate, temporary — no paywall on web until Stripe + RC web SDK ship).
+   - **Native, RC paid entitlement active** → `true` (per `customerHasPremiumAccess`).
+   - **Native, within Firebase trial window** → `true`.
+   - **Native, before first `customerInfo`** → `true` (avoids a 100–500 ms write block at signup / cold start).
+   - Otherwise → `false`.
+   - `customerHasPremiumAccess(info)` checks `entitlements.active["Provisions Pro"]` first, then falls back to `activeSubscriptions` containing a known premium SKU, then to `allPurchasedProductIdentifiers` containing a premium SKU **and** `latestExpirationDate` in the future. The fallback covers the known Xcode StoreKit 2 / restore quirk where `entitlements.active` is empty after a successful purchase.
+3. `assertWriteAllowed(trigger)` is the gate used at every handler site in `App.jsx` (see PAYWALL_SPEC.md §4). If blocked, it fires `openPaywall(trigger)` which renders the `PaywallSheet` component with `paywall_viewed` analytics. **Onboarding completion is intentionally not gated** — see PAYWALL_SPEC.md §4.4.
+4. Paywall actions: `purchaseSubscription()` calls `Purchases.purchasePackage({ aPackage })` with the offering's annual package (fallback: first `availablePackages`); `restorePurchases()` satisfies Apple's restore requirement. Web `purchaseSubscription()` delegates to `src/stripe-checkout.js` (stub — redirects to `VITE_STRIPE_CHECKOUT_URL` when configured). On success either calls back into App.jsx via `onSubscriptionChanged` → write `subscriptionUpdatedAt` so other members refresh.
+5. Cross-member broadcast: every signed-in member listens on `households/{hid}/subscriptionUpdatedAt`. On change, the client calls `refreshCustomerInfo()` and re-reads `getSubscriptionStatus()` so the UI reflects the household's entitlement without a restart.
+6. App-resume refresh: `@capacitor/app`'s `appStateChange → isActive` event triggers `refreshCustomerInfo()` so renewals / expirations / store-side cancellations that happened while backgrounded are picked up.
+7. Lifecycle analytics: `trial_started`, `subscription_started`, `subscription_cancelled`, `subscription_renewed` fire from the listener when the entitlement transitions.
+8. Sign-out calls `shutdownSubscriptions()` which removes the listener, `Purchases.logOut()`s, and clears `householdTrialEndsAt`; the next household's admin triggers a fresh `configure` / `logIn`.
+
+### Account page
+
+The Account page renders a subscription card on **native** only. It surfaces trial-end / renewal / "no active subscription" states, plus **Subscribe** / **Restore** buttons or a **Manage** deep link to the platform's subscriptions screen. When the entitlement's `store` does not match the current platform (e.g. user opens the Android build but bought on iOS), Manage is replaced with a non-clickable "via {App Store|Google Play}" hint to prevent deep-linking into the wrong store. See PAYWALL_SPEC.md §5.5.
+
+### Known gaps
+
+- **Web enforcement**: `isWriteAllowed()` returns `true` on web. Stripe checkout + RC web SDK gating are future work.
+- **Native App Check attestation**: still future work; current App Check path is web-only (reCAPTCHA v3).
 
 ---
 

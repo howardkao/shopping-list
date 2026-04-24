@@ -189,6 +189,16 @@ async function flushLogBatch() {
   }
 }
 
+/** Strip undefined values — Firebase RTDB rejects them and throws at write time. */
+function sanitizeData(obj) {
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = typeof v === 'object' && v !== null ? sanitizeData(v) : v;
+  }
+  return out;
+}
+
 /**
  * Core logging function
  */
@@ -200,7 +210,7 @@ async function log(level, category, message, data = {}) {
     level,
     category,
     message,
-    data,
+    data: sanitizeData(data),
     url: window.location.href,
     userAgent: navigator.userAgent
   };

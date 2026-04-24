@@ -22,5 +22,7 @@ export function humanizeAuthError(err) {
   if (err.code && AUTH_ERROR_COPY[err.code]) return AUTH_ERROR_COPY[err.code];
   // Plain Errors thrown by our own validation code (no Firebase error code) carry a human message.
   if (!err.code && err.message) return err.message;
+  // Firebase RTDB permission errors surface as strings like "PERMISSION_DENIED: Permission denied"
+  if (err.message && err.message.includes('PERMISSION_DENIED')) return 'Permission denied. Please try again or contact support.';
   return 'Something went wrong. Please try again.';
 }
