@@ -78,7 +78,8 @@ This document tracks the ongoing effort to productize this app for public, multi
 - [x] **Generic default suggestions** — seeded from code constants on first household setup — 2026-04-10
 - [x] **Account deletion + data cleanup** — 2026-04-10
 - [x] **Privacy Policy + Terms of Service** — 2026-04-17 (`src/LegalPages.jsx`; linked from login + Account)
-- [ ] **Legal: final Privacy + ToS pass before public or app-store launch** — Counsel reviews `src/LegalPages.jsx`; add real **operator legal name**, **contact email** (and support process), and **governing law / venue**; verify every described practice matches production (Firebase products in use, optional Analytics, log retention and admin visibility, account deletion, data locations). Update in-app copy after review.
+- [x] **Launch geo scope + legal pass** — 2026-04-25. US + Canada only launch; subscriptions via app stores only (no web/Stripe at launch). All three work packages shipped: WP-G1 (web trial enforcement + download-the-app paywall in `src/subscriptions.js` + `src/App.jsx`), WP-G2 (legal language in `src/LegalPages.jsx`), WP-G3 (CASL invite email footer in `invite-worker/src/emailTemplates.js`). Human gate: App Store Connect + Play Console territory restrictions to US + Canada — completed by user. Web post-trial: read-only mode matching native.
+- [ ] **Flip `APP_STORES_LIVE` to `true`** — `src/App.jsx:90`. One-line constant gating the PWA transition banner (WP-11) and the new web "download the app" CTAs in PaywallSheet + Account panel. Must flip when iOS App Store and Google Play approvals arrive, otherwise web users on an expired trial see "Coming soon to the iOS App Store and Google Play" instead of working store links. Also verify `APP_STORE_URL` and `GOOGLE_PLAY_URL` placeholders point to the real listings before flipping.
 - [x] **Firebase App Check** — client: reCAPTCHA v3 + `initializeAppCheck` in `src/firebase.js` (2026-04-17). **Console:** register web app in App Check, monitor, then enforce RTDB (optionally Auth); register dev debug tokens.
 - [x] **Google + Apple SSO** — web (WP-1, 2026-04-18) + native (WP-5, 2026-04-23). Email/password, Google, and Apple sign-in; account linking for SSO-to-email merges; reauthentication for account deletion.
 - [x] **Subscription system (RevenueCat)** — native paywall, read-only gating, RevenueCat SDK wired with householdId as App User ID (`src/subscriptions.js`, `src/App.jsx`, `PaywallSheet`). 2026-04-22, branch `native/subscriptions` (WP-7). Web Stripe flow + RC web SDK enforcement remain stubbed.
@@ -107,7 +108,7 @@ This document tracks the ongoing effort to productize this app for public, multi
 - [x] **Desktop layout: Clear X done positioning** — moved chip to render after the Shop/Plan toggle on desktop; no longer pushes toggle down into first aisle — 2026-04-24
 - [x] **Desktop autocomplete keyboard navigation** — ArrowDown/ArrowUp navigate suggestions (wraps), Enter selects highlighted item (defaults to first if none highlighted), Escape clears; highlighted row styled `bg-gray-100` — 2026-04-24
 - [x] **Desktop shop/plan toggle visibility during autocomplete** — desktop toggle no longer gated on `!keyboardInputFocused`; mobile toggle unchanged — 2026-04-24
-- [ ] **Web subscription status display** — Accounts page should show trial/subscription status similar to native apps (currently stubbed). Adjust for web-only constraints: remove "restore purchase" option, show message on purchase attempt that subscriptions come via app stores (or "coming soon" until app store launch). Implement once Stripe + RC web SDK timeline is finalized.
+- [ ] **Web subscription status display** — Accounts page should show trial/subscription status similar to native apps (currently stubbed). Adjust for web-only constraints: remove "restore purchase" option, show message on purchase attempt that subscriptions come via app stores (or "coming soon" until app store launch). Stripe web payments are designed and specced (`STRIPE_SPEC.md`, `STRIPE_EXECUTION_PLAN.md`) but **shelved** pending post-launch traction; geo-restricted to US + Canada via Cloudflare `CF-IPCountry`.
 
 ### Nice-to-Have / Post-Launch
 
@@ -151,6 +152,44 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ---
 
 ## Session Log
+
+### 2026-04-25 — WP-G1: Web trial enforcement + download-the-app paywall
+
+- **Branch:** `stripe/spec` (changes layered onto current branch; `LAUNCH_GEO_SCOPE_PLAN.md` calls for `geo-scope/web-paywall` — split before merge).
+- **`src/subscriptions.js`:**
+  - `isWriteAllowed()` — dropped `!isNativePlatform → return true` web bypass. Trial-window check now runs first on every platform; web after trial is blocked. Native pre-RC-init grace branch gated to `isNativePlatform` so web doesn't accidentally inherit it (since `latestCustomerInfo` is permanently null on web).
+  - `getSubscriptionStatus()` — dropped web early return. `platform` field now derived from `Capacitor.isNativePlatform()` rather than hardcoded; web during trial returns `{ active: true, inTrial: true, …, platform: 'web' }`; web after trial returns `{ active: false, loaded: true, platform: 'web' }`. The "loaded:false pre-init" branch is gated to native.
+  - `purchaseSubscription()` — web returns `{ success: false, webUnsupported: true }` instead of dynamic-importing `stripe-checkout.js`. The Stripe checkout file is now unused but left in place (Stripe spec is shelved per `STRIPE_SPEC.md`).
+- **`src/App.jsx`:**
+  - Added module-level `APP_STORES_LIVE` flag + `APP_STORE_URL` / `GOOGLE_PLAY_URL` constants. Replaces the hardcoded `return;` that gated WP-11's PWA transition banner — same flag now controls the new web "download the app" CTAs in PaywallSheet and the Account panel. Flip to `true` when iOS App Store + Google Play approvals arrive.
+  - New shared `StoreLinks` component renders App Store + Google Play download buttons (or a "Coming soon to the iOS App Store and Google Play" placeholder when `APP_STORES_LIVE === false`).
+  - PaywallSheet web variant — headline "Get Provisions on your phone", explanatory subhead, store CTAs in place of Subscribe + Restore. Native variant unchanged.
+  - Account panel — removed `{Capacitor.isNativePlatform() && (...)}` gate so the subscription card now renders on web. Web variants:
+    - In trial → "Free trial — Ends {date}" (no Subscribe button).
+    - Active paid (rare on web) → "Provisions Pro — Manage via your device's app".
+    - Expired / no subscription → "Your trial has ended. Download the iOS or Android app to subscribe." + `<StoreLinks />`.
+- **Verified:** `npm run build` clean. Vitest unit tests (33) all pass; the 3 failing suites are pre-existing infrastructure issues (rules.test.js needs Firebase emulator; voice-mcp test files are 0-test stubs).
+- **Not done:** WP-G2 (legal language) and WP-G3 (CASL invite footer) are still open. Human gate (App Store Connect + Play Console territory restriction) is pre-submission.
+
+### 2026-04-25 — WP-S0: Stripe web subscription spec
+
+- **Branch:** `stripe/spec` (off `main`).
+- **Scope:** Formal spec documents for the Stripe web subscription rollout. Decisions were pre-made in `STRIPE_EXECUTION_PLAN.md`; this session translated them into normative spec text for downstream WP agents.
+- **`PAYWALL_SPEC.md` extended to v1.2:** Added §7 "Web Stripe integration" (§§7.1–7.7) covering architecture, `isWriteAllowed()` resolution table on web, paywall behavior (admin vs non-admin), Account panel states for all store/platform combinations, return-from-Checkout flow (success + cancel paths, webhook race handling), trial behavior on web, and analytics events. Renumbered former §7–10 to §8–11.
+- **`STRIPE_SPEC.md` created (new file):** Server contract for the `stripe-worker` Cloudflare Worker:
+  - §1: Auth (Firebase ID token, CORS policy — mirrors invite-worker pattern).
+  - §2: `POST /v1/checkout-session` — admin-only; creates Stripe Checkout session with `client_reference_id = householdId`; returns 403 + `adminEmail` for non-admins.
+  - §3: `POST /v1/portal-session` — admin-only; looks up `households/{hid}/stripeCustomerId` (written on first checkout success); creates Billing Portal session.
+  - §4: `GET /v1/subscription-status` — any member; calls RC REST API server-side; returns normalized `{ active, inTrial, expiresAt, store, productId }` shape; 30s in-memory cache per householdId; degrades gracefully if RC is down.
+  - §5: Stripe → RC webhook — no worker receiver; RC's built-in Stripe integration handles it directly.
+  - §6: Secrets inventory (worker secrets via `wrangler secret put` + client-side `VITE_STRIPE_*` vars).
+  - §7: Failure modes matrix.
+  - §8: Cross-reference table — every spec element mapped to implementing WP (WP-S1 through WP-S5).
+  - §9: Legal copy checklist (counsel review gate items).
+- **Output sanity-check answers:**
+  1. *"Can a non-admin web user trigger checkout?"* — No. Worker returns 403 with `adminEmail`; PaywallSheet renders "Ask {adminEmail} to upgrade" and suppresses Subscribe CTA.
+  2. *"What happens if Stripe webhook fails?"* — RC retries per Stripe's retry schedule; user sees stale `active: false` from `/v1/subscription-status` until the next webhook delivery or manual `subscriptionUpdatedAt` broadcast triggers a re-fetch.
+  3. *"What does the Account panel show for a user who paid on iOS but is using web?"* — "Provisions Pro — Renews {date}" with a "via App Store" hint; Manage button hidden/disabled (portal would deep-link into the wrong store).
 
 ### 2026-04-24 — Pre-launch checklist triage + admin discovery + UAT corrections
 - **Must-Have list triage:** Items 4 (account deletion edge case) and 6 (offline sync) confirmed already resolved; items 2 (household membership management) and 5 (admin promotion) demoted to Should-Have as not launch-blocking. Remaining Must-Have blockers: Legal final pass (hard gate), and (now shipped) Admin discovery + UAT corrections.
@@ -780,3 +819,8 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - Evaluated business model options; leading toward free tier + freemium
 - Evaluated iOS vs Android distribution; defer iOS App Store, pursue PWA + Android TWA
 - **No code changes made this session; planning only**
+
+### 2026-04-25 — Legal copy alignment pass
+- **`src/LegalPages.jsx`:** Updated the effective date to April 25, 2026; expanded scope to web + native apps; fixed technical log retention to 21 days; changed analytics wording to reflect production Firebase Analytics; made current subscription language explicit that this deployment does not offer paid subscriptions yet; added a 60-day household trial section; removed arbitration language in favor of informal dispute resolution plus California governing law / venue.
+- **`public/account-deletion.html`:** Added iPhone to the deletion instructions and changed the retention note to match the 21-day log policy.
+- **Status:** Copy now tracks the current volunteer-testing deployment more closely. Public launch gate remains open until the operator legal name and any other counsel-required details are finalized.

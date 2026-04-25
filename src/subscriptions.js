@@ -187,12 +187,9 @@ export async function shutdownSubscriptions() {
 
 /** Returns { active, inTrial, expiresAt } from local cache. */
 export function getSubscriptionStatus() {
-  if (!Capacitor.isNativePlatform()) {
-    // Web: entitlement enforcement not wired (Stripe + RC web SDK is future work).
-    return { active: true, inTrial: false, expiresAt: null, loaded: false, platform: 'web' };
-  }
+  const platform = Capacitor.isNativePlatform() ? 'native' : 'web';
 
-  // RC takes precedence: if a paid subscription is already active, show that — not trial.
+  // RC takes precedence on native: if a paid subscription is already active, show that — not trial.
   if (latestCustomerInfo && customerHasPremiumAccess(latestCustomerInfo)) {
     const ent = latestCustomerInfo.entitlements?.active?.[ENTITLEMENT_ID] || null;
     let expiresAt = ent?.expirationDateMillis ?? null;
@@ -202,36 +199,36 @@ export function getSubscriptionStatus() {
     }
     // 'APP_STORE' | 'PLAY_STORE' | 'STRIPE' | 'PROMOTIONAL' | null
     const store = ent?.store ?? null;
-    return { active: true, inTrial: false, expiresAt, store, loaded: true, platform: 'native' };
+    return { active: true, inTrial: false, expiresAt, store, loaded: true, platform };
   }
 
   // No active paid subscription — check the Firebase trial window.
   if (householdTrialEndsAt !== null && Date.now() < householdTrialEndsAt) {
-    return { active: true, inTrial: true, expiresAt: householdTrialEndsAt, loaded: true, platform: 'native' };
+    return { active: true, inTrial: true, expiresAt: householdTrialEndsAt, loaded: true, platform };
   }
 
-  // Trial over and no RC entitlement.
-  if (!latestCustomerInfo) {
-    return { active: false, inTrial: false, expiresAt: null, loaded: false, platform: 'native' };
+  // Native pre-RC-init: don't claim "no subscription" until we hear from RC.
+  if (platform === 'native' && !latestCustomerInfo) {
+    return { active: false, inTrial: false, expiresAt: null, loaded: false, platform };
   }
-  return { active: false, inTrial: false, expiresAt: null, loaded: true, platform: 'native' };
+  return { active: false, inTrial: false, expiresAt: null, loaded: true, platform };
 }
 
 /**
  * Single source-of-truth for client write gating.
  *
  * Policy:
- * - Web: allow (no enforcement until Stripe/web SDK lands).
- * - Within trial window (household.trialEndsAt): allow regardless of RC state.
+ * - Within trial window (household.trialEndsAt): allow on every platform.
+ * - Native with premium entitlement: allow.
  * - Native before first customerInfo response: allow (avoids blocking signup/onboarding
  *   during the ~hundreds-of-ms RC init window; expired users get gated once info arrives).
- * - Native with loaded customerInfo: allow only when premium access is present
- *   (entitlement active, or active subscription SKU / valid expiration fallback).
+ * - Web after trial: blocked. Web cannot purchase a subscription at launch — users must
+ *   subscribe via the iOS or Android app, where RC enforces entitlement on next launch.
  */
 export function isWriteAllowed() {
-  if (!Capacitor.isNativePlatform()) return true;
-  if (latestCustomerInfo && customerHasPremiumAccess(latestCustomerInfo)) return true;
   if (householdTrialEndsAt !== null && Date.now() < householdTrialEndsAt) return true;
+  if (!Capacitor.isNativePlatform()) return false;
+  if (latestCustomerInfo && customerHasPremiumAccess(latestCustomerInfo)) return true;
   if (!latestCustomerInfo) return true;
   return false;
 }
@@ -289,12 +286,12 @@ async function findAnnualPackage() {
 
 /**
  * Triggers the native purchase sheet for the annual package.
- * On web, delegates to Stripe checkout stub (future work).
+ * Web has no payment path at launch (US + Canada launch is store-only) — the paywall
+ * renders a download-the-app CTA instead, so this returns a flag rather than throwing.
  */
 export async function purchaseSubscription() {
   if (!Capacitor.isNativePlatform()) {
-    const { redirectToStripeCheckout } = await import('./stripe-checkout.js');
-    return redirectToStripeCheckout();
+    return { success: false, webUnsupported: true };
   }
   const pkg = await findAnnualPackage();
   try {

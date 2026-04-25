@@ -58,7 +58,7 @@ export const inviteEmailHtml = ({ joinUrl, expiresAt }) => `<!DOCTYPE html>
           <tr>
             <td style="padding:20px 40px;border-top:1px solid #f3f4f6;">
               <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">
-                If you weren't expecting this, you can safely ignore it. This link works only once.
+                If you weren't expecting this invite, you can safely ignore this email — no account will be created unless you click the link above. This link works only once and expires on the date shown.
               </p>
             </td>
           </tr>
@@ -79,5 +79,5 @@ ${joinUrl}
 
 This invite expires ${formatExpiry(expiresAt)}.
 
-If you weren't expecting this, you can safely ignore it. This link works only once.
+If you weren't expecting this invite, you can safely ignore this email — no account will be created unless you click the link above. This link works only once.
 `;
