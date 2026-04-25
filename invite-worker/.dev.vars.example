@@ -1,0 +1,15 @@
+# Cloudflare Worker local/dev variables — copy to .dev.vars (gitignored)
+#
+# Firebase service account — same project as the main app.
+# Firebase Console → Project settings → Service accounts → Generate new private key.
+FIREBASE_DATABASE_URL=https://your_project_id-default-rtdb.firebaseio.com
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your_project_id.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+
+# Resend — send-only API key. Add as a Wrangler secret in production:
+#   wrangler secret put RESEND_API_KEY
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
+
+# These vars are set in wrangler.toml for production; override here for local dev if needed.
+# INVITE_FROM_EMAIL=invite@myprovisions.app
+# APP_BASE_URL=https://myprovisions.app

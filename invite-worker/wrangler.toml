@@ -1,0 +1,10 @@
+name = "provisions-invite-worker"
+main = "src/index.js"
+compatibility_date = "2026-03-27"
+
+[vars]
+INVITE_FROM_EMAIL = "invite@myprovisions.app"
+APP_BASE_URL = "https://myprovisions.app"
+
+[observability]
+enabled = true
