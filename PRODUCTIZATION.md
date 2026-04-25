@@ -112,7 +112,7 @@ This document tracks the ongoing effort to productize this app for public, multi
 ### Nice-to-Have / Post-Launch
 
 - [ ] **Firestore migration for household data** — more cost-efficient at 10k+ households; requires significant refactor
-- [x] **Email invites (WP-A)** — frontend: URL deep link handling for `?code=` parameter, pre-fills join form, dismissable notice for authenticated users. Plan in `INVITE_EMAIL_PLAN.md` (5 work packages; WP-A ✓/B+C/E parallel, WP-D after WP-B).
+- [x] **Email invites (WP-A–E complete)** — full email invite flow: URL deep link handling (WP-A), Cloudflare Worker + Resend send endpoint (WP-B), email template (WP-C), admin UI email input + send flow (WP-D), RTDB inviteeEmail rules (WP-E). Plan in `INVITE_EMAIL_PLAN.md`.
 - [ ] **Push notifications** — notify household members when the list changes (Capacitor plugin: `@capacitor/push-notifications`)
 - [ ] **Push notifications** — notify household members when the list changes (limited on iOS PWA pre-16.4)
 
@@ -763,6 +763,14 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **`src/App.jsx`:** Implemented frontend detection and pre-fill for email invite links with `?code=` parameter. Extract code synchronously at App mount, set `loginInitialMode='signup'`, `loginInitialSignupType='join'`, and `loginInitialInviteCode` to pre-fill the join form. After auth resolves, if user is authenticated and has a household, show dismissable notice "You're already in a household — this invite link won't work while signed in." Clear `?code=` from URL with `window.history.replaceState` to avoid re-processing.
 - **Files:** `src/App.jsx` only (component signature updates for `Login` and `AuthLoginScreen` to accept `initialSignupType` and `initialInviteCode` props; new state for dismissable invite notice; new useEffect to clear URL and handle authenticated user cases).
 - **Status:** WP-A complete and ready for integration with WP-B (Worker `/send-invite` endpoint) and WP-C (email template). WP-B, WP-C, WP-D, WP-E remain to be scheduled.
+
+### 2026-04-25 — Email invites WP-B/C/D/E: full send flow
+- **`invite-worker/`:** New Cloudflare Worker scaffold (`wrangler.toml`, `src/index.js`, `src/firebaseRealtime.js`, `.dev.vars.example`). `POST /send-invite` validates the invite code against RTDB global index, sends via Resend, then writes `inviteeEmail` back to both RTDB invite code paths.
+- **`invite-worker/src/emailTemplates.js`:** HTML + plain-text email template. Coral accent (#FF7A7A), single-column layout, "Accept Invite" CTA button, expiry note, footer disclaimer.
+- **`database.rules.json`:** Added optional `inviteeEmail` field (max 254 chars) to both `/inviteCodes/$code` and `/households/$hid/inviteCodes/$code`. Also included field-level validation hardening across shopping-list items, taxonomy, logs, and other paths (from a prior untracked pass).
+- **`src/App.jsx`:** WP-D — email input in AdminPanel above "Create New Code" button. If filled, generates code as normal then calls Worker; shows "Sending invite…" state, "Invite sent to {email}" on success, or error with fallback-to-copy message. Existing codes with `inviteeEmail` show "Sent to: …" in the list. No changes to delete, copy, or expiry display.
+- **`.env.example`:** Added `VITE_INVITE_WORKER_URL`.
+- **Human gate remaining:** Deploy `invite-worker/` (`wrangler deploy` from `invite-worker/`), set `RESEND_API_KEY` and `FIREBASE_SERVICE_ACCOUNT_KEY` as Wrangler secrets, set `FIREBASE_DATABASE_URL` and `FIREBASE_CLIENT_EMAIL`/`FIREBASE_PRIVATE_KEY` as vars, set `VITE_INVITE_WORKER_URL` in `.env`. Then `firebase deploy --only database` for the rules.
 
 ### 2026-04-10 — Initial productization planning
 - Discussed what's needed to go from single-household personal app to public multi-household product

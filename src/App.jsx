@@ -1639,6 +1639,10 @@ function AdminPanel({ onClose, householdId, members, adminUid }) {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [copiedCode, setCopiedCode] = useState(null);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteSentTo, setInviteSentTo] = useState(null);
+  const [inviteError, setInviteError] = useState(null);
 
   useEffect(() => {
     if (!householdId) return;
@@ -1670,16 +1674,41 @@ function AdminPanel({ onClose, householdId, members, adminUid }) {
     if (!householdId) return;
     if (!assertWriteAllowed('gated_action')) return;
     setCreating(true);
+    setInviteError(null);
+    setInviteSentTo(null);
     const code = generateCode();
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
     const codeData = { code, expiresAt: expiresAt.toISOString(), used: false, createdAt: Date.now(), householdId };
 
-    // Write to household (for admin panel display)
     await set(ref(database, `households/${householdId}/inviteCodes/${code}`), codeData);
-    // Write to global lookup index (for signup validation without auth)
     await set(ref(database, `inviteCodes/${code}`), { householdId, expiresAt: expiresAt.toISOString(), used: false, createdAt: Date.now() });
     trackEvent('invite_code_generated', {});
+
+    const emailToSend = inviteEmail.trim();
+    if (emailToSend) {
+      setInviteSending(true);
+      try {
+        const workerUrl = (import.meta.env.VITE_INVITE_WORKER_URL || '').replace(/\/$/, '');
+        const res = await fetch(`${workerUrl}/send-invite`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, inviteeEmail: emailToSend, householdId }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          setInviteSentTo(emailToSend);
+          setInviteEmail('');
+        } else {
+          setInviteError(data.error || 'Failed to send invite email.');
+        }
+      } catch {
+        setInviteError('Could not reach invite service. Copy the code below and share it manually.');
+      } finally {
+        setInviteSending(false);
+      }
+    }
+
     setCreating(false);
   };
 
@@ -1725,9 +1754,23 @@ function AdminPanel({ onClose, householdId, members, adminUid }) {
             <div className="flex items-center gap-2 mb-3">
               <span className="text-sm font-bold text-gray-500 uppercase tracking-wide">Invite codes</span>
             </div>
-          <button onClick={createInvitation} disabled={creating} className="w-full text-white py-3.5 rounded-xl font-bold hover:opacity-90 disabled:bg-gray-300 flex items-center justify-center gap-2 mb-6 transition-opacity" style={{ backgroundColor: creating ? undefined : '#10B981' }}>
-            <Plus size={20} strokeWidth={2.5} />{creating ? 'Creating...' : 'Create New Code'}
+          <input
+            type="email"
+            value={inviteEmail}
+            onChange={(e) => setInviteEmail(e.target.value)}
+            placeholder="Invitee's email (optional)"
+            className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-gray-400 mb-3"
+          />
+          <button onClick={createInvitation} disabled={creating || inviteSending} className="w-full text-white py-3.5 rounded-xl font-bold hover:opacity-90 disabled:bg-gray-300 flex items-center justify-center gap-2 mb-3 transition-opacity" style={{ backgroundColor: (creating || inviteSending) ? undefined : '#10B981' }}>
+            <Plus size={20} strokeWidth={2.5} />
+            {inviteSending ? 'Sending invite…' : creating ? 'Creating…' : 'Create New Code'}
           </button>
+          {inviteSentTo && (
+            <p className="text-sm text-green-600 font-medium text-center mb-3">Invite sent to {inviteSentTo}</p>
+          )}
+          {inviteError && (
+            <p className="text-sm text-red-500 font-medium text-center mb-3">{inviteError}</p>
+          )}
           {loading ? (
             <div className="text-center py-8 text-gray-500 font-medium">Loading...</div>
           ) : invitations.length === 0 ? (
@@ -1748,6 +1791,9 @@ function AdminPanel({ onClose, householdId, members, adminUid }) {
                     </div>
                   </div>
                   <p className="text-sm text-gray-600 font-medium">Expires: {new Date(inv.expiresAt).toLocaleString()}</p>
+                  {inv.inviteeEmail && (
+                    <p className="text-xs text-gray-400 mt-0.5">Sent to: {inv.inviteeEmail}</p>
+                  )}
                 </div>
               ))}
             </div>
@@ -3151,28 +3197,50 @@ export default function App() {
         // Retry a few times: onAuthStateChanged fires immediately after createUserWithEmailAndPassword,
         // before the signup handler has finished writing the user record to the DB.
         void (async () => {
-          let isAdminUser = false;
-          let userHouseholdId = null;
+          // Seed from cache first so taxonomy/isAdmin gating render immediately offline.
+          // Without this, the network `get`s below hang on cold-load + airplane mode and
+          // householdId is never set, leaving aislesV2/categoriesV2 empty.
+          const cachedSeed = await loadCachedUser().catch(() => null);
+          const seededFromCache = cachedSeed?.uid === firebaseUser.uid;
+          let userHouseholdId = seededFromCache ? (cachedSeed.householdId || null) : null;
+          let isAdminUser = seededFromCache ? !!cachedSeed.isAdmin : false;
+          if (seededFromCache) {
+            setIsAdmin(isAdminUser);
+            if (userHouseholdId) setHouseholdId(userHouseholdId);
+          }
+
+          // Bound RTDB reads so an offline session can't leave this IIFE pending forever.
+          // 5s is generous enough for fresh-signup races (see retry loop) while keeping
+          // recovery snappy when the network is genuinely down.
+          const withTimeout = (p, ms) => Promise.race([
+            p,
+            new Promise((_, reject) => setTimeout(
+              () => reject(new Error(`network read timed out after ${ms}ms`)),
+              ms
+            )),
+          ]);
+
           try {
-            let userRecord = await get(ref(database, `users/${firebaseUser.uid}`));
+            let userRecord = await withTimeout(get(ref(database, `users/${firebaseUser.uid}`)), 5000);
             let retries = 0;
             while (!userRecord.val() && retries < 4) {
               await new Promise(r => setTimeout(r, 120));
-              userRecord = await get(ref(database, `users/${firebaseUser.uid}`));
+              userRecord = await withTimeout(get(ref(database, `users/${firebaseUser.uid}`)), 5000);
               retries++;
               if (!userRecord.val()) {
                 logger.debug('Auth', 'User record not yet written, retrying', { retries });
               }
             }
-            userHouseholdId = userRecord.val()?.householdId || null;
+            const fetchedHouseholdId = userRecord.val()?.householdId || null;
+            if (fetchedHouseholdId) userHouseholdId = fetchedHouseholdId;
             if (!userRecord.val()?.displayName) {
               setNeedsDisplayName(true);
             }
             if (userHouseholdId) {
               const [adminSnap, trialSnap, createdAtSnap] = await Promise.all([
-                get(ref(database, `households/${userHouseholdId}/adminUid`)),
-                get(ref(database, `households/${userHouseholdId}/trialEndsAt`)),
-                get(ref(database, `households/${userHouseholdId}/createdAt`)),
+                withTimeout(get(ref(database, `households/${userHouseholdId}/adminUid`)), 5000),
+                withTimeout(get(ref(database, `households/${userHouseholdId}/trialEndsAt`)), 5000),
+                withTimeout(get(ref(database, `households/${userHouseholdId}/createdAt`)), 5000),
               ]);
               isAdminUser = adminSnap.val() === firebaseUser.uid;
               const rawTrialEndsAt = trialSnap.val();
@@ -3185,13 +3253,13 @@ export default function App() {
               setHouseholdTrialEndsAt(effectiveTrialEndsAt);
             }
           } catch (err) {
-            logger.error('Auth', 'Failed to load household/admin status, using cached value', {
+            // Cached seed (if any) is already applied; the live listeners below will
+            // reconcile once the network returns.
+            logger.warn('Auth', 'Network household read failed/timed out; using cached values', {
               error: err.message,
-              code: err.code
+              code: err.code,
+              hadCachedSeed: seededFromCache
             });
-            const cachedUser = await loadCachedUser().catch(() => null);
-            isAdminUser = cachedUser?.isAdmin || false;
-            userHouseholdId = cachedUser?.householdId || null;
           }
           setIsAdmin(isAdminUser);
           setHouseholdId(userHouseholdId);
