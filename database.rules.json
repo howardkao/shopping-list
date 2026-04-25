@@ -23,14 +23,14 @@
 
         "adminUid":  { ".validate": "newData.isString() && newData.val().length <= 50" },
         "createdAt": { ".validate": "newData.isNumber()" },
+        "subscriptionUpdatedAt": { ".validate": "newData.isNumber()" },
         "trialEndsAt": {
-          ".write": "!data.exists()",
-          ".validate": "newData.isNumber()"
+          ".validate": "newData.isNumber() && (!data.exists() || data.val() == newData.val())"
         },
 
         "taxonomy": {
           "migrated":     { ".validate": "newData.isBoolean()" },
-          "migrated_at":  { ".validate": "newData.isNumber()" },
+          "migrated_at":  { ".validate": "newData.isNumber() || (newData.hasChild('.sv') && newData.child('.sv').val() == 'timestamp')" },
           "onboarding_completed": { ".validate": "newData.isBoolean()" },
 
           "aisles": {
@@ -57,21 +57,57 @@
           },
 
           "visible-items": {
-            "$categoryId": { ".validate": "newData.val() == null || newData.hasChildren()" }
+            "$categoryId": {
+              ".validate": "newData.val() == null || (newData.hasChildren() && $categoryId.length >= 1 && $categoryId.length <= 50)",
+              "$idx": {
+                "id":        { ".validate": "newData.isString() && newData.val().length <= 50" },
+                "name":      { ".validate": "newData.isString() && newData.val().length <= 200" },
+                "createdAt": { ".validate": "newData.val() == null || newData.isNumber()" },
+                "updatedAt": { ".validate": "newData.val() == null || newData.isNumber()" },
+                "updatedBy": { ".validate": "newData.val() == null || (newData.isString() && newData.val().length <= 50)" },
+                "$other":    { ".validate": false }
+              }
+            }
           },
 
           "library": {
-            "$categoryId": { ".validate": "newData.val() == null || newData.hasChildren()" }
+            "$categoryId": {
+              ".validate": "newData.val() == null || (newData.hasChildren() && $categoryId.length >= 1 && $categoryId.length <= 50)",
+              "$idx": {
+                "id":        { ".validate": "newData.isString() && newData.val().length <= 50" },
+                "name":      { ".validate": "newData.isString() && newData.val().length <= 200" },
+                "createdAt": { ".validate": "newData.val() == null || newData.isNumber()" },
+                "updatedAt": { ".validate": "newData.val() == null || newData.isNumber()" },
+                "updatedBy": { ".validate": "newData.val() == null || (newData.isString() && newData.val().length <= 50)" },
+                "$other":    { ".validate": false }
+              }
+            }
           },
 
           "$other": { ".validate": false }
         },
 
-        "shopping-list":    { ".validate": "newData.val() == null || newData.isString() || newData.hasChildren()" },
+        "shopping-list": {
+          "$itemId": {
+            ".validate": "newData.val() == null || (newData.hasChildren() && $itemId.length >= 1 && $itemId.length <= 120 && $itemId.matches(/^[0-9a-zA-Z_-]+$/))",
+            "id":         { ".validate": "newData.isString() && newData.val().length <= 120" },
+            "itemKey":    { ".validate": "newData.isString() && newData.val().length <= 80" },
+            "name":       { ".validate": "newData.isString() && newData.val().length <= 200" },
+            "category":   { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "categoryId": { ".validate": "newData.val() == null || (newData.isString() && newData.val().length <= 50)" },
+            "quantity":   { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "done":       { ".validate": "newData.isBoolean()" },
+            "addedBy":    { ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 50) || newData.val() == null" },
+            "addedAt":    { ".validate": "newData.isNumber()" },
+            "updatedAt":  { ".validate": "newData.isNumber()" },
+            "updatedBy":  { ".validate": "newData.isString() && newData.val().length <= 50" },
+            "$other":     { ".validate": false }
+          }
+        },
 
         "quantity-defaults": {
           "$key": {
-            ".validate": "newData.isString() && newData.val().length <= 100"
+            ".validate": "newData.isString() && newData.val().length <= 100 && $key.length >= 1 && $key.length <= 200"
           }
         },
 
@@ -120,6 +156,7 @@
 
         "suggestion-dismissals": {
           "$key": {
+            ".validate": "$key.length >= 1 && $key.length <= 400 && (newData.val() == null || newData.hasChildren())",
             "action":         { ".validate": "newData.isString() && newData.val().length <= 30" },
             "dismissedAt":    { ".validate": "newData.isNumber()" },
             "resurfaceAfter": { ".validate": "newData.val() == null || newData.isNumber()" },
@@ -136,9 +173,10 @@
             "expiresAt":   { ".validate": "newData.isString() && newData.val().length <= 50" },
             "used":        { ".validate": "newData.isBoolean()" },
             "usedBy":      { ".validate": "newData.isString() && newData.val().length <= 200" },
-            "usedAt":      { ".validate": "newData.isNumber()" },
-            "createdAt":   { ".validate": "newData.isNumber()" },
-            "$other":      { ".validate": false }
+            "usedAt":        { ".validate": "newData.isNumber()" },
+            "createdAt":     { ".validate": "newData.isNumber()" },
+            "inviteeEmail":  { ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 254)" },
+            "$other":        { ".validate": false }
           }
         },
 
@@ -162,18 +200,34 @@
         ".write": "auth != null && (newData.exists() ? root.child('users').child(auth.uid).child('householdId').val() == newData.child('householdId').val() : root.child('users').child(auth.uid).child('householdId').val() == data.child('householdId').val())",
         "householdId": { ".validate": "newData.isString() && newData.val().length <= 50" },
         "expiresAt":   { ".validate": "newData.isString() && newData.val().length <= 50" },
-        "used":        { ".validate": "newData.isBoolean()" },
-        "usedBy":      { ".validate": "newData.isString() && newData.val().length <= 200" },
-        "usedAt":      { ".validate": "newData.isNumber()" },
-        "createdAt":   { ".validate": "newData.isNumber()" },
-        "$other":      { ".validate": false }
+        "used":          { ".validate": "newData.isBoolean()" },
+        "usedBy":        { ".validate": "newData.isString() && newData.val().length <= 200" },
+        "usedAt":        { ".validate": "newData.isNumber()" },
+        "createdAt":     { ".validate": "newData.isNumber()" },
+        "inviteeEmail":  { ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 254)" },
+        "$other":        { ".validate": false }
       }
     },
 
     "logs": {
       "$uid": {
         ".read":  "auth != null && auth.uid == $uid",
-        ".write": "auth != null && auth.uid == $uid"
+        ".write": "auth != null && auth.uid == $uid",
+        "$sessionId": {
+          ".validate": "$sessionId.length >= 1 && $sessionId.length <= 200 && (newData.val() == null || newData.hasChildren())",
+          "$logId": {
+            "timestamp":  { ".validate": "newData.isNumber()" },
+            "sessionId":  { ".validate": "newData.isString() && newData.val().length <= 200" },
+            "level":      { ".validate": "newData.isString() && newData.val().matches(/^(debug|info|warn|error)$/)" },
+            "category":   { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "message":    { ".validate": "newData.isString() && newData.val().length <= 20000" },
+            "data":       { ".validate": "newData.isString() && newData.val().length <= 50000" },
+            "url":        { ".validate": "newData.isString() && newData.val().length <= 5000" },
+            "userAgent":  { ".validate": "newData.isString() && newData.val().length <= 2000" },
+            "serverTimestamp": { ".validate": "(newData.hasChild('.sv') && newData.child('.sv').val() == 'timestamp') || newData.isNumber()" },
+            "$other":     { ".validate": false }
+          }
+        }
       }
     }
   }
