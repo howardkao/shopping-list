@@ -78,7 +78,13 @@ AGENTS.md
 LOGGING.md
 NATIVE_APP_PLAN.md
 NATIVE_APP_EXECUTION_PLAN.md
+STRIPE_EXECUTION_PLAN.md
 PAYWALL_SPEC.md
+STRIPE_SPEC.md
+LAUNCH_GEO_SCOPE_PLAN.md
+
+# Firebase emulator debug log (local only)
+database-debug.log
 # Local HTML mockups / store graphics (not shipped)
 *mockup*.html
 play-store-feature-graphic.html

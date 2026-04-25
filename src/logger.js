@@ -164,6 +164,21 @@ async function flushLogBatch() {
   const logsToSend = [...logBatch];
   logBatch.length = 0; // Clear batch
 
+  const MAX_LOG_DATA_JSON = 50000;
+
+  /** Stringify for RTDB so rules can cap payload size (prevents unbounded object trees). */
+  function serializeLogDataForRemote(data) {
+    let s = JSON.stringify(sanitizeData(data) ?? {});
+    if (s.length > MAX_LOG_DATA_JSON) {
+      s = JSON.stringify({
+        _truncated: true,
+        _approxBytes: s.length,
+        _hint: 'data exceeded 50k cap in RTDB security rules',
+      });
+    }
+    return s;
+  }
+
   try {
     const logsRef = ref(database, `logs/${currentUserId}/${SESSION_ID}`);
 
@@ -171,6 +186,7 @@ async function flushLogBatch() {
     for (const entry of logsToSend) {
       await push(logsRef, {
         ...entry,
+        data: serializeLogDataForRemote(entry.data),
         serverTimestamp: serverTimestamp()
       });
     }
@@ -432,11 +448,19 @@ export const logger = {
 
       // Collect all logs from all sessions
       for (const [sessionId, sessionLogs] of Object.entries(sessions)) {
-        for (const [logId, log] of Object.entries(sessionLogs || {})) {
-          if (startDate && log.timestamp < startDate) continue;
-          if (endDate && log.timestamp > endDate) continue;
-          allLogs.push({ ...log, sessionId, logId });
+      for (const [logId, log] of Object.entries(sessionLogs || {})) {
+        if (startDate && log.timestamp < startDate) continue;
+        if (endDate && log.timestamp > endDate) continue;
+        let parsed = log;
+        if (log && typeof log.data === 'string') {
+          try {
+            parsed = { ...log, data: JSON.parse(log.data) };
+          } catch {
+            parsed = { ...log, data: { _parseError: true, raw: log.data.slice(0, 200) } };
+          }
         }
+        allLogs.push({ ...parsed, sessionId, logId });
+      }
       }
 
       // Sort by timestamp (newest first)

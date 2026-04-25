@@ -85,6 +85,12 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 const LEGAL_PATH_PRIVACY = '/privacy';
 const LEGAL_PATH_TERMS = '/terms';
 
+/** Flip to `true` once iOS App Store + Google Play approvals are live. Gates the PWA
+ *  transition banner and the web "download the app" links in PaywallSheet + Account. */
+const APP_STORES_LIVE = false;
+const APP_STORE_URL = 'https://apps.apple.com/app/provisions/id123';
+const GOOGLE_PLAY_URL = 'https://play.google.com/store/apps/details?id=com.provisionsapp.shoppinglist';
+
 function legalViewFromPathname(pathname) {
   if (pathname === LEGAL_PATH_PRIVACY) return 'privacy';
   if (pathname === LEGAL_PATH_TERMS) return 'terms';
@@ -2419,6 +2425,39 @@ function DeleteAccountModal({ user, householdId, isAdmin, onClose, onDeleted }) 
   );
 }
 
+/** Compact App Store / Google Play download buttons. Hidden until apps are approved. */
+function StoreLinks() {
+  if (!APP_STORES_LIVE) {
+    return (
+      <p className="text-sm text-gray-500 font-medium text-center">
+        Coming soon to the iOS App Store and Google Play.
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col sm:flex-row gap-2">
+      <a
+        href={APP_STORE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex-1 flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-semibold text-sm hover:opacity-90 transition-opacity"
+      >
+        <span className="text-xs opacity-80">Download on the</span>
+        <span className="font-bold">App Store</span>
+      </a>
+      <a
+        href={GOOGLE_PLAY_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex-1 flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-semibold text-sm hover:opacity-90 transition-opacity"
+      >
+        <span className="text-xs opacity-80">Get it on</span>
+        <span className="font-bold">Google Play</span>
+      </a>
+    </div>
+  );
+}
+
 function PaywallSheet({ trigger, status, onClose, onOpenLegal, onSubscriptionChanged }) {
   const [priceDisplay, setPriceDisplay] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -2426,6 +2465,7 @@ function PaywallSheet({ trigger, status, onClose, onOpenLegal, onSubscriptionCha
   const [errorText, setErrorText] = useState('');
   const [successText, setSuccessText] = useState('');
   const isNative = Capacitor.isNativePlatform();
+  const isWeb = !isNative;
   const wasInTrial = Boolean(status?.inTrial);
 
   useEffect(() => {
@@ -2487,9 +2527,15 @@ function PaywallSheet({ trigger, status, onClose, onOpenLegal, onSubscriptionCha
     }
   };
 
-  const headline = wasInTrial
-    ? 'Subscribe to keep editing Provisions'
-    : 'Your trial has ended';
+  const headline = isWeb
+    ? 'Get Provisions on your phone'
+    : wasInTrial
+      ? 'Subscribe to keep editing Provisions'
+      : 'Your trial has ended';
+
+  const subhead = isWeb
+    ? 'Your free trial has ended. Subscribe from the iOS or Android app to continue adding items, editing shortcuts, and inviting family. You can still shop your list and check items off here.'
+    : 'You can still shop your list and check items off. Subscribe to add items, edit shortcuts, and invite family.';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center sm:p-4 z-50">
@@ -2501,7 +2547,7 @@ function PaywallSheet({ trigger, status, onClose, onOpenLegal, onSubscriptionCha
           <div>
             <h2 className="text-2xl font-bold text-gray-800">{headline}</h2>
             <p className="text-gray-600 font-medium mt-1 text-sm">
-              You can still shop your list and check items off. Subscribe to add items, edit shortcuts, and invite family.
+              {subhead}
             </p>
           </div>
           <button
@@ -2546,23 +2592,29 @@ function PaywallSheet({ trigger, status, onClose, onOpenLegal, onSubscriptionCha
           </div>
         )}
         <div className="px-6 py-4 space-y-3">
-          <button
-            type="button"
-            onClick={handleSubscribe}
-            disabled={loading || restoring}
-            className="w-full text-white py-3.5 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
-            style={{ backgroundColor: loading || restoring ? undefined : '#FF7A7A' }}
-          >
-            {loading ? 'Starting…' : 'Subscribe'}
-          </button>
-          <button
-            type="button"
-            onClick={handleRestore}
-            disabled={loading || restoring}
-            className="w-full text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-100 transition-colors disabled:opacity-50"
-          >
-            {restoring ? 'Restoring…' : 'Restore purchases'}
-          </button>
+          {isWeb ? (
+            <StoreLinks />
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={handleSubscribe}
+                disabled={loading || restoring}
+                className="w-full text-white py-3.5 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90"
+                style={{ backgroundColor: loading || restoring ? undefined : '#FF7A7A' }}
+              >
+                {loading ? 'Starting…' : 'Subscribe'}
+              </button>
+              <button
+                type="button"
+                onClick={handleRestore}
+                disabled={loading || restoring}
+                className="w-full text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-100 transition-colors disabled:opacity-50"
+              >
+                {restoring ? 'Restoring…' : 'Restore purchases'}
+              </button>
+            </>
+          )}
         </div>
         <div className="px-6 pb-6 text-xs text-gray-500 text-center">
           By subscribing you agree to our{' '}
@@ -5310,10 +5362,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // PWA banner: show once per device (web only, not in native Capacitor)
-    // Disabled until apps are approved on App Store + Google Play.
+    // PWA banner: show once per device (web only, not in native Capacitor).
     if (Capacitor.isNativePlatform()) return;
-    return; // Banner gated: enable when native apps are live
+    if (!APP_STORES_LIVE) return;
 
     const BANNER_KEY = 'provisions.appStoreBannerSeen.v1';
     if (!localStorage.getItem(BANNER_KEY)) {
@@ -5667,7 +5718,7 @@ export default function App() {
           <div className="fixed top-0 left-0 right-0 bg-amber-50 border-b border-amber-200 z-[51] pt-safe">
             <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
               <p className="text-sm font-medium text-amber-900 flex-1">
-                Provisions is now on the <a href="https://apps.apple.com/app/provisions/id123" className="font-bold underline hover:no-underline">App Store</a> and <a href="https://play.google.com/store/apps/details?id=com.provisionsapp.shoppinglist" className="font-bold underline hover:no-underline">Google Play</a>.
+                Provisions is now on the <a href={APP_STORE_URL} className="font-bold underline hover:no-underline">App Store</a> and <a href={GOOGLE_PLAY_URL} className="font-bold underline hover:no-underline">Google Play</a>.
               </p>
               <button
                 onClick={() => {
@@ -5904,65 +5955,76 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Subscription status (native only) */}
-                {Capacitor.isNativePlatform() && (
-                  <div className="bg-white rounded-2xl border border-gray-200 px-6 py-4 space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        {accountSub?.inTrial ? (
-                          <>
-                            <p className="font-semibold text-gray-800">Free trial</p>
-                            <p className="text-sm text-gray-500">Ends {fmtDate(accountSub.expiresAt)}</p>
-                          </>
-                        ) : accountSub?.active ? (
-                          <>
-                            <p className="font-semibold text-gray-800">Provisions Pro</p>
-                            <p className="text-sm text-gray-500">{accountSub.expiresAt ? `Renews ${fmtDate(accountSub.expiresAt)}` : 'Active'}</p>
-                          </>
-                        ) : accountSub?.loaded ? (
-                          <>
-                            <p className="font-semibold text-gray-800">No active subscription</p>
-                            <p className="text-sm text-gray-500">Your free trial has ended</p>
-                          </>
-                        ) : (
-                          <p className="text-sm text-gray-400">Loading…</p>
-                        )}
-                      </div>
-                      {accountSub?.active && !accountSub?.inTrial && (
-                        subOnOtherPlatform ? (
-                          <span className="text-xs text-gray-400 shrink-0 mt-0.5 text-right">
-                            via {subStoreName || 'other platform'}
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => window.open(accountManageUrl, '_system')}
-                            className="text-sm font-semibold shrink-0 mt-0.5"
-                            style={{ color: '#FF7A7A' }}
-                          >
-                            Manage
-                          </button>
-                        )
+                {/* Subscription status */}
+                <div className="bg-white rounded-2xl border border-gray-200 px-6 py-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      {accountSub?.inTrial ? (
+                        <>
+                          <p className="font-semibold text-gray-800">Free trial</p>
+                          <p className="text-sm text-gray-500">Ends {fmtDate(accountSub.expiresAt)}</p>
+                        </>
+                      ) : accountSub?.active ? (
+                        <>
+                          <p className="font-semibold text-gray-800">Provisions Pro</p>
+                          <p className="text-sm text-gray-500">
+                            {Capacitor.isNativePlatform()
+                              ? (accountSub.expiresAt ? `Renews ${fmtDate(accountSub.expiresAt)}` : 'Active')
+                              : 'Manage via your device’s app'}
+                          </p>
+                        </>
+                      ) : accountSub?.loaded ? (
+                        <>
+                          <p className="font-semibold text-gray-800">No active subscription</p>
+                          <p className="text-sm text-gray-500">
+                            {Capacitor.isNativePlatform()
+                              ? 'Your free trial has ended'
+                              : 'Your trial has ended. Download the iOS or Android app to subscribe.'}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-sm text-gray-400">Loading…</p>
                       )}
                     </div>
-                    {accountSub?.loaded && (accountSub?.inTrial || !accountSub?.active) && (
-                      <div className="border-t border-gray-100 pt-3 space-y-2">
+                    {Capacitor.isNativePlatform() && accountSub?.active && !accountSub?.inTrial && (
+                      subOnOtherPlatform ? (
+                        <span className="text-xs text-gray-400 shrink-0 mt-0.5 text-right">
+                          via {subStoreName || 'other platform'}
+                        </span>
+                      ) : (
                         <button
-                          onClick={() => openPaywall('account_subscribe')}
-                          className="w-full py-2.5 rounded-xl font-semibold text-sm text-white transition-colors"
-                          style={{ backgroundColor: '#FF7A7A' }}
+                          onClick={() => window.open(accountManageUrl, '_system')}
+                          className="text-sm font-semibold shrink-0 mt-0.5"
+                          style={{ color: '#FF7A7A' }}
                         >
-                          Subscribe — $3.99/year
+                          Manage
                         </button>
-                        <button
-                          onClick={() => openPaywall('account_restore')}
-                          className="w-full py-2 text-sm font-semibold text-gray-500 hover:text-gray-700 transition-colors"
-                        >
-                          Restore purchases
-                        </button>
-                      </div>
+                      )
                     )}
                   </div>
-                )}
+                  {Capacitor.isNativePlatform() && accountSub?.loaded && (accountSub?.inTrial || !accountSub?.active) && (
+                    <div className="border-t border-gray-100 pt-3 space-y-2">
+                      <button
+                        onClick={() => openPaywall('account_subscribe')}
+                        className="w-full py-2.5 rounded-xl font-semibold text-sm text-white transition-colors"
+                        style={{ backgroundColor: '#FF7A7A' }}
+                      >
+                        Subscribe — $3.99/year
+                      </button>
+                      <button
+                        onClick={() => openPaywall('account_restore')}
+                        className="w-full py-2 text-sm font-semibold text-gray-500 hover:text-gray-700 transition-colors"
+                      >
+                        Restore purchases
+                      </button>
+                    </div>
+                  )}
+                  {!Capacitor.isNativePlatform() && accountSub?.loaded && !accountSub?.active && (
+                    <div className="border-t border-gray-100 pt-3">
+                      <StoreLinks />
+                    </div>
+                  )}
+                </div>
 
                 <button onClick={() => setShowAdmin(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
                   <Users size={20} />Invite Household Members

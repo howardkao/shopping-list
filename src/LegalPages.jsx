@@ -39,15 +39,21 @@ export function PrivacyPolicyPage({ onBack }) {
   return (
     <LegalShell
       title="Privacy Policy"
-      effectiveLabel="Effective: April 17, 2026"
+      effectiveLabel="Effective: April 25, 2026"
       onBack={onBack}
     >
       <p>
         This policy describes how information is collected, used, and shared when you use the{' '}
-        <strong>Provisions</strong> application on this website or installed as a web app
-        (the &quot;Service&quot;). The <strong>operator</strong> of the Service is the person or
-        organization that controls the Firebase project and hosting used by this instance (for
-        example, a household self-hosting the app, or a company providing a hosted version).
+        <strong>Provisions</strong> application on this website or installed as a web or native
+        app (the &quot;Service&quot;). The <strong>operator</strong> of the Service is an
+        individual developer based in California (the person or organization that controls the
+        Firebase project and hosting used by this instance).
+      </p>
+
+      <p>
+        <strong>Geographic scope.</strong> This Service is intended for use by residents of the
+        United States and Canada. If you are located outside those countries, do not create an
+        account or use the Service.
       </p>
 
       <SectionTitle>Information we collect</SectionTitle>
@@ -85,9 +91,9 @@ export function PrivacyPolicyPage({ onBack }) {
         <li>
           <strong>Technical and operational logs.</strong> The app may send diagnostic and
           operational log entries (for example sign-in attempts, errors, and coarse usage events) to
-          Firebase for the operator to troubleshoot and improve reliability. Logs are retained for a
-          limited period (on the order of weeks) and are readable by household administrators where
-          the product exposes that capability.
+          Firebase for the operator to troubleshoot and improve reliability. Logs are retained for
+          21 days and are readable by household administrators where the product exposes that
+          capability.
         </li>
         <li>
           <strong>Local storage on your device.</strong> To work offline, the Service uses your
@@ -96,10 +102,18 @@ export function PrivacyPolicyPage({ onBack }) {
           by the app, the browser, or you.
         </li>
         <li>
-          <strong>Optional analytics.</strong> If the operator configures Google Analytics for
-          Firebase (measurement ID), Google may collect usage and device information according to
-          Google&apos;s policies. If no measurement ID is configured, this collection is not
-          enabled by this codebase path.
+          <strong>Analytics.</strong> We use Google Analytics for Firebase in production
+          deployments of the Service to understand how the Service is used. This may involve
+          collecting device identifiers, usage patterns, and linking this data to your account ID
+          to provide a personalized experience. This collection is governed by{' '}
+          <a
+            href="https://policies.google.com/privacy"
+            className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Google&apos;s Privacy Policy
+          </a>.
         </li>
       </ul>
 
@@ -122,11 +136,11 @@ export function PrivacyPolicyPage({ onBack }) {
 
       <SectionTitle>Retention and deletion</SectionTitle>
       <p>
-        Data is kept for as long as your account and household records exist. You may be able to
-        delete your account from within the app where the operator has enabled that feature;
-        deletion removes or disconnects your user profile as implemented by the operator&apos;s
-        Firebase rules and cleanup procedures. Operational logs may persist for a short retention
-        window independent of the shopping list.
+        Data is kept for as long as your account and household records exist. You may delete your
+        account at any time through the app settings or by contacting us. Deletion removes your
+        personal profile and disconnects you from household data; however, shared shopping list
+        items may persist as part of the household record until the household itself is deleted.
+        Operational logs may persist for 21 days independent of the account deletion.
       </p>
 
       <SectionTitle>Security</SectionTitle>
@@ -149,6 +163,21 @@ export function PrivacyPolicyPage({ onBack }) {
         may be transferred to those locations.
       </p>
 
+      <SectionTitle>California residents</SectionTitle>
+      <p>
+        California law (Cal. Civ. Code § 1798.83) may permit California residents to request
+        information about disclosures of personal information to third parties for their direct
+        marketing purposes. We do not sell your personal information. For any privacy requests,
+        contact us at{' '}
+        <a
+          href="mailto:support@myprovisions.app"
+          className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
+        >
+          support@myprovisions.app
+        </a>
+        .
+      </p>
+
       <SectionTitle>Changes to this policy</SectionTitle>
       <p>
         The operator may update this policy from time to time. Material changes should be reflected
@@ -157,9 +186,14 @@ export function PrivacyPolicyPage({ onBack }) {
 
       <SectionTitle>Contact</SectionTitle>
       <p>
-        For privacy questions about <em>this</em> deployment, contact the operator of the site you
-        are using (for self-hosted instances, that is typically the household or organization that
-        invited you).
+        For privacy questions about <em>this</em> deployment, contact us at{' '}
+        <a
+          href="mailto:support@myprovisions.app"
+          className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
+        >
+          support@myprovisions.app
+        </a>
+        .
       </p>
     </LegalShell>
   );
@@ -169,30 +203,31 @@ export function TermsOfServicePage({ onBack }) {
   return (
     <LegalShell
       title="Terms of Service"
-      effectiveLabel="Effective: April 17, 2026"
+      effectiveLabel="Effective: April 25, 2026"
       onBack={onBack}
     >
       <p>
         These Terms of Service (&quot;Terms&quot;) govern your access to and use of the{' '}
-        <strong>Provisions</strong> web application (the &quot;Service&quot;). By creating an
+        <strong>Provisions</strong> web and native applications (the &quot;Service&quot;). By creating an
         account, signing in, or otherwise using the Service, you agree to these Terms. If you do
         not agree, do not use the Service.
       </p>
 
       <SectionTitle>The operator</SectionTitle>
       <p>
-        The <strong>operator</strong> is the person or entity that provides this instance of the
-        Service (for example by deploying the software and owning the Firebase project). If you use
-        someone else&apos;s deployment, your agreement is with that operator; open-source or
-        portfolio use of the underlying code does not by itself create a contract with the authors
-        of the repository.
+        The <strong>operator</strong> of this Service is an individual developer. If you are
+        using a self-hosted instance of the underlying source-available software, your agreement
+        is with the individual or entity hosting that instance. For the official hosted version,
+        contact us at support@myprovisions.app. The Service is intended for residents of the
+        United States and Canada only. Users located elsewhere use the Service at their own risk
+        and are responsible for compliance with their local laws.
       </p>
 
       <SectionTitle>Eligibility and accounts</SectionTitle>
       <p>
         You must be old enough to form a binding contract in your jurisdiction. You are
         responsible for the accuracy of information you provide and for maintaining the
-        confidentiality of your password and device access. Notify your operator if you believe
+        confidentiality of your password and device access. Notify us if you believe
         your account has been compromised.
       </p>
 
@@ -202,6 +237,39 @@ export function TermsOfServicePage({ onBack }) {
         whom you invite and for content added under your account. The operator is not obligated to
         mediate disputes between household members.
       </p>
+
+      <SectionTitle>Subscriptions and Billing</SectionTitle>
+      <p>
+        New households receive a 60-day free trial beginning when the household is created. After
+        the trial ends, a subscription is required to add or edit items. Subscriptions are available
+        via the <strong>iOS App Store</strong> and <strong>Google Play</strong> only. There is
+        currently no web payment option.
+      </p>
+      <ul className="list-disc pl-5 space-y-2">
+        <li>
+          <strong>Household benefit.</strong> A subscription purchased by the household admin covers
+          all current members of that household.
+        </li>
+        <li>
+          <strong>Auto-renewal.</strong> Subscriptions purchased through the App Store or Google
+          Play automatically renew unless cancelled at least 24 hours before the end of the current
+          billing period.
+        </li>
+        <li>
+          <strong>Management.</strong> Subscriptions are tied to the store account used for purchase
+          (your Apple ID or Google account). Manage or cancel via your device&apos;s subscription
+          settings.
+        </li>
+        <li>
+          <strong>Refunds.</strong> Refunds for App Store purchases are handled by Apple; refunds
+          for Google Play purchases are handled by Google, according to their respective policies.
+        </li>
+        <li>
+          <strong>Price.</strong> The current subscription price is $3.99 per year. Prices may
+          change for new subscribers; existing subscribers will be notified before any price change
+          takes effect.
+        </li>
+      </ul>
 
       <SectionTitle>Acceptable use</SectionTitle>
       <p>You agree not to:</p>
@@ -243,7 +311,7 @@ export function TermsOfServicePage({ onBack }) {
         PROFITS, DATA, OR GOODWILL, ARISING FROM YOUR USE OF THE SERVICE. THE AGGREGATE LIABILITY OF
         THE OPERATOR FOR CLAIMS RELATING TO THE SERVICE SHALL NOT EXCEED THE GREATER OF (A) THE
         AMOUNTS YOU PAID THE OPERATOR FOR THE SERVICE IN THE TWELVE MONTHS BEFORE THE CLAIM OR (B)
-        FIFTY U.S. DOLLARS (US $50), IF YOU DID NOT PAY ANYTHING, (B) ALONE APPLIES.
+        FIFTY U.S. DOLLARS (US $50) IF YOU PAID NOTHING.
       </p>
 
       <SectionTitle>Indemnity</SectionTitle>
@@ -251,6 +319,13 @@ export function TermsOfServicePage({ onBack }) {
         You will defend and indemnify the operator and its affiliates against any claims, damages,
         losses, and expenses (including reasonable attorneys&apos; fees) arising from your misuse of
         the Service or violation of these Terms.
+      </p>
+
+      <SectionTitle>Dispute Resolution</SectionTitle>
+      <p>
+        If you have a dispute with the operator, contact support first so we can try to resolve it
+        informally. If a court proceeding is required, it will be governed by the Governing law
+        section below.
       </p>
 
       <SectionTitle>Changes</SectionTitle>
@@ -261,9 +336,10 @@ export function TermsOfServicePage({ onBack }) {
 
       <SectionTitle>Governing law</SectionTitle>
       <p>
-        These Terms are governed by the laws applicable in the place where the operator is
-        established, excluding conflict-of-law rules that would apply another jurisdiction&apos;s
-        law, unless mandatory consumer protections in your country say otherwise.
+        These Terms are governed by the laws of the State of California, USA, excluding
+        conflict-of-law rules, unless mandatory consumer protections in your jurisdiction say
+        otherwise. The venue for any permitted court action will be the state or federal courts
+        located in Santa Clara County, California, unless mandatory law requires otherwise.
       </p>
 
       <SectionTitle>Severability</SectionTitle>
