@@ -11,7 +11,9 @@
     "cap:sync": "npm run build && node scripts/patch-capacitor-firebase-auth.js && node scripts/capacitor-web-index.js copy && npx cap sync && node scripts/capacitor-web-index.js clean",
     "cap:ios": "npx cap open ios",
     "cap:android": "npx cap open android",
-    "gen-icons": "bash scripts/gen-icons.sh"
+    "gen-icons": "bash scripts/gen-icons.sh",
+    "test": "vitest run test/purchaseSemantics.test.js test/aisleDisplay.test.js",
+    "test:rules": "vitest run test/rules.test.js"
   },
   "dependencies": {
     "@capacitor-firebase/analytics": "^8.2.0",
@@ -34,6 +36,7 @@
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
+    "@firebase/rules-unit-testing": "^3.0.0",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",
@@ -43,6 +46,7 @@
     "typescript": "^6.0.3",
     "vite": "^5.0.8",
     "vite-plugin-pwa": "^1.2.0",
+    "vitest": "^2.0.0",
     "workbox-window": "^7.4.0"
   }
 }
