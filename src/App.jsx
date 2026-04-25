@@ -5,7 +5,7 @@ import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { App as CapacitorApp } from '@capacitor/app';
 import { SplashScreen } from '@capacitor/splash-screen';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronRight, ShoppingCart, ClipboardList, ClipboardPen, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff, ScrollText } from 'lucide-react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronLeft, ChevronRight, ShoppingCart, ClipboardList, ClipboardPen, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff, ScrollText, Home, KeyRound, Users } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
   createUserWithEmailAndPassword,
@@ -91,17 +91,22 @@ function legalViewFromPathname(pathname) {
   return null;
 }
 
-/** RTDB may return shopping-list as an object with numeric keys instead of a true array. */
+/**
+ * RTDB shopping-list is an object keyed by item id (`{<id>: item, …}`). Older households
+ * may still return a true array until the migration script has run; both shapes are
+ * tolerated. Sorted by `addedAt` so insertion order is preserved across the mixed key
+ * space (push keys vs. legacy stringified Date.now()).
+ */
 function snapshotShoppingListToArray(val) {
   if (val == null) return [];
-  if (Array.isArray(val)) return val;
-  if (typeof val === 'object') {
-    return Object.keys(val)
-      .sort((a, b) => Number(a) - Number(b))
-      .map((k) => val[k])
-      .filter((row) => row != null);
-  }
-  return [];
+  const rows = Array.isArray(val)
+    ? val.filter((row) => row != null)
+    : (typeof val === 'object'
+      ? Object.entries(val)
+          .filter(([, row]) => row != null)
+          .map(([key, row]) => (row.id != null ? row : { ...row, id: key }))
+      : []);
+  return rows.slice().sort((a, b) => (Number(a?.addedAt) || 0) - (Number(b?.addedAt) || 0));
 }
 
 const formatRelativeTime = (timestamp) => {
@@ -280,14 +285,15 @@ async function deleteAccountDataAndAuth(user, householdId, isAdmin) {
   logger.info('Auth', 'Account deleted successfully', { uid: user.uid });
 }
 
-function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
+function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode, initialSignupType, initialInviteCode }) {
   const [mode, setMode] = useState(initialMode ?? 'signin');
-  const [signupType, setSignupType] = useState('create'); // 'create' | 'join'
+  const [signupType, setSignupType] = useState(initialSignupType ?? 'create'); // 'create' | 'join'
+  const [signupStep, setSignupStep] = useState('choice'); // 'choice' | 'auth'  — two-step signup wizard
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [displayName, setDisplayName] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
+  const [inviteCode, setInviteCode] = useState(initialInviteCode ?? '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -824,7 +830,11 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
         ? 'Finish setting up your account'
         : mode === 'signin'
           ? 'Sign in to your account'
-          : 'Create your account';
+          : signupStep === 'choice'
+            ? "Let's get your household set up"
+            : signupType === 'join'
+              ? 'Join your household'
+              : 'Create your account';
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#F7F7F7' }}>
@@ -1058,14 +1068,88 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
           </div>
         )}
 
-        {!pendingCredential && !awaitingHousehold && !passwordLinkBlocking && passwordLinkAction !== 'invalid' && (
+        {!pendingCredential && !awaitingHousehold && !passwordLinkBlocking && passwordLinkAction !== 'invalid' && mode === 'signup' && signupStep === 'choice' && (
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => { setSignupType('create'); setSignupStep('auth'); clearMessages(); }}
+              disabled={loading}
+              className="w-full flex items-start gap-4 text-left p-5 border-2 border-gray-900 rounded-2xl bg-white hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            >
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#FFE8E8' }}>
+                <Home size={22} style={{ color: '#FF7A7A' }} aria-hidden="true" />
+              </div>
+              <div className="flex-1">
+                <div className="font-bold text-base text-gray-900">Create a new household</div>
+                <div className="text-sm text-gray-500 mt-0.5">Start fresh — invite others later</div>
+              </div>
+              <ChevronRight size={18} className="shrink-0 text-gray-400 mt-1" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => { setSignupType('join'); setSignupStep('auth'); clearMessages(); }}
+              disabled={loading}
+              className="w-full flex items-start gap-4 text-left p-5 border-2 border-gray-200 rounded-2xl bg-white hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            >
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-gray-100">
+                <KeyRound size={22} className="text-gray-500" aria-hidden="true" />
+              </div>
+              <div className="flex-1">
+                <div className="font-bold text-base text-gray-900">Join an existing household</div>
+                <div className="text-sm text-gray-500 mt-0.5">Use the invite code you were sent</div>
+              </div>
+              <ChevronRight size={18} className="shrink-0 text-gray-400 mt-1" aria-hidden="true" />
+            </button>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => { setMode('signin'); setSignupStep('choice'); clearMessages(); }}
+                className="w-full text-sm font-semibold hover:underline"
+                style={{ color: '#FF7A7A' }}
+              >
+                Already have an account? Sign in
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!pendingCredential && !awaitingHousehold && !passwordLinkBlocking && passwordLinkAction !== 'invalid' && (mode === 'signin' || (mode === 'signup' && signupStep === 'auth')) && (
           <div className="space-y-4">
+            {mode === 'signup' && (
+              <button
+                type="button"
+                onClick={() => { setSignupStep('choice'); clearMessages(); }}
+                disabled={loading}
+                className="text-sm font-semibold text-gray-500 hover:text-gray-700 flex items-center gap-1 -mt-2"
+              >
+                <ChevronLeft size={16} aria-hidden="true" />
+                Back
+              </button>
+            )}
+
+            {mode === 'signup' && signupType === 'join' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Invitation code</label>
+                <input
+                  type="text"
+                  name="inviteCode"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1'))}
+                  placeholder="16-character code"
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider text-center"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </div>
+            )}
+
             <div className="space-y-3">
               <button
                 type="button"
                 onClick={() => handleSsoSignIn('google')}
                 disabled={loading}
-                className="w-full flex items-center justify-center gap-3 py-3 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                className="w-full flex items-center justify-center gap-3 py-3 border-2 border-gray-900 rounded-xl font-semibold text-gray-900 bg-white hover:bg-gray-50 disabled:opacity-50 transition-colors"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -1079,12 +1163,12 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
                 type="button"
                 onClick={() => handleSsoSignIn('apple')}
                 disabled={loading}
-                className="w-full flex items-center justify-center gap-3 py-3 rounded-xl font-semibold text-white bg-black hover:bg-gray-900 disabled:opacity-50 transition-colors"
+                className="w-full flex items-center justify-center gap-3 py-3 border-2 border-gray-900 rounded-xl font-semibold text-gray-900 bg-white hover:bg-gray-50 disabled:opacity-50 transition-colors"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
                 </svg>
-                <span>{mode === 'signin' ? 'Sign in with Apple' : 'Sign up with Apple'}</span>
+                <span>Continue with Apple</span>
               </button>
             </div>
 
@@ -1104,12 +1188,6 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
                 else handleSignUp();
               }}
             >
-              {mode === 'signup' && (
-                <div className="flex rounded-xl overflow-hidden border-2 border-gray-200">
-                  <button type="button" onClick={() => { setSignupType('create'); clearMessages(); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'create' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'create' ? { backgroundColor: '#FF7A7A' } : {}}>New household</button>
-                  <button type="button" onClick={() => { setSignupType('join'); clearMessages(); }} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${signupType === 'join' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={signupType === 'join' ? { backgroundColor: '#FF7A7A' } : {}}>Join with code</button>
-                </div>
-              )}
               {mode === 'signup' && (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Your name</label>
@@ -1169,22 +1247,6 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
                   </button>
                 </div>
               </div>
-              {mode === 'signup' && signupType === 'join' && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Invitation Code</label>
-                  <input
-                    type="text"
-                    name="inviteCode"
-                    value={inviteCode}
-                    onChange={(e) => setInviteCode(e.target.value.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1'))}
-                    placeholder="16-character code"
-                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-gray-300 focus:outline-none transition-colors font-mono tracking-wider"
-                    autoCapitalize="characters"
-                    autoCorrect="off"
-                    spellCheck={false}
-                  />
-                </div>
-              )}
               {error && <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium border border-red-200">{error}</div>}
               {success && <div className="bg-green-50 text-green-600 px-4 py-3 rounded-xl text-sm font-medium border border-green-200">{success}</div>}
               <button type="submit" disabled={loading} className="w-full text-white py-3 rounded-xl font-bold disabled:bg-gray-300 transition-colors hover:opacity-90" style={{ backgroundColor: loading ? undefined : '#FF7A7A' }}>
@@ -1195,7 +1257,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
                   Forgot password?
                 </button>
               )}
-              <button type="button" onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); clearMessages(); }} className="w-full text-sm font-semibold hover:underline" style={{ color: '#FF7A7A' }}>
+              <button type="button" onClick={() => { const next = mode === 'signin' ? 'signup' : 'signin'; setMode(next); setSignupStep('choice'); clearMessages(); }} className="w-full text-sm font-semibold hover:underline" style={{ color: '#FF7A7A' }}>
                 {mode === 'signin' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
               </button>
             </form>
@@ -1218,7 +1280,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode }) {
   );
 }
 
-function AuthLoginScreen({ onLoginSuccess, legalView, onOpenLegal, onCloseLegal, initialMode }) {
+function AuthLoginScreen({ onLoginSuccess, legalView, onOpenLegal, onCloseLegal, initialMode, initialSignupType, initialInviteCode }) {
   if (legalView === 'privacy') {
     return <PrivacyPolicyPage onBack={onCloseLegal} />;
   }
@@ -1231,6 +1293,8 @@ function AuthLoginScreen({ onLoginSuccess, legalView, onOpenLegal, onCloseLegal,
       onOpenPrivacy={() => onOpenLegal('privacy')}
       onOpenTerms={() => onOpenLegal('terms')}
       initialMode={initialMode}
+      initialSignupType={initialSignupType}
+      initialInviteCode={initialInviteCode}
     />
   );
 }
@@ -1570,7 +1634,7 @@ function HouseholdInsightsPage({ householdId, liveBucketMonthKey, liveBucketVal,
   );
 }
 
-function AdminPanel({ onClose, householdId }) {
+function AdminPanel({ onClose, householdId, members, adminUid }) {
   const [invitations, setInvitations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -1636,10 +1700,31 @@ function AdminPanel({ onClose, householdId }) {
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div className="bg-white rounded-3xl shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col border border-gray-200">
           <div className="p-6 border-b border-gray-200">
-            <h2 className="text-2xl font-bold text-gray-800">Invite Household Members</h2>
-            <p className="text-gray-600 font-medium">Create invitation codes for new members</p>
+            <h2 className="text-2xl font-bold text-gray-800">Household</h2>
           </div>
-        <div className="p-6 flex-1 overflow-y-auto">
+        <div className="p-6 flex-1 overflow-y-auto space-y-6">
+          {members && Object.keys(members).length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Users size={16} className="text-gray-400" />
+                <span className="text-sm font-bold text-gray-500 uppercase tracking-wide">Members</span>
+              </div>
+              <div className="space-y-2">
+                {Object.entries(members).map(([uid, m]) => (
+                  <div key={uid} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3 border border-gray-200">
+                    <span className="font-medium text-gray-800">{m.displayName || m.email}</span>
+                    {uid === adminUid && (
+                      <span className="text-xs font-bold text-white rounded-full px-2.5 py-0.5" style={{ backgroundColor: '#FF7A7A' }}>Admin</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-sm font-bold text-gray-500 uppercase tracking-wide">Invite codes</span>
+            </div>
           <button onClick={createInvitation} disabled={creating} className="w-full text-white py-3.5 rounded-xl font-bold hover:opacity-90 disabled:bg-gray-300 flex items-center justify-center gap-2 mb-6 transition-opacity" style={{ backgroundColor: creating ? undefined : '#10B981' }}>
             <Plus size={20} strokeWidth={2.5} />{creating ? 'Creating...' : 'Create New Code'}
           </button>
@@ -1667,6 +1752,7 @@ function AdminPanel({ onClose, householdId }) {
               ))}
             </div>
           )}
+          </div>
         </div>
         <div className="p-6 border-t border-gray-200">
           <button onClick={onClose} className="w-full bg-gray-200 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-300 transition-colors">Close</button>
@@ -2601,6 +2687,15 @@ function PurchaseHistory({ householdId, liveBucketMonthKey, liveBucketVal, aisle
 }
 
 export default function App() {
+  // WP-A: Extract ?code= param for email invite links early, before state init
+  let inviteCodeFromUrl = '';
+  try {
+    const sp = new URLSearchParams(window.location.search);
+    inviteCodeFromUrl = sp.get('code') || '';
+  } catch (e) {
+    // Ignore URL parsing errors
+  }
+
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [householdId, setHouseholdId] = useState(null);
@@ -2624,6 +2719,7 @@ export default function App() {
   /** B1 entry only: `${categoryId}::${suggestionId}` keys for amber pin rings. */
   const [pinEditDormantHighlightSet, setPinEditDormantHighlightSet] = useState(null);
   const [categorySearches, setCategorySearches] = useState({});
+  const [aisleHighlightedIndex, setAisleHighlightedIndex] = useState({});
   const [loading, setLoading] = useState(true);
   const [pendingOps, setPendingOps] = useState(0);
   const [expandedCategories, setExpandedCategories] = useState({});
@@ -2673,7 +2769,11 @@ export default function App() {
   const [showLoginExplicitly, setShowLoginExplicitly] = useState(
     () => ['/signin', '/signup', LEGAL_PATH_PRIVACY, LEGAL_PATH_TERMS].includes(window.location.pathname)
   );
-  const loginInitialMode = window.location.pathname === '/signup' ? 'signup' : 'signin';
+
+  const loginInitialMode = window.location.pathname === '/signup' ? 'signup' : (inviteCodeFromUrl ? 'signup' : 'signin');
+  const loginInitialSignupType = inviteCodeFromUrl ? 'join' : 'create';
+  const loginInitialInviteCode = inviteCodeFromUrl;
+
   const [loginLegalView, setLoginLegalView] = useState(() => legalViewFromPathname(window.location.pathname));
   const [needsDisplayName, setNeedsDisplayName] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState('');
@@ -2685,6 +2785,8 @@ export default function App() {
   const [liveItemEventsMonthVal, setLiveItemEventsMonthVal] = useState(null);
   /** PWA banner shown once per device via localStorage. */
   const [showPWABanner, setShowPWABanner] = useState(false);
+  /** WP-A: Dismissable notice when authenticated user tries to use an invite link. */
+  const [showInviteAlreadyAuthenticatedNotice, setShowInviteAlreadyAuthenticatedNotice] = useState(false);
 
   const orderedV2AisleIds = Object.keys(aislesV2)
     .sort((a, b) => (aislesV2[a]?.order ?? 0) - (aislesV2[b]?.order ?? 0));
@@ -2708,11 +2810,15 @@ export default function App() {
   const normalizeListItem = (item) => {
     const categoryId = item?.categoryId || categoryIdByName[item?.category] || null;
     const category = item?.category || categoryNameForId(categoryId) || '';
+    // `id` doubles as the RTDB path key, so coerce to string consistently. Legacy items
+    // stored with numeric Date.now() ids become their string form; new push-key ids pass through.
+    const id = item?.id != null && item.id !== '' ? String(item.id) : generateId();
     return {
       ...item,
+      id,
       categoryId,
       category,
-      itemKey: item?.itemKey || (item?.id != null && item.id !== '' ? String(item.id) : generateId()),
+      itemKey: item?.itemKey || id,
     };
   };
   const [selectedItem, setSelectedItem] = useState(null);
@@ -3144,6 +3250,35 @@ export default function App() {
       if (unsubscribe) unsubscribe();
     };
   }, []);
+
+  // WP-A: Store invite code from URL and clear the param
+  const inviteCodeFromUrlRef = useRef(inviteCodeFromUrl);
+  useEffect(() => {
+    if (inviteCodeFromUrl) {
+      // Clear the ?code= from URL to avoid confusion
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, [inviteCodeFromUrl]);
+
+  // WP-A: Handle authenticated user trying to access an invite link
+  useEffect(() => {
+    if (!authResolvedRef.current || !inviteCodeFromUrlRef.current) return;
+    if (!user) return; // User not authenticated, normal flow handled above
+
+    // User is authenticated and has an invite code in the URL
+    if (householdId) {
+      // User is already in a household
+      setShowInviteAlreadyAuthenticatedNotice(true);
+      logger.warn('Auth', 'Authenticated user with household tried to access invite link');
+    } else if (user) {
+      // User is authenticated but has no household (edge case: post-SSO before household choice)
+      // Attempt to redeem the code directly using existing join logic
+      logger.info('Auth', 'Authenticated user without household accessing invite link - will attempt to join');
+      // This case would need special handling in setupHouseholdForUser,
+      // but for MVP we'll just show the notice
+      setShowInviteAlreadyAuthenticatedNotice(true);
+    }
+  }, [authResolvedRef.current, user, householdId]);
 
   // Register PWA update callbacks
   useEffect(() => {
@@ -3589,6 +3724,48 @@ export default function App() {
     }
   };
 
+  /**
+   * Per-item shopping-list writes via RTDB multi-path update. Replaces the prior
+   * `save('shopping-list', wholeArray)` which used `set` and overwrote concurrent
+   * offline edits from other household members on reconnect (one user's `set`
+   * would clobber another's). With multi-path update, two clients editing
+   * different items merge cleanly; field-level paths (e.g. `${id}/done`) also let
+   * concurrent edits to the same item on different fields co-exist.
+   *
+   * pathToValue keys are paths under `shopping-list/`, e.g.
+   *   { "<id>": <fullItem> }            // add
+   *   { "<id>/done": true }             // toggle a field
+   *   { "<id>": null }                  // remove
+   *   { "<id1>": null, "<id2>": null }  // batched remove (clearDone)
+   */
+  const writeShoppingList = async (pathToValue, extraUpdates = null) => {
+    if (!householdId) {
+      logger.warn('Firebase', 'writeShoppingList skipped: missing householdId');
+      return;
+    }
+    const updates = { ...(extraUpdates || {}) };
+    for (const [path, value] of Object.entries(pathToValue)) {
+      updates[`households/${householdId}/shopping-list/${path}`] = value;
+    }
+    const opId = Date.now();
+    setPendingOps(p => p + 1);
+    try {
+      await update(ref(database), updates);
+      logger.info('Firebase', 'shopping-list multi-path update completed', {
+        opId,
+        paths: Object.keys(pathToValue).length,
+      });
+    } catch (error) {
+      logger.error('Firebase', 'shopping-list multi-path update failed', {
+        opId,
+        error: error.message,
+        code: error.code,
+      });
+    } finally {
+      setPendingOps(p => p - 1);
+    }
+  };
+
   const persistQuantityDefaults = async (nextDefaults) => {
     setQuantityDefaults(nextDefaults);
     await save('quantity-defaults', nextDefaults);
@@ -3656,8 +3833,11 @@ export default function App() {
     if (!assertWriteAllowed('gated_action')) return;
     const defaultQuantity = getDefaultQuantityForItem(itemKey, name);
     const categoryIdResolved = categoryIdOverride || categoryIdByName[category] || null;
-    const newList = [...list, stampRecord({
-      id: Date.now(),
+    // Push key (alphanumeric, server-collision-free) doubles as the RTDB path key
+    // and the item's React identity. Avoids Date.now() collisions on rapid taps.
+    const newId = push(ref(database, `households/${householdId}/shopping-list`)).key;
+    const newItem = stampRecord({
+      id: newId,
       itemKey,
       name,
       category,
@@ -3666,9 +3846,10 @@ export default function App() {
       done: false,
       addedBy: user?.uid || null,
       addedAt: Date.now(),
-    })];
+    });
+    const newList = [...list, newItem];
     setList(newList);
-    save('shopping-list', newList);
+    writeShoppingList({ [newId]: newItem });
     saveShoppingListLocally(newList);
     logItemEvent({
       name,
@@ -3693,35 +3874,48 @@ export default function App() {
 
   const toggleDone = (id) => {
     const target = list.find(item => item.id === id);
-    const newList = list.map(item => item.id === id ? stampRecord({ ...item, done: !item.done }) : item);
+    if (!target) return;
+    const nextDone = !target.done;
+    const newList = list.map(item => item.id === id ? stampRecord({ ...item, done: nextDone }) : item);
     setList(newList); // Optimistic update
-    save('shopping-list', newList);
+    writeShoppingList({
+      [`${id}/done`]: nextDone,
+      [`${id}/updatedAt`]: Date.now(),
+      [`${id}/updatedBy`]: currentEditor,
+    });
     saveShoppingListLocally(newList);
-    if (target) {
-      logItemEvent({
-        name: target.name,
-        category: getShoppingCategoryName(target),
-        categoryId: getItemCategoryId(target),
-        itemKey: getStableItemKey(target),
-        action: target.done ? 'unchecked' : 'checked',
-        qty: Number(target.quantity) || 1,
-        quantityLabel: (target.quantity || '').trim() || undefined,
-      });
-      if (!target.done) {
-        trackEvent('list_item_checked', {});
-      }
+    logItemEvent({
+      name: target.name,
+      category: getShoppingCategoryName(target),
+      categoryId: getItemCategoryId(target),
+      itemKey: getStableItemKey(target),
+      action: target.done ? 'unchecked' : 'checked',
+      qty: Number(target.quantity) || 1,
+      quantityLabel: (target.quantity || '').trim() || undefined,
+    });
+    if (!target.done) {
+      trackEvent('list_item_checked', {});
     }
   };
 
   const updateQuantity = (itemKey, qty) => {
     if (!assertWriteAllowed('gated_action')) return;
     setList((prevList) => {
+      const matches = prevList.filter(item => getStableItemKey(item) === itemKey);
       const nextList = prevList.map(item =>
         getStableItemKey(item) === itemKey
           ? stampRecord({ ...item, itemKey: getStableItemKey(item), quantity: qty })
           : item
       );
-      save('shopping-list', nextList);
+      const updates = {};
+      const stamp = Date.now();
+      for (const m of matches) {
+        updates[`${m.id}/quantity`] = qty;
+        updates[`${m.id}/itemKey`] = getStableItemKey(m);
+        updates[`${m.id}/updatedAt`] = stamp;
+        updates[`${m.id}/updatedBy`] = currentEditor;
+      }
+      writeShoppingList(updates);
       saveShoppingListLocally(nextList);
 
       const target = prevList.find(item => getStableItemKey(item) === itemKey);
@@ -3766,12 +3960,16 @@ export default function App() {
     const targetStableKey = getStableItemKey(target);
     const renamedTarget = stampRecord({ ...target, itemKey: targetStableKey, name: trimmed });
     const nextList = [];
+    const orphanIds = [];
     for (const item of prevList) {
       const sameLogicalRow = getStableItemKey(item) === itemKey;
       const orphanWithOldName = !sameLogicalRow
         && (item.categoryId || item.category) === (target.categoryId || target.category)
         && String(item.name ?? '').trim().toLowerCase() === oldNameLower;
-      if (orphanWithOldName) continue;
+      if (orphanWithOldName) {
+        orphanIds.push(item.id);
+        continue;
+      }
       nextList.push(sameLogicalRow ? renamedTarget : item);
     }
 
@@ -3803,6 +4001,8 @@ export default function App() {
       nextList,
       nextVisible,
       nextLibrary,
+      renamedTarget,
+      orphanIds,
       renameLog: {
         oldName: targetName,
         newName: trimmed,
@@ -3826,7 +4026,16 @@ export default function App() {
     });
     if (!outcome) return;
 
-    save('shopping-list', outcome.nextList);
+    const renameUpdates = {
+      [`${outcome.renamedTarget.id}/name`]: outcome.renamedTarget.name,
+      [`${outcome.renamedTarget.id}/itemKey`]: outcome.renamedTarget.itemKey,
+      [`${outcome.renamedTarget.id}/updatedAt`]: outcome.renamedTarget.updatedAt,
+      [`${outcome.renamedTarget.id}/updatedBy`]: outcome.renamedTarget.updatedBy,
+    };
+    for (const orphanId of outcome.orphanIds) {
+      renameUpdates[orphanId] = null;
+    }
+    writeShoppingList(renameUpdates);
     saveShoppingListLocally(outcome.nextList);
     if (outcome.renameLog) {
       logItemEvent({
@@ -4048,12 +4257,21 @@ export default function App() {
           await moveSuggestionToCategory(suggestionId, fromCatId, toCatId);
           const toCategoryName = categoriesV2[toCatId]?.name || '';
           setList(prev => {
+            const matches = prev.filter(li => getStableItemKey(li) === itemKey);
             const next = prev.map(li =>
               getStableItemKey(li) === itemKey
                 ? { ...li, categoryId: toCatId, category: toCategoryName }
                 : li
             );
-            save('shopping-list', next);
+            const updates = {};
+            const stamp = Date.now();
+            for (const m of matches) {
+              updates[`${m.id}/categoryId`] = toCatId;
+              updates[`${m.id}/category`] = toCategoryName;
+              updates[`${m.id}/updatedAt`] = stamp;
+              updates[`${m.id}/updatedBy`] = currentEditor;
+            }
+            writeShoppingList(updates);
             saveShoppingListLocally(next);
             return next;
           });
@@ -4204,9 +4422,12 @@ export default function App() {
 
   const clearDone = () => {
     if (!assertWriteAllowed('gated_action')) return;
+    const doneIds = list.filter(item => item.done).map(item => item.id);
+    if (!doneIds.length) return;
     const newList = list.filter(item => !item.done);
     setList(newList); // Optimistic update
-    save('shopping-list', newList);
+    const updates = Object.fromEntries(doneIds.map(id => [id, null]));
+    writeShoppingList(updates);
     saveShoppingListLocally(newList);
   };
 
@@ -4239,7 +4460,7 @@ export default function App() {
     const target = list.find(item => item.id === id);
     const newList = list.filter(item => item.id !== id);
     setList(newList); // Optimistic update
-    save('shopping-list', newList);
+    writeShoppingList({ [id]: null });
     saveShoppingListLocally(newList);
     if (target && !target.done) {
       if (target.quantity && target.quantity.trim()) {
@@ -4265,6 +4486,7 @@ export default function App() {
     const addSource = suggestion.suggestionId != null ? 'search' : 'typed';
     addItem(suggestion.name, categoryName, addSource, generateId(), catId);
     setCategorySearches(prev => ({ ...prev, [aisleId]: '' }));
+    setAisleHighlightedIndex(prev => ({ ...prev, [aisleId]: -1 }));
   };
 
   const getAisleSuggestions = (aisleId) => {
@@ -5041,6 +5263,8 @@ export default function App() {
         onOpenLegal={openLoginLegalView}
         onCloseLegal={closeLoginLegalView}
         initialMode={loginInitialMode}
+        initialSignupType={loginInitialSignupType}
+        initialInviteCode={loginInitialInviteCode}
       />
     );
   }
@@ -5059,6 +5283,8 @@ export default function App() {
           onOpenLegal={openLoginLegalView}
           onCloseLegal={closeLoginLegalView}
           initialMode={loginInitialMode}
+          initialSignupType={loginInitialSignupType}
+          initialInviteCode={loginInitialInviteCode}
         />
       );
     }
@@ -5210,25 +5436,35 @@ export default function App() {
       return next;
     });
 
+    let movedItemIds = [];
     setList((prev) => {
+      movedItemIds = prev.filter(li => getItemCategoryId(li) === fromCatId).map(li => li.id);
       const mapped = prev.map((li) =>
         getItemCategoryId(li) === fromCatId
           ? { ...li, categoryId: intoCatId, category: toName }
           : li,
       );
-      save('shopping-list', mapped);
       saveShoppingListLocally(mapped);
       return mapped;
     });
 
     try {
-      await update(ref(database), {
+      const merged = {
         [`${taxonomyBase}/categories/${fromCatId}`]: null,
         [`${taxonomyBase}/visible-items/${fromCatId}`]: null,
         [`${taxonomyBase}/library/${fromCatId}`]: null,
         [`${taxonomyBase}/visible-items/${intoCatId}`]: nextVis.length > 0 ? nextVis : null,
         [`${taxonomyBase}/library/${intoCatId}`]: nextLib.length > 0 ? nextLib : null,
-      });
+      };
+      const stamp = Date.now();
+      const listBase = `households/${householdId}/shopping-list`;
+      for (const id of movedItemIds) {
+        merged[`${listBase}/${id}/categoryId`] = intoCatId;
+        merged[`${listBase}/${id}/category`] = toName;
+        merged[`${listBase}/${id}/updatedAt`] = stamp;
+        merged[`${listBase}/${id}/updatedBy`] = currentEditor;
+      }
+      await update(ref(database), merged);
     } catch (err) {
       logger.error('App', 'taxoMergeCategory failed', { error: err.message });
     }
@@ -5379,6 +5615,24 @@ export default function App() {
           </div>
         )}
 
+        {/* WP-A: Dismissable notice for authenticated user with invite link */}
+        {showInviteAlreadyAuthenticatedNotice && (
+          <div className="fixed top-0 left-0 right-0 bg-blue-50 border-b border-blue-200 z-[51] pt-safe" style={{ marginTop: showPWABanner ? '48px' : '0' }}>
+            <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-blue-900 flex-1">
+                You're already in a household — this invite link won't work while signed in.
+              </p>
+              <button
+                onClick={() => setShowInviteAlreadyAuthenticatedNotice(false)}
+                className="shrink-0 p-1 hover:bg-blue-100 rounded transition-colors"
+                aria-label="Close"
+              >
+                <X size={18} className="text-blue-900" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Header — hamburger + wordmark only; sync pill top-right. Scrolls off-screen on scroll-down (all breakpoints). */}
         <div
           className={`fixed top-0 left-0 right-0 bg-white shadow-sm z-50 transition-transform duration-300 pt-safe ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}
@@ -5460,8 +5714,8 @@ export default function App() {
           )}
         </div>
 
-        {/* Desktop list: Shop/Plan + Clear — fixed below header (not inside it); slides up when header hides, like mobile bottom bar. */}
-        {currentPage === 'list' && !keyboardInputFocused && (
+        {/* Desktop list: Shop/Plan + Clear — fixed below header (not inside it); slides up when header hides, like mobile bottom bar. Always visible on desktop even when keyboard/autocomplete is active. */}
+        {currentPage === 'list' && (
           <div
             className="hidden lg:block fixed left-0 right-0 z-40 px-3 pt-3 pointer-events-none transition-[top] duration-300 ease-out"
             style={{
@@ -5471,29 +5725,6 @@ export default function App() {
             }}
           >
             <div className="max-w-2xl lg:max-w-6xl mx-auto">
-              {doneCount > 0 && (
-                <div className="flex justify-center mb-2 pointer-events-auto relative">
-                  {showClearChipTooltip && (
-                    <div
-                      className="animate-tooltip-in absolute left-1/2 -top-12 -translate-x-1/2 bg-gray-900 text-white text-xs font-medium px-3 py-2 rounded-lg shadow-lg whitespace-nowrap"
-                      aria-hidden="true"
-                    >
-                      All done with these? Tap to clear.
-                      <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
-                    </div>
-                  )}
-                  <button
-                    key={`clear-chip-desktop-${hasDone}`}
-                    onClick={clearDone}
-                    className="animate-chip-in flex items-center gap-1.5 px-4 py-2 rounded-full text-white text-xs font-bold shadow-lg active:scale-95 transition-transform"
-                    style={{ backgroundColor: '#FF7A7A' }}
-                    aria-label={`Clear ${doneCount} done item${doneCount === 1 ? '' : 's'}`}
-                  >
-                    <Check size={14} strokeWidth={2.5} />
-                    Clear {doneCount} done
-                  </button>
-                </div>
-              )}
               <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-1.5 flex gap-1 pointer-events-auto items-center">
                 {pinEditMode ? (
                   <>
@@ -5530,6 +5761,29 @@ export default function App() {
                   </>
                 )}
               </div>
+              {doneCount > 0 && (
+                <div className="flex justify-center mt-2 pointer-events-auto relative">
+                  {showClearChipTooltip && (
+                    <div
+                      className="animate-tooltip-in absolute left-1/2 -top-12 -translate-x-1/2 bg-gray-900 text-white text-xs font-medium px-3 py-2 rounded-lg shadow-lg whitespace-nowrap"
+                      aria-hidden="true"
+                    >
+                      All done with these? Tap to clear.
+                      <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
+                    </div>
+                  )}
+                  <button
+                    key={`clear-chip-desktop-${hasDone}`}
+                    onClick={clearDone}
+                    className="animate-chip-in flex items-center gap-1.5 px-4 py-2 rounded-full text-white text-xs font-bold shadow-lg active:scale-95 transition-transform"
+                    style={{ backgroundColor: '#FF7A7A' }}
+                    aria-label={`Clear ${doneCount} done item${doneCount === 1 ? '' : 's'}`}
+                  >
+                    <Check size={14} strokeWidth={2.5} />
+                    Clear {doneCount} done
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -5642,11 +5896,9 @@ export default function App() {
                   </div>
                 )}
 
-                {isAdmin && (
-                  <button onClick={() => setShowAdmin(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
-                    <Shield size={20} />Invite Household Members
-                  </button>
-                )}
+                <button onClick={() => setShowAdmin(true)} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
+                  <Users size={20} />Invite Household Members
+                </button>
                 <button onClick={handleSignOut} className="w-full bg-white rounded-2xl border border-gray-200 px-6 py-4 flex items-center gap-3 font-semibold text-red-500 hover:bg-red-50 transition-colors">
                   <LogOut size={20} />Sign Out
                 </button>
@@ -5770,7 +6022,28 @@ export default function App() {
                                   ref={(el) => { aisleAddSearchInputRefs.current[g.aisleId] = el; }}
                                   type="text"
                                   value={search}
-                                  onChange={(e) => setCategorySearches(prev => ({ ...prev, [g.aisleId]: e.target.value }))}
+                                  onChange={(e) => {
+                                    setCategorySearches(prev => ({ ...prev, [g.aisleId]: e.target.value }));
+                                    setAisleHighlightedIndex(prev => ({ ...prev, [g.aisleId]: -1 }));
+                                  }}
+                                  onKeyDown={(e) => {
+                                    const items = quickAddDropdown;
+                                    const cur = aisleHighlightedIndex[g.aisleId] ?? -1;
+                                    if (e.key === 'ArrowDown') {
+                                      e.preventDefault();
+                                      setAisleHighlightedIndex(prev => ({ ...prev, [g.aisleId]: items.length === 0 ? -1 : (cur + 1) % items.length }));
+                                    } else if (e.key === 'ArrowUp') {
+                                      e.preventDefault();
+                                      setAisleHighlightedIndex(prev => ({ ...prev, [g.aisleId]: items.length === 0 ? -1 : cur <= 0 ? items.length - 1 : cur - 1 }));
+                                    } else if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      const idx = cur >= 0 ? cur : 0;
+                                      if (items[idx]) addFromAisleSearch(g.aisleId, items[idx]);
+                                    } else if (e.key === 'Escape') {
+                                      setCategorySearches(prev => ({ ...prev, [g.aisleId]: '' }));
+                                      setAisleHighlightedIndex(prev => ({ ...prev, [g.aisleId]: -1 }));
+                                    }
+                                  }}
                                   placeholder={`Add to ${g.aisleNameDisplay}...`}
                                   className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm bg-white focus:border-gray-300 focus:outline-none transition-colors"
                                 />
@@ -5781,6 +6054,7 @@ export default function App() {
                                     }`}
                                   >
                                     {quickAddDropdown.map((s, i) => {
+                                      const highlighted = (aisleHighlightedIndex[g.aisleId] ?? -1) === i;
                                       const showLibraryRemove = Boolean(
                                         s.catId && s.suggestionId && s.fromVisible === false
                                       );
@@ -5795,14 +6069,14 @@ export default function App() {
                                           <button
                                             type="button"
                                             onClick={() => addFromAisleSearch(g.aisleId, s)}
-                                            className="flex-1 min-w-0 text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium"
+                                            className={`flex-1 min-w-0 text-left px-4 py-3 text-sm font-medium ${highlighted ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
                                           >
                                             {s.name}
                                           </button>
                                           {showLibraryRemove ? (
                                             <button
                                               type="button"
-                                              className="flex-shrink-0 px-3 py-3 text-gray-400 hover:text-gray-700 hover:bg-gray-50"
+                                              className={`flex-shrink-0 px-3 py-3 text-gray-400 hover:text-gray-700 ${highlighted ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 void taxoRemoveLibraryItem(s.catId, s.suggestionId);
@@ -6143,7 +6417,7 @@ export default function App() {
           </div>
         )}
       </div>
-      {showAdmin && isAdmin && <AdminPanel householdId={householdId} onClose={() => setShowAdmin(false)} />}
+      {showAdmin && <AdminPanel householdId={householdId} members={members} adminUid={user?.uid} onClose={() => setShowAdmin(false)} />}
       {showDeleteAccount && user && (
         <DeleteAccountModal
           user={user}

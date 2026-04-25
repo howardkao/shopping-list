@@ -83,12 +83,16 @@ This document tracks the ongoing effort to productize this app for public, multi
 - [x] **Google + Apple SSO** — web (WP-1, 2026-04-18) + native (WP-5, 2026-04-23). Email/password, Google, and Apple sign-in; account linking for SSO-to-email merges; reauthentication for account deletion.
 - [x] **Subscription system (RevenueCat)** — native paywall, read-only gating, RevenueCat SDK wired with householdId as App User ID (`src/subscriptions.js`, `src/App.jsx`, `PaywallSheet`). 2026-04-22, branch `native/subscriptions` (WP-7). Web Stripe flow + RC web SDK enforcement remain stubbed.
 - [x] **Cross-platform analytics (Firebase Analytics)** — web: `src/analytics.js` + GA4 events in `App.jsx` (WP-2, 2026-04-21). Native platforms: Capacitor plugin (WP-6, 2026-04-23).
+- [x] **Admin discovery** — admin can see household member list (names + role) in the admin panel — 2026-04-24
+- [x] **Account deletion edge case** — decided: admin deletion removes the entire household and all data; non-admin deletion removes only the user record; confirmed in `deleteAccountDataAndAuth` (`src/App.jsx:271`) and the delete account modal warning copy — 2026-04-24
+- [x] **Offline sync reliability** — fixed: replaced whole-array `set` with per-item multi-path `update` in `writeShoppingList` (`src/App.jsx:3672`); concurrent offline writes from different users now merge cleanly — 2026-04-24
+- [x] **UAT checklist corrections** — updated `qa/UAT_CHECKLIST.md`: T5 corrected (all members can edit taxonomy), AD4 corrected (debug panel is accessible to all members), title updated from Larder to Provisions — 2026-04-24
 
 ### Should-Have
 
 - [x] **Stronger invite code security** — codes extended to 16 characters; stored in household path + global lookup index — 2026-04-10
-- [ ] **Firebase `.validate` rules for data size** — prevent malicious users from writing arbitrarily large payloads
-- [ ] **Capacitor native apps (iOS + Android)** — see `NATIVE_APP_PLAN.md` for full plan
+- [x] **Firebase `.validate` rules for data size** — length + type constraints on all writable fields in `database.rules.json`
+- [x] **Capacitor native apps (iOS + Android)** — `ios/` and `android/` project dirs shipped; see `NATIVE_APP_PLAN.md`
 - [x] **Generic onboarding flow** — guide new household through setting up aisles/categories and reviewing initial suggestions — 2026-04-14 (welcome + wizard-mode SuggestionsEditor, gated on `taxonomy/onboarding_completed`)
 - [x] **Taxonomy redesign (aisles + user-editable categories + library)** — shipped in app 2026-04-14–15; legacy taxonomy code + RTDB paths removed from the client and household rules thereafter. PRD §4–§6 and TDD §3 describe the shipped model.
   - Seed catalog: `src/seedCatalog.js` (as of 2026-04-17: 10 aisles, 54 categories, 353 items; `starred` rows seed visible shortcuts, the rest seed into per-category `library`)
@@ -96,11 +100,19 @@ This document tracks the ongoing effort to productize this app for public, multi
   - Settings + onboarding: `src/SuggestionsEditor.jsx` + `src/Onboarding.jsx`; Shop/Add are aisle-grouped against v2 taxonomy
   - Historical migration for pre-v2 households: `scripts/migrate-to-taxonomy-v2.cjs` (+ related scripts under `scripts/`); not part of normal operations for new households (`src/householdBootstrap.js`)
   - **Still open (outside web app):** `voice-mcp/` context reads still point at legacy household paths for suggestions/history — needs a v2 read pass before voice traffic scales (`CLAUDE.md` notes this gap)
+- [ ] **Household membership management** — leave-household flow, admin remove-member action, member joining a different household. Not a launch blocker; current behavior is account deletion (admin: wipes household; member: removes user record only).
+- [ ] **Admin promotion** — admin can designate another member as co-admin or successor. Not a launch blocker.
+- [x] **Invite Household Members access** — all members can generate invite codes (gate removed 2026-04-24)
+- [x] **SSO button visual balance** — Google and Apple buttons use identical styling (`border-2 border-gray-900`, same height and weight); hierarchy is balanced
+- [x] **Desktop layout: Clear X done positioning** — moved chip to render after the Shop/Plan toggle on desktop; no longer pushes toggle down into first aisle — 2026-04-24
+- [x] **Desktop autocomplete keyboard navigation** — ArrowDown/ArrowUp navigate suggestions (wraps), Enter selects highlighted item (defaults to first if none highlighted), Escape clears; highlighted row styled `bg-gray-100` — 2026-04-24
+- [x] **Desktop shop/plan toggle visibility during autocomplete** — desktop toggle no longer gated on `!keyboardInputFocused`; mobile toggle unchanged — 2026-04-24
+- [ ] **Web subscription status display** — Accounts page should show trial/subscription status similar to native apps (currently stubbed). Adjust for web-only constraints: remove "restore purchase" option, show message on purchase attempt that subscriptions come via app stores (or "coming soon" until app store launch). Implement once Stripe + RC web SDK timeline is finalized.
 
 ### Nice-to-Have / Post-Launch
 
 - [ ] **Firestore migration for household data** — more cost-efficient at 10k+ households; requires significant refactor
-- [ ] **Email invites** — admin enters invitee email; Worker emails a pre-filled join link (`?code=`); frontend detects and pre-fills join form. Plan in `INVITE_EMAIL_PLAN.md` (5 work packages; WP-A/B+C/E parallel, WP-D after WP-B).
+- [x] **Email invites (WP-A)** — frontend: URL deep link handling for `?code=` parameter, pre-fills join form, dismissable notice for authenticated users. Plan in `INVITE_EMAIL_PLAN.md` (5 work packages; WP-A ✓/B+C/E parallel, WP-D after WP-B).
 - [ ] **Push notifications** — notify household members when the list changes (Capacitor plugin: `@capacitor/push-notifications`)
 - [ ] **Push notifications** — notify household members when the list changes (limited on iOS PWA pre-16.4)
 
@@ -139,6 +151,11 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 ---
 
 ## Session Log
+
+### 2026-04-24 — Pre-launch checklist triage + admin discovery + UAT corrections
+- **Must-Have list triage:** Items 4 (account deletion edge case) and 6 (offline sync) confirmed already resolved; items 2 (household membership management) and 5 (admin promotion) demoted to Should-Have as not launch-blocking. Remaining Must-Have blockers: Legal final pass (hard gate), and (now shipped) Admin discovery + UAT corrections.
+- **Admin discovery (`src/App.jsx`):** Added household member list to `AdminPanel`. Each member row shows display name (email fallback) and an "Admin" badge for the admin uid. `AdminPanel` now accepts `members` and `adminUid` props; call site updated to pass `members={members}` and `adminUid={user?.uid}`. No join date displayed — not stored in member records.
+- **UAT checklist (`qa/UAT_CHECKLIST.md`):** Corrected three stale items: T5 (non-admins can edit taxonomy, no controls hidden by role), AD4 (debug panel accessible to all members), title updated from Larder to Provisions.
 
 ### 2026-04-24 — WP-11: PWA transition banner
 - **Branch:** `native/pwa-banner` (off `main`).
@@ -721,6 +738,31 @@ Firebase Spark (free) plan covers ~400 households on download alone (10GB/month 
 - **`src/firebase.js`:** Native Capacitor builds now initialize Firebase Auth without `browserPopupRedirectResolver`.
 - **`src/App.jsx`:** The startup `getRedirectResult()` recovery path now exits early on `Capacitor.isNativePlatform()` so iOS no longer tries to run unsupported web redirect-auth recovery before `onAuthStateChanged` is registered.
 - **`TDD.md`:** Recorded that native SSO uses the Capacitor plugin path only; the Firebase JS redirect recovery path is web-only.
+
+### 2026-04-24 — Pre-launch feature + polish audit
+- **Collected 14 new items for the Work Items sections** covering critical household-management gaps, UX polish, and bug fixes identified during a pre-launch review pass.
+- **Must-Have blockers added (6 items):**
+  1. Household membership management — missing UI flows for leave, remove, switch, and account-deletion succession
+  2. Account deletion edge case — specify behavior when admin deletes their account
+  3. Admin promotion — ability to designate another member as admin
+  4. Admin discovery — view all household members
+  5. Offline sync bug — multiple concurrent offline writes cause later syncs to revert earlier changes
+  6. UAT checklist corrections — 3 test cases need accuracy updates
+- **Should-Have items added (6 items):**
+  1. Invite Household Members access — currently admin-only; decision needed on whether all members can invite
+  2. SSO button visual balance — Apple SSO too prominent
+  3. Desktop Clear X done positioning — currently overlaps shop/plan toggle
+  4. Desktop autocomplete keyboard nav — arrow keys + Enter to select
+  5. Desktop shop/plan toggle visibility — should stay visible during autosuggest (no on-screen keyboard)
+  6. Web subscription status display — show trial/subscription status, adjust for web-only constraints
+- **Impact:** Household management features are launch-blocking; sync bug must be fixed before release. Desktop polish items and web subscription display deferred to should-have, can ship post-launch if schedule permits.
+- **Next:** Prioritize membership management and sync bug fixes for the next sprint; reserve a session for UAT checklist review and corrections before submission.
+- **No code changes made this session; planning only**
+
+### 2026-04-24 — Email invites WP-A: URL deep link handling
+- **`src/App.jsx`:** Implemented frontend detection and pre-fill for email invite links with `?code=` parameter. Extract code synchronously at App mount, set `loginInitialMode='signup'`, `loginInitialSignupType='join'`, and `loginInitialInviteCode` to pre-fill the join form. After auth resolves, if user is authenticated and has a household, show dismissable notice "You're already in a household — this invite link won't work while signed in." Clear `?code=` from URL with `window.history.replaceState` to avoid re-processing.
+- **Files:** `src/App.jsx` only (component signature updates for `Login` and `AuthLoginScreen` to accept `initialSignupType` and `initialInviteCode` props; new state for dismissable invite notice; new useEffect to clear URL and handle authenticated user cases).
+- **Status:** WP-A complete and ready for integration with WP-B (Worker `/send-invite` endpoint) and WP-C (email template). WP-B, WP-C, WP-D, WP-E remain to be scheduled.
 
 ### 2026-04-10 — Initial productization planning
 - Discussed what's needed to go from single-household personal app to public multi-household product
