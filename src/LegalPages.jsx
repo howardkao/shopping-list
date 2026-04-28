@@ -140,7 +140,9 @@ export function PrivacyPolicyPage({ onBack }) {
         <li><strong>Resend</strong> — email delivery for household invitations; processes invitee email addresses.</li>
         <li><strong>Cloudflare</strong> — infrastructure for certain service endpoints; request metadata passes through their network.</li>
         <li><strong>Apple</strong> — App Store payment processing and Apple Sign In authentication.</li>
-        <li><strong>Google</strong> — Google Play payment processing and Google Sign In authentication.</li>
+        {Capacitor.getPlatform() !== 'ios' && (
+          <li><strong>Google</strong> — Google Play payment processing and Google Sign In authentication.</li>
+        )}
       </ul>
       <p>
         Household members you invite can see household data as designed by the app.
@@ -272,8 +274,8 @@ export function TermsOfServicePage({ onBack }) {
           all current members of that household.
         </li>
         <li>
-          <strong>Auto-renewal.</strong> Subscriptions purchased through the App Store or Google
-          Play automatically renew unless cancelled at least 24 hours before the end of the current
+          <strong>Auto-renewal.</strong> Subscriptions purchased through the App Store
+          {Capacitor.getPlatform() !== 'ios' ? <> or Google Play</> : null} automatically renew unless cancelled at least 24 hours before the end of the current
           billing period.
         </li>
         <li>
@@ -282,8 +284,8 @@ export function TermsOfServicePage({ onBack }) {
           settings.
         </li>
         <li>
-          <strong>Refunds.</strong> Refunds for App Store purchases are handled by Apple; refunds
-          for Google Play purchases are handled by Google, according to their respective policies.
+          <strong>Refunds.</strong> Refunds for App Store purchases are handled by Apple
+          {Capacitor.getPlatform() !== 'ios' ? <>; refunds for Google Play purchases are handled by Google, according to their respective policies</> : null}.
         </li>
         <li>
           <strong>Price.</strong> The current subscription price is $3.99 per year. Prices may
@@ -430,7 +432,9 @@ export function SupportPage({ onBack }) {
         </div>
       </div>
 
-      <SectionTitle>App Store & Google Play Subscriptions</SectionTitle>
+      <SectionTitle>
+        {Capacitor.getPlatform() === 'ios' ? 'App Store Subscriptions' : 'App Store & Google Play Subscriptions'}
+      </SectionTitle>
       <p>
         Subscriptions are managed by your device&apos;s app store. To view, change, or cancel your subscription:
       </p>
@@ -438,9 +442,11 @@ export function SupportPage({ onBack }) {
         <li>
           <strong>iOS:</strong> Open the Settings app → Tap your Name → Tap Subscriptions.
         </li>
-        <li>
-          <strong>Android:</strong> Open the Google Play Store → Tap your profile icon → Tap Payments & subscriptions → Subscriptions.
-        </li>
+        {Capacitor.getPlatform() !== 'ios' && (
+          <li>
+            <strong>Android:</strong> Open the Google Play Store → Tap your profile icon → Tap Payments & subscriptions → Subscriptions.
+          </li>
+        )}
       </ul>
     </LegalShell>
   );

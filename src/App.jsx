@@ -94,7 +94,7 @@ const LEGAL_PATH_SUPPORT = '/support';
  *  transition banner and the web "download the app" links in PaywallSheet + Account. */
 const APP_STORES_LIVE = false;
 const APP_STORE_URL = 'https://apps.apple.com/app/provisions/id123';
-const GOOGLE_PLAY_URL = 'https://play.google.com/store/apps/details?id=com.provisionsapp.shoppinglist';
+const GOOGLE_PLAY_URL = Capacitor.getPlatform() === 'ios' ? '' : 'https://play.google.com/store/apps/details?id=com.provisionsapp.shoppinglist';
 
 function legalViewFromPathname(pathname) {
   if (pathname === LEGAL_PATH_PRIVACY) return 'privacy';
@@ -1332,6 +1332,10 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode, initia
           <button type="button" onClick={onOpenPrivacy} className="font-semibold underline decoration-gray-300 hover:decoration-gray-600 text-gray-600">
             Privacy Policy
           </button>
+          {' '}and{' '}
+          <button type="button" onClick={onOpenSupport} className="font-semibold underline decoration-gray-300 hover:decoration-gray-600 text-gray-600">
+            Support
+          </button>
           .
         </p>
       </div>
@@ -1346,11 +1350,15 @@ function AuthLoginScreen({ onLoginSuccess, legalView, onOpenLegal, onCloseLegal,
   if (legalView === 'terms') {
     return <TermsOfServicePage onBack={onCloseLegal} />;
   }
+  if (legalView === 'support') {
+    return <SupportPage onBack={onCloseLegal} />;
+  }
   return (
     <Login
       onLoginSuccess={onLoginSuccess}
       onOpenPrivacy={() => onOpenLegal('privacy')}
       onOpenTerms={() => onOpenLegal('terms')}
+      onOpenSupport={() => onOpenLegal('support')}
       initialMode={initialMode}
       initialSignupType={initialSignupType}
       initialInviteCode={initialInviteCode}
@@ -5727,14 +5735,13 @@ export default function App() {
   const accountSub = subscriptionStatus;
   const accountManageUrl = Capacitor.getPlatform() === 'ios'
     ? 'https://apps.apple.com/account/subscriptions'
-    : 'https://play.google.com/store/account/subscriptions';
+    : (Capacitor.getPlatform() === 'android' ? 'https://play.google.com/store/account/subscriptions' : '');
   const currentPlatformStore = Capacitor.getPlatform() === 'ios' ? 'APP_STORE' : 'PLAY_STORE';
   const subStore = accountSub?.store ?? null;
   const subOnOtherPlatform = accountSub?.active && !accountSub?.inTrial
     && subStore && subStore !== 'PROMOTIONAL' && subStore !== currentPlatformStore;
   const subStoreName = subStore === 'APP_STORE' ? 'App Store'
-    : subStore === 'PLAY_STORE' ? 'Google Play'
-    : null;
+    : (subStore === 'PLAY_STORE' ? (Capacitor.getPlatform() === 'ios' ? 'another platform' : 'Google Play') : null);
   const fmtDate = (ms) => ms
     ? new Date(ms).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     : '—';
@@ -5786,7 +5793,11 @@ export default function App() {
           <div className="fixed top-0 left-0 right-0 bg-amber-50 border-b border-amber-200 z-[51] pt-safe">
             <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
               <p className="text-sm font-medium text-amber-900 flex-1">
-                Provisions is now on the <a href={APP_STORE_URL} className="font-bold underline hover:no-underline">App Store</a> and <a href={GOOGLE_PLAY_URL} className="font-bold underline hover:no-underline">Google Play</a>.
+                {Capacitor.getPlatform() === 'ios' ? (
+                  <>Provisions is now on the <a href={APP_STORE_URL} className="font-bold underline hover:no-underline">App Store</a>.</>
+                ) : (
+                  <>Provisions is now on the <a href={APP_STORE_URL} className="font-bold underline hover:no-underline">App Store</a> and <a href={GOOGLE_PLAY_URL} className="font-bold underline hover:no-underline">Google Play</a>.</>
+                )}
               </p>
               <button
                 onClick={() => {
@@ -6052,7 +6063,9 @@ export default function App() {
                           <p className="text-sm text-gray-500">
                             {Capacitor.isNativePlatform()
                               ? 'Your free trial has ended'
-                              : 'Your trial has ended. Download the iOS or Android app to subscribe.'}
+                              : (Capacitor.getPlatform() === 'ios'
+                                  ? 'Your trial has ended. Download the App Store app to subscribe.'
+                                  : 'Your trial has ended. Download the iOS or Android app to subscribe.')}
                           </p>
                         </>
                       ) : (

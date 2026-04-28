@@ -61,26 +61,10 @@ ios/App/App/GoogleService-Info.plist
 # WP-6: transient input for `npm run gen-icons` (source of truth is public/icon-1024.png)
 .cap-assets-input/
 
-# Local requirements docs (not committed; see CLAUDE.md for workflow)
-PRD.md
-TDD.md
-DESIGN_REVIEW.md
-
 # Internal planning and AI agent docs
-BUSINESS_LAUNCH_PLAN.md
-PRODUCTIZATION.md
-PRODUCT_MARKETING.md
+plans/
 CLAUDE.md
 AGENTS.md
-LOGGING.md
-NATIVE_APP_PLAN.md
-NATIVE_APP_EXECUTION_PLAN.md
-STRIPE_EXECUTION_PLAN.md
-PAYWALL_SPEC.md
-STRIPE_SPEC.md
-LAUNCH_GEO_SCOPE_PLAN.md
-BIOMETRIC_PLAN.md
-SMART_HOME_PLAN.md
 
 # Local env vars and build dirs for workers
 **/.dev.vars
@@ -105,8 +89,4 @@ database-debug.log
 # Local HTML mockups / store graphics (not shipped)
 *mockup*.html
 play-store-feature-graphic.html
-INVITE_EMAIL_PLAN.md
-SHOPPING_LIST_EXECUTION_BLUEPRINT_AND_TECHNICAL_SPEC.md
-SHOPPING_LIST_STRATEGY_AND_NORTH_STAR.md
-SECURITY_AUDIT.md
 database.rules.json.bak
