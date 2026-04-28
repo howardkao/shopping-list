@@ -86,13 +86,15 @@ export function PrivacyPolicyPage({ onBack }) {
             Firebase Realtime Database
           </a>{' '}
           under your household&apos;s records. Other members of the same household can see this
-          data according to the product&apos;s sharing model.
+          data according to the product&apos;s sharing model. Member display names, and email
+          addresses where no display name is set, are visible to other members of the same
+          household.
         </li>
         <li>
           <strong>Technical and operational logs.</strong> The app may send diagnostic and
           operational log entries (for example sign-in attempts, errors, and coarse usage events) to
           Firebase for the operator to troubleshoot and improve reliability. Logs are retained for
-          21 days and are readable by household administrators where the product exposes that
+          21 days and are readable by all household members where the product exposes that
           capability.
         </li>
         <li>
@@ -128,10 +130,20 @@ export function PrivacyPolicyPage({ onBack }) {
 
       <SectionTitle>Sharing</SectionTitle>
       <p>
-        We do not sell your personal information. Data is processed by service providers needed to
-        run the Service (notably Google Firebase / Google Cloud). Their processing is governed by
-        their terms and privacy documentation. Household members you invite can see household data
-        as designed by the app.
+        We do not sell your personal information. Data is processed by the following service
+        providers as needed to operate the Service. Each provider&apos;s processing is governed by
+        their own terms and privacy documentation.
+      </p>
+      <ul className="list-disc pl-5 space-y-2">
+        <li><strong>Google Firebase / Google Cloud</strong> — authentication, database, analytics, and hosting.</li>
+        <li><strong>RevenueCat</strong> — subscription management and entitlement verification; processes household ID and purchase records.</li>
+        <li><strong>Resend</strong> — email delivery for household invitations; processes invitee email addresses.</li>
+        <li><strong>Cloudflare</strong> — infrastructure for certain service endpoints; request metadata passes through their network.</li>
+        <li><strong>Apple</strong> — App Store payment processing and Apple Sign In authentication.</li>
+        <li><strong>Google</strong> — Google Play payment processing and Google Sign In authentication.</li>
+      </ul>
+      <p>
+        Household members you invite can see household data as designed by the app.
       </p>
 
       <SectionTitle>Retention and deletion</SectionTitle>
@@ -141,7 +153,10 @@ export function PrivacyPolicyPage({ onBack }) {
         personal profile and disconnects you from household data; however, shared shopping list
         items may persist as part of the household record until the household itself is deleted.
         Operational logs may persist for 21 days independent of the account deletion.
-      </p>
+        Payment and subscription records held by third-party processors (RevenueCat, Apple, and
+        Google) are retained subject to their own data retention policies and may persist after
+        your account is deleted.
+</p>
 
       <SectionTitle>Security</SectionTitle>
       <p>
@@ -236,6 +251,12 @@ export function TermsOfServicePage({ onBack }) {
         Features may allow multiple people to share a single household list. You are responsible for
         whom you invite and for content added under your account. The operator is not obligated to
         mediate disputes between household members.
+      </p>
+      <p>
+        <strong>Admin account deletion permanently deletes the entire household</strong>, including
+        all shared lists, taxonomy, and data for every member. Non-admin members cannot prevent
+        this. If you depend on household data, ensure the admin role is held by a trusted and
+        active member.
       </p>
 
       <SectionTitle>Subscriptions and Billing</SectionTitle>
@@ -347,6 +368,80 @@ export function TermsOfServicePage({ onBack }) {
         If any provision is held unenforceable, the remaining provisions remain in effect to the
         maximum extent permitted.
       </p>
+    </LegalShell>
+  );
+}
+
+export function SupportPage({ onBack }) {
+  return (
+    <LegalShell
+      title="Support"
+      effectiveLabel="Updated: April 27, 2026"
+      onBack={onBack}
+    >
+      <p>
+        Need help with Provisions? We&apos;re here to support you and your household.
+      </p>
+
+      <SectionTitle>Contact Us</SectionTitle>
+      <p>
+        The fastest way to get support is to email us at{' '}
+        <a
+          href="mailto:support@myprovisions.app"
+          className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
+        >
+          support@myprovisions.app
+        </a>.
+      </p>
+      <p>
+        Whether you&apos;re having trouble signing in, need help with household invitations, or have spotted a bug, please include:
+      </p>
+      <ul className="list-disc pl-5 space-y-2">
+        <li>The email address associated with your account</li>
+        <li>Your Household ID (found in Account → Household)</li>
+        <li>A brief description of what happened and what you expected to see</li>
+      </ul>
+
+      <SectionTitle>Common Questions</SectionTitle>
+      <div className="space-y-4">
+        <div>
+          <h3 className="font-bold text-gray-900">How do I invite my partner?</h3>
+          <p>
+            Go to the <strong>Account</strong> tab and tap <strong>Invite Household Members</strong>. You can send an invitation link via text, email, or any other messaging app.
+          </p>
+        </div>
+        <div>
+          <h3 className="font-bold text-gray-900">One price for the whole house?</h3>
+          <p>
+            Yes. One <strong>Provisions Pro</strong> subscription (billed annually) covers everyone in your household. As long as the household admin has an active subscription, all members get full access to real-time sync and unlimited shortcuts.
+          </p>
+        </div>
+        <div>
+          <h3 className="font-bold text-gray-900">Can I use Provisions offline?</h3>
+          <p>
+            Yes. Provisions is built to work in grocery stores where signal is often weak. You can check items off and add new ones while offline; your changes will sync to the rest of your household automatically as soon as you&apos;re back online.
+          </p>
+        </div>
+        <div>
+          <h3 className="font-bold text-gray-900">How do I delete my account?</h3>
+          <p>
+            You can delete your account and all associated data from the <strong>Account</strong> tab by tapping <strong>Delete Account</strong> at the bottom of the page.
+          </p>
+        </div>
+      </div>
+
+      <SectionTitle>App Store & Google Play Subscriptions</SectionTitle>
+      <p>
+        Subscriptions are managed by your device&apos;s app store. To view, change, or cancel your subscription:
+      </p>
+      <ul className="list-disc pl-5 space-y-2">
+        <li>
+          <strong>iOS:</strong> Open the Settings app → Tap your Name → Tap Subscriptions.
+        </li>
+        <li>
+          <strong>Android:</strong> Open the Google Play Store → Tap your profile icon → Tap Payments & subscriptions → Subscriptions.
+        </li>
+      </ul>
     </LegalShell>
   );
 }

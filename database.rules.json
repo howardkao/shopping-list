@@ -6,10 +6,12 @@
     "users": {
       "$uid": {
         ".read": "auth != null && auth.uid == $uid",
-        ".write": "auth != null && (!data.exists() || auth.uid == $uid)",
+        ".write": "auth != null && auth.uid == $uid",
         "email":       { ".validate": "newData.isString() && newData.val().length <= 200" },
         "displayName": { ".validate": "newData.isString() && newData.val().length <= 100" },
-        "householdId": { ".validate": "newData.isString() && newData.val().length <= 50" },
+        "householdId": {
+          ".validate": "newData.isString() && newData.val().length <= 50 && (!data.exists() || data.val() == newData.val())"
+        },
         "createdAt":   { ".validate": "newData.isNumber()" },
         "logsLastRemoteCleanupAt": { ".validate": "newData.isNumber()" },
         "$other":      { ".validate": false }
@@ -18,10 +20,12 @@
 
     "households": {
       "$householdId": {
-        ".read":  "auth != null && root.child('users').child(auth.uid).child('householdId').val() == $householdId",
-        ".write": "auth != null && (root.child('users').child(auth.uid).child('householdId').val() == $householdId || !root.child('users').child(auth.uid).child('householdId').exists())",
+        ".read":  "auth != null && data.hasChild('members/' + auth.uid)",
+        ".write": "auth != null && ((!newData.exists() && data.child('adminUid').val() == auth.uid) || (data.exists() && newData.exists() && data.hasChild('members/' + auth.uid)) || (!data.exists() && newData.child('adminUid').val() == auth.uid && newData.hasChild('members/' + auth.uid)))",
 
-        "adminUid":  { ".validate": "newData.isString() && newData.val().length <= 50" },
+        "adminUid": {
+          ".validate": "newData.isString() && newData.val().length <= 50 && (!data.exists() || data.val() == auth.uid)"
+        },
         "createdAt": { ".validate": "newData.isNumber()" },
         "subscriptionUpdatedAt": { ".validate": "newData.isNumber()" },
         "trialEndsAt": {
@@ -182,7 +186,6 @@
 
         "members": {
           "$uid": {
-            ".write": "auth != null && auth.uid == $uid",
             "displayName": { ".validate": "newData.isString() && newData.val().length <= 100" },
             "email":       { ".validate": "newData.isString() && newData.val().length <= 200" },
             "$other":      { ".validate": false }
@@ -194,17 +197,15 @@
     },
 
     "inviteCodes": {
-      ".read": true,
       "$code": {
+        ".read": true,
         ".validate": "$code.matches(/^[A-Z0-9]{16}$/)",
         ".write": "auth != null && (newData.exists() ? root.child('users').child(auth.uid).child('householdId').val() == newData.child('householdId').val() : root.child('users').child(auth.uid).child('householdId').val() == data.child('householdId').val())",
-        "householdId": { ".validate": "newData.isString() && newData.val().length <= 50" },
-        "expiresAt":   { ".validate": "newData.isString() && newData.val().length <= 50" },
+        "code":          { ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{16}$/)" },
+        "householdId":   { ".validate": "newData.isString() && newData.val().length <= 50" },
+        "expiresAt":     { ".validate": "newData.isString() && newData.val().length <= 50" },
         "used":          { ".validate": "newData.isBoolean()" },
-        "usedBy":        { ".validate": "newData.isString() && newData.val().length <= 200" },
-        "usedAt":        { ".validate": "newData.isNumber()" },
         "createdAt":     { ".validate": "newData.isNumber()" },
-        "inviteeEmail":  { ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 254)" },
         "$other":        { ".validate": false }
       }
     },

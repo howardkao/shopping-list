@@ -61,9 +61,6 @@ ios/App/App/GoogleService-Info.plist
 # WP-6: transient input for `npm run gen-icons` (source of truth is public/icon-1024.png)
 .cap-assets-input/
 
-# Voice worker local env
-voice-mcp/.dev.vars
-
 # Local requirements docs (not committed; see CLAUDE.md for workflow)
 PRD.md
 TDD.md
@@ -82,6 +79,26 @@ STRIPE_EXECUTION_PLAN.md
 PAYWALL_SPEC.md
 STRIPE_SPEC.md
 LAUNCH_GEO_SCOPE_PLAN.md
+BIOMETRIC_PLAN.md
+SMART_HOME_PLAN.md
+
+# Local env vars and build dirs for workers
+**/.dev.vars
+**/.wrangler/
+
+# Local AI settings
+.claude/
+
+# Icons and splash screens (generated via scripts/gen-icons.sh)
+public/icon-1024.png
+play-store-icon-512.png
+android/app/src/main/res/drawable*/*.png
+android/app/src/main/res/mipmap*/*.png
+android/app/src/main/res/mipmap*/*.xml
+ios/App/App/Assets.xcassets/AppIcon.appiconset/*.png
+ios/App/App/Assets.xcassets/AppIcon.appiconset/*.json
+ios/App/App/Assets.xcassets/Splash.imageset/*.png
+ios/App/App/Assets.xcassets/Splash.imageset/*.json
 
 # Firebase emulator debug log (local only)
 database-debug.log
@@ -91,3 +108,5 @@ play-store-feature-graphic.html
 INVITE_EMAIL_PLAN.md
 SHOPPING_LIST_EXECUTION_BLUEPRINT_AND_TECHNICAL_SPEC.md
 SHOPPING_LIST_STRATEGY_AND_NORTH_STAR.md
+SECURITY_AUDIT.md
+database.rules.json.bak

@@ -45,12 +45,14 @@ export const database = getDatabase(app);
 
 const recaptchaSiteKey = (import.meta.env.VITE_RECAPTCHA_SITE_KEY || '').trim();
 
-// Enable debug mode for local development or when a debug token is provided
-if (typeof self !== 'undefined' && !isNativePlatform) {
+// App Check debug token: dev-only. Wrapping in `import.meta.env.DEV` lets Vite statically
+// replace the condition with `false` and tree-shake the entire branch from production
+// builds, so the debug token literal is never inlined into the public bundle (which would
+// neutralize App Check enforcement for everyone).
+if (import.meta.env.DEV && typeof self !== 'undefined' && !isNativePlatform) {
   const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
   const debugToken = (import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || '').trim();
-  
-  if (import.meta.env.DEV || isLocal || debugToken) {
+  if (isLocal || debugToken) {
     self.FIREBASE_APPCHECK_DEBUG_TOKEN = debugToken || true;
   }
 }

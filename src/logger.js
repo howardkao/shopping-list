@@ -18,7 +18,11 @@ const LOG_LEVELS = {
 const IS_PRODUCTION = import.meta.env.PROD;
 
 // Generate a unique session ID for this app session
-const SESSION_ID = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+const SESSION_ID = `session_${Date.now()}_${(() => {
+  const array = new Uint32Array(2);
+  window.crypto.getRandomValues(array);
+  return (array[0].toString(36) + array[1].toString(36)).substr(0, 9);
+})()}`;
 
 // In-memory log buffer (for admin log viewer)
 const logBuffer = [];

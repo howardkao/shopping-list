@@ -32,17 +32,22 @@ const config = {
   appId:             env.VITE_FIREBASE_APP_ID             || '',
 };
 
-const authRedirectScript = `  <script type="module">
-    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-    import { getAuth, getRedirectResult, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
-    const app = initializeApp(${JSON.stringify(config)});
-    const auth = getAuth(app);
-    try {
-      await getRedirectResult(auth);
-    } catch (e) { /* ignore */ }
-    onAuthStateChanged(auth, user => { if (user) window.location.replace('/app'); });
-  </script>`;
+// Write the auth-redirect handler to its own file so the landing page can ship a strict
+// Content-Security-Policy without `script-src 'unsafe-inline'`. The Firebase config below is
+// the same public web-app config that's already inlined into the SPA bundle — not a secret.
+const authRedirectModule = `import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+import { getAuth, getRedirectResult, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+const app = initializeApp(${JSON.stringify(config)});
+const auth = getAuth(app);
+try {
+  await getRedirectResult(auth);
+} catch (e) { /* ignore */ }
+onAuthStateChanged(auth, (user) => { if (user) window.location.replace('/app'); });
+`;
+writeFileSync('dist/landing-auth.js', authRedirectModule);
+
+const authRedirectTag = `  <script type="module" src="/landing-auth.js"></script>`;
 
 let html = readFileSync('landing.html', 'utf8');
-html = html.replace('</head>', authRedirectScript + '\n</head>');
+html = html.replace('</head>', authRedirectTag + '\n</head>');
 writeFileSync('dist/landing.html', html);

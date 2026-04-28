@@ -1,20 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- If OAuth returns to `/` (marketing page), bounce to /signin so the SPA (initializeAuth + getRedirectResult) completes the redirect. -->
-  <script>
-    (function () {
-      var path = window.location.pathname;
-      if (path !== '/' && path !== '') return;
-      var q = window.location.search || '';
-      var h = window.location.hash || '';
-      if (!q && !h) return;
-      var qh = q + h;
-      if (/apiKey|oobCode|mode|state|code|scope|authType|__firebase|id_token|access_token|session_state|signInWithRedirect/i.test(qh)) {
-        window.location.replace('/signin' + q + h);
-      }
-    })();
-  </script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Provisions — The shopping list that remembers what you buy</title>
@@ -891,6 +877,7 @@
     <span class="footer-wordmark">Provisions</span>
     <div class="footer-links">
       <a href="/privacy">Privacy Policy</a>
+      <a href="/support">Support</a>
       <a href="/terms">Terms of Service</a>
       <a href="/account-deletion">Account &amp; data deletion</a>
     </div>
@@ -898,50 +885,6 @@
   </div>
 </footer>
 
-<script>
-  const words = [
-    'milk',
-    'eggs',
-    'worcestershire',
-    'bread',
-    'mozzarella',
-    'coffee',
-    'gnocchi',
-    'bananas',
-    'sriracha',
-    'butter',
-    'parmesan',
-    'chicken',
-  ];
-
-  const el = document.getElementById('typed-word');
-  let wi = 0, ci = 0, del = false;
-
-  function tick() {
-    const w = words[wi];
-    if (!del) {
-      ci++;
-      el.textContent = w.slice(0, ci);
-      if (ci === w.length) {
-        el.classList.add('blink');
-        return setTimeout(() => { el.classList.remove('blink'); del = true; tick(); }, 1700);
-      }
-      setTimeout(tick, 85 + Math.random() * 55);
-    } else {
-      ci--;
-      el.textContent = w.slice(0, ci);
-      if (ci === 0) {
-        del = false;
-        wi = (wi + 1) % words.length;
-        el.classList.add('blink');
-        return setTimeout(() => { el.classList.remove('blink'); tick(); }, 300);
-      }
-      setTimeout(tick, 40);
-    }
-  }
-
-  el.classList.add('blink');
-  setTimeout(() => { el.classList.remove('blink'); tick(); }, 800);
-</script>
+<script src="/landing.js" defer></script>
 </body>
 </html>

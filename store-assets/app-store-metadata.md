@@ -36,6 +36,9 @@ PROVISIONS PRO INCLUDES
 • Unlimited items and shortcuts — organize your way
 • Invite household members — everyone contributes
 
+Terms of Use: https://myprovisions.app/terms
+Privacy Policy: https://myprovisions.app/privacy
+
 The shopping list you actually use. The way you actually shop.
 ```
 
@@ -53,11 +56,10 @@ Two months free. No card required. $3.99/year after trial, covers your whole hou
 
 **Provisions Pro** (what appears on the subscription/purchase sheet in App Store)
 ```
-Real-time household sync. Unlimited items and shortcuts. Invite household members.
-
-Subscription: $3.99 per year after 2-month free trial.
-Renews automatically unless cancelled. Manage subscriptions in Settings.
+Name: Provisions Pro
+Description: Household sync and unlimited shortcuts.
 ```
+*Note: Terms of Use and Privacy Policy links are included in the main App Description above to satisfy EULA requirements while staying within the 45-character subscription description limit.*
 
 ### Metadata
 
@@ -68,6 +70,8 @@ Renews automatically unless cancelled. Manage subscriptions in Settings.
 **Support URL:** `https://myprovisions.app/support`
 
 **Privacy Policy URL:** `https://myprovisions.app/privacy`
+
+**Terms of Use (EULA) URL:** `https://myprovisions.app/terms`
 
 ---
 
@@ -110,6 +114,9 @@ PROVISIONS PRO SUBSCRIPTION
 • Full access after 2-month free trial
 
 $3.99/year. No additional charges. Cancel anytime.
+
+Terms of Use: https://myprovisions.app/terms
+Privacy Policy: https://myprovisions.app/privacy
 
 Start your free trial today. No card required.
 ```

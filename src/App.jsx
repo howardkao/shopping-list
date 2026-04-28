@@ -5,7 +5,7 @@ import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { App as CapacitorApp } from '@capacitor/app';
 import { SplashScreen } from '@capacitor/splash-screen';
-import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronLeft, ChevronRight, ShoppingCart, ClipboardList, ClipboardPen, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff, ScrollText, Home, KeyRound, Users } from 'lucide-react';
+import { Plus, Check, X, Search, CheckCircle, Loader2, Menu, Trash2, LogOut, Shield, Mail, Lock, Copy, ChevronDown, ChevronLeft, ChevronRight, ShoppingCart, ClipboardList, ClipboardPen, RefreshCw, Settings, History, UserCircle, BarChart3, Pin, AlertTriangle, Eye, EyeOff, ScrollText, Home, KeyRound, Users, LifeBuoy } from 'lucide-react';
 import { auth, database } from './firebase';
 import {
   createUserWithEmailAndPassword,
@@ -62,7 +62,7 @@ import { humanizeAuthError } from './authErrors';
 import DebugPanel from './DebugPanel';
 import SuggestionsEditor from './SuggestionsEditor';
 import Onboarding from './Onboarding';
-import { PrivacyPolicyPage, TermsOfServicePage } from './LegalPages';
+import { PrivacyPolicyPage, TermsOfServicePage, SupportPage } from './LegalPages';
 import { bootstrapHouseholdTaxonomy } from './householdBootstrap';
 import { formatAisleNameForDisplay } from './aisleDisplay';
 import {
@@ -79,11 +79,16 @@ import {
 } from './itemEventsSharding';
 // categoryClassifier is used internally by itemAnalytics
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+const generateId = () => {
+  const array = new Uint32Array(2);
+  window.crypto.getRandomValues(array);
+  return (array[0].toString(36) + array[1].toString(36)).substr(0, 9);
+};
 
 /** Public SPA routes for legal pages (Firebase hosting rewrites + in-app history). */
 const LEGAL_PATH_PRIVACY = '/privacy';
 const LEGAL_PATH_TERMS = '/terms';
+const LEGAL_PATH_SUPPORT = '/support';
 
 /** Flip to `true` once iOS App Store + Google Play approvals are live. Gates the PWA
  *  transition banner and the web "download the app" links in PaywallSheet + Account. */
@@ -94,6 +99,7 @@ const GOOGLE_PLAY_URL = 'https://play.google.com/store/apps/details?id=com.provi
 function legalViewFromPathname(pathname) {
   if (pathname === LEGAL_PATH_PRIVACY) return 'privacy';
   if (pathname === LEGAL_PATH_TERMS) return 'terms';
+  if (pathname === LEGAL_PATH_SUPPORT) return 'support';
   return null;
 }
 
@@ -176,62 +182,72 @@ async function setupHouseholdForUser(newUser, { signupType, inviteCode, displayN
       throw new Error('Please enter your invitation code.');
     }
     const code = inviteCode.trim().toUpperCase();
-    logger.info('Auth', 'Join: reading invite code', { code, uid: newUser.uid });
-    const codeSnapshot = await get(ref(database, `inviteCodes/${code}`));
-    const codeData = codeSnapshot.val();
-    logger.info('Auth', 'Join: invite code data', { found: !!codeData, used: codeData?.used, hasHouseholdId: !!codeData?.householdId });
-    if (!codeData || Date.now() > new Date(codeData.expiresAt).getTime()) {
+    const workerUrl = (import.meta.env.VITE_INVITE_WORKER_URL || '').replace(/\/$/, '');
+    if (!workerUrl) {
+      logger.error('Auth', 'Join: no invite-worker URL configured', { uid: newUser.uid });
+      throw new Error('Invite redemption is unavailable right now. Please contact support.');
+    }
+
+    logger.info('Auth', 'Join: requesting server-mediated redemption', { code, uid: newUser.uid });
+    const idToken = await newUser.getIdToken();
+
+    let res;
+    try {
+      res = await fetch(`${workerUrl}/redeem-invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken, code, displayName: trimmedName }),
+      });
+    } catch (e) {
+      logger.error('Auth', 'Join: worker fetch failed', { error: e.message });
+      throw new Error('Could not reach the invite service. Please try again.');
+    }
+
+    let payload = null;
+    try { payload = await res.json(); } catch { /* fall through */ }
+
+    if (!res.ok || !payload?.ok) {
+      const message = payload?.error || `Invite redemption failed (${res.status})`;
+      logger.error('Auth', 'Join: redemption rejected by worker', { status: res.status, error: message });
+      // Map the worker's machine-readable errors to friendly user messages.
+      if (/already_used|been used/i.test(message)) throw new Error('That invite code has already been used.');
+      if (/expired/i.test(message)) throw new Error('That invite code has expired.');
+      if (/already.*member/i.test(message)) throw new Error('You already belong to a household. Sign out first.');
+      if (/invalid_id_token|invalid_signature|token_expired/i.test(message)) {
+        throw new Error('Authentication expired. Please sign in again.');
+      }
       throw new Error("That invite code isn't valid or has expired.");
     }
-    if (codeData.used) {
-      throw new Error('That invite code has already been used.');
-    }
-    const householdId = codeData.householdId;
 
-    // Write user record first so the security rule check on /inviteCodes (which
-    // requires auth.uid's householdId to match) passes for the subsequent writes.
-    logger.info('Auth', 'Join: writing user record', { uid: newUser.uid, householdId });
-    await set(ref(database, `users/${newUser.uid}`), {
-      email: newUser.email,
-      displayName: trimmedName,
-      createdAt: now,
-      householdId
-    });
-    logger.info('Auth', 'Join: user record written, marking invite code used');
-    await set(ref(database, `inviteCodes/${code}/used`), true);
-    await set(ref(database, `inviteCodes/${code}/usedBy`), newUser.email);
-    await set(ref(database, `inviteCodes/${code}/usedAt`), now);
-    logger.info('Auth', 'Join: invite code marked used, writing household copies');
-    await set(ref(database, `households/${householdId}/inviteCodes/${code}/used`), true);
-    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedBy`), newUser.email);
-    await set(ref(database, `households/${householdId}/inviteCodes/${code}/usedAt`), now);
-    logger.info('Auth', 'Join: writing member record', { householdId, uid: newUser.uid });
-    await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
-      displayName: trimmedName,
-      email: newUser.email
-    });
-    logger.info('Auth', 'Join: complete', { householdId, uid: newUser.uid });
-    return householdId;
+    logger.info('Auth', 'Join: complete', { householdId: payload.householdId, uid: newUser.uid });
+    return payload.householdId;
   }
 
-  // Create a new household
+  // Create a new household — single multi-path update so adminUid + member + user record
+  // commit atomically. The new RTDB rules require `users/<uid>/householdId` to point at a
+  // household where `members/<uid>` exists in the post-update state, so all three paths
+  // must land together.
   const newHouseholdRef = push(ref(database, 'households'));
   const householdId = newHouseholdRef.key;
-  await set(newHouseholdRef, {
-    adminUid: newUser.uid,
-    createdAt: now,
-    trialEndsAt: now + TRIAL_DAYS * 24 * 60 * 60 * 1000,
-  });
-  await set(ref(database, `users/${newUser.uid}`), {
-    email: newUser.email,
-    displayName: trimmedName,
-    createdAt: now,
-    householdId
-  });
-  await set(ref(database, `households/${householdId}/members/${newUser.uid}`), {
-    displayName: trimmedName,
-    email: newUser.email
-  });
+  const trialEndsAt = now + TRIAL_DAYS * 24 * 60 * 60 * 1000;
+
+  // The members entry must be written as one object (not via deep field paths) — RTDB
+  // rules see `newData.child('members').hasChild(auth.uid)` as false when the only writes
+  // under members/<uid> are deep-path field writes in the same multi-path update.
+  const updates = {
+    [`households/${householdId}/adminUid`]: newUser.uid,
+    [`households/${householdId}/createdAt`]: now,
+    [`households/${householdId}/trialEndsAt`]: trialEndsAt,
+    [`households/${householdId}/members/${newUser.uid}`]: {
+      displayName: trimmedName,
+      email: newUser.email,
+    },
+    [`users/${newUser.uid}/email`]: newUser.email,
+    [`users/${newUser.uid}/displayName`]: trimmedName,
+    [`users/${newUser.uid}/createdAt`]: now,
+    [`users/${newUser.uid}/householdId`]: householdId,
+  };
+  await update(ref(database), updates);
 
   try {
     const result = await bootstrapHouseholdTaxonomy(householdId);
@@ -275,6 +291,12 @@ function buildFirebaseCredentialFromNativePlugin(providerType, pluginResult) {
 }
 
 async function deleteAccountDataAndAuth(user, householdId, isAdmin) {
+  try {
+    await shutdownSubscriptions();
+  } catch (err) {
+    logger.warn('Auth', 'shutdownSubscriptions failed during account deletion', { error: err.message });
+  }
+
   if (isAdmin && householdId) {
     const inviteCodesSnap = await get(ref(database, `households/${householdId}/inviteCodes`));
     const inviteCodes = inviteCodesSnap.val();
@@ -284,6 +306,12 @@ async function deleteAccountDataAndAuth(user, householdId, isAdmin) {
       );
     }
     await remove(ref(database, `households/${householdId}`));
+  } else if (householdId) {
+    // Non-admin: remove just this user from the household members list
+    await remove(ref(database, `households/${householdId}/members/${user.uid}`));
+    // Trigger subscription refresh for others, just in case RC association changed
+    // or if the UI needs to re-evaluate based on membership.
+    await set(ref(database, `households/${householdId}/subscriptionUpdatedAt`), Date.now()).catch(() => {});
   }
   await remove(ref(database, `users/${user.uid}`));
   await clearCachedUser();
@@ -391,9 +419,19 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode, initia
     setSuccess('');
     logger.info('Auth', 'Sign in attempt', { email: trimmedEmail });
     try {
-      await signInWithEmailAndPassword(auth, trimmedEmail, password);
+      const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, password);
       logger.info('Auth', 'Sign in successful', { email: trimmedEmail });
-      if (onLoginSuccess) onLoginSuccess();
+      
+      // Fetch householdId and isAdmin status before calling onLoginSuccess
+      const userRecord = await get(ref(database, `users/${userCredential.user.uid}`));
+      const householdId = userRecord.val()?.householdId || null;
+      let isAdmin = false;
+      if (householdId) {
+        const adminSnap = await get(ref(database, `households/${householdId}/adminUid`));
+        isAdmin = adminSnap.val() === userCredential.user.uid;
+      }
+      
+      if (onLoginSuccess) onLoginSuccess({ householdId, isAdmin });
     } catch (err) {
       logger.error('Auth', 'Sign in failed', { email: trimmedEmail, error: err.message, code: err.code });
       setError(humanizeAuthError(err));
@@ -475,7 +513,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode, initia
       // user is created, silently swallowing any error from setupHouseholdForUser.
       sessionStorage.setItem(EMAIL_SIGNUP_IN_PROGRESS_KEY, '1');
       const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
-      await setupHouseholdForUser(userCredential.user, {
+      const householdId = await setupHouseholdForUser(userCredential.user, {
         signupType,
         inviteCode,
         displayName: trimmedName
@@ -487,7 +525,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode, initia
         trackEvent('invite_code_redeemed', {});
       }
       sessionStorage.removeItem(EMAIL_SIGNUP_IN_PROGRESS_KEY);
-      if (onLoginSuccess) onLoginSuccess();
+      if (onLoginSuccess) onLoginSuccess({ householdId, isAdmin: signupType === 'create' });
     } catch (err) {
       sessionStorage.removeItem(EMAIL_SIGNUP_IN_PROGRESS_KEY);
       logger.error('Auth', 'Sign up failed', { email: trimmedEmail, error: err.message, code: err.code });
@@ -574,21 +612,26 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode, initia
         if (existing?.householdId) {
           logger.info('Auth', 'SSO returning user (native), proceeding to app');
           sessionStorage.removeItem(SSO_SESSION_KEY);
-          if (onLoginSuccess) onLoginSuccess();
+          
+          let isAdmin = false;
+          const adminSnap = await get(ref(database, `households/${existing.householdId}/adminUid`));
+          isAdmin = adminSnap.val() === ssoUser.uid;
+          
+          if (onLoginSuccess) onLoginSuccess({ householdId: existing.householdId, isAdmin });
           return;
         }
 
         const ssoDisplayName = (ssoUser.displayName || '').trim();
         const storedTrim = (storedName || '').trim();
         if (ctxMode === 'signup' && (ssoDisplayName || storedTrim)) {
-          await setupHouseholdForUser(ssoUser, {
+          const householdId = await setupHouseholdForUser(ssoUser, {
             signupType: ctxSignupType,
             inviteCode: ctxInvite,
             displayName: ssoDisplayName || storedTrim
           });
           logger.info('Auth', 'SSO household setup completed (native)', { signupType: ctxSignupType });
           sessionStorage.removeItem(SSO_SESSION_KEY);
-          if (onLoginSuccess) onLoginSuccess();
+          if (onLoginSuccess) onLoginSuccess({ householdId, isAdmin: ctxSignupType === 'create' });
           return;
         }
 
@@ -688,11 +731,21 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode, initia
         provider: pendingLinkProvider,
         uid: pwdCred.user.uid
       });
+      
+      // Fetch householdId and isAdmin status before calling onLoginSuccess
+      const userRecord = await get(ref(database, `users/${pwdCred.user.uid}`));
+      const householdId = userRecord.val()?.householdId || null;
+      let isAdmin = false;
+      if (householdId) {
+        const adminSnap = await get(ref(database, `households/${householdId}/adminUid`));
+        isAdmin = adminSnap.val() === pwdCred.user.uid;
+      }
+      
       setPendingCredential(null);
       setPendingLinkEmail('');
       setPendingLinkProvider('');
       sessionStorage.removeItem(SSO_LINK_UI_KEY);
-      if (onLoginSuccess) onLoginSuccess();
+      if (onLoginSuccess) onLoginSuccess({ householdId, isAdmin });
     } catch (err) {
       logger.error('Auth', 'Account linking failed', {
         provider: pendingLinkProvider,
@@ -741,7 +794,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode, initia
         setLoading(false);
         return;
       }
-      await setupHouseholdForUser(u, {
+      const householdId = await setupHouseholdForUser(u, {
         signupType,
         inviteCode,
         displayName: trimmedName
@@ -749,7 +802,7 @@ function Login({ onLoginSuccess, onOpenPrivacy, onOpenTerms, initialMode, initia
       logger.info('Auth', 'SSO household setup completed', { signupType });
       sessionStorage.removeItem(SSO_SESSION_KEY);
       setAwaitingHousehold(false);
-      if (onLoginSuccess) onLoginSuccess();
+      if (onLoginSuccess) onLoginSuccess({ householdId, isAdmin: signupType === 'create' });
     } catch (err) {
       logger.error('Auth', 'SSO household setup failed', { error: err.message, code: err.code });
       setError(humanizeAuthError(err));
@@ -1671,8 +1724,12 @@ function AdminPanel({ onClose, householdId, members, adminUid }) {
   const generateCode = () => {
     // Exclude visually ambiguous chars: O (vs 0), I (vs 1), L (vs 1)
     const chars = 'ABCDEFGHJKMNPQRSTVWXYZ0123456789';
+    const array = new Uint32Array(16);
+    window.crypto.getRandomValues(array);
     let code = '';
-    for (let i = 0; i < 16; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    for (let i = 0; i < 16; i++) {
+      code += chars[array[i] % chars.length];
+    }
     return code;
   };
 
@@ -1695,11 +1752,13 @@ function AdminPanel({ onClose, householdId, members, adminUid }) {
     if (emailToSend) {
       setInviteSending(true);
       try {
+        const idToken = await auth.currentUser?.getIdToken();
+        if (!idToken) throw new Error('Not authenticated');
         const workerUrl = (import.meta.env.VITE_INVITE_WORKER_URL || '').replace(/\/$/, '');
         const res = await fetch(`${workerUrl}/send-invite`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code, inviteeEmail: emailToSend, householdId }),
+          body: JSON.stringify({ idToken, code, inviteeEmail: emailToSend, householdId }),
         });
         const data = await res.json();
         if (data.ok) {
@@ -2865,7 +2924,7 @@ export default function App() {
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showLoginExplicitly, setShowLoginExplicitly] = useState(
-    () => ['/signin', '/signup', LEGAL_PATH_PRIVACY, LEGAL_PATH_TERMS].includes(window.location.pathname)
+    () => ['/signin', '/signup', LEGAL_PATH_PRIVACY, LEGAL_PATH_TERMS, LEGAL_PATH_SUPPORT].includes(window.location.pathname)
   );
 
   const loginInitialMode = window.location.pathname === '/signup' ? 'signup' : (inviteCodeFromUrl ? 'signup' : 'signin');
@@ -3009,7 +3068,7 @@ export default function App() {
         setLoginLegalView(null);
         return;
       }
-      if (path === LEGAL_PATH_PRIVACY || path === LEGAL_PATH_TERMS) {
+      if (path === LEGAL_PATH_PRIVACY || path === LEGAL_PATH_TERMS || path === LEGAL_PATH_SUPPORT) {
         setLoginLegalView(legal);
         setCurrentPage(legal);
         return;
@@ -3017,7 +3076,7 @@ export default function App() {
       if (path === '/app' || path.startsWith('/app/')) {
         setLoginLegalView(null);
         setCurrentPage((prev) =>
-          prev === 'privacy' || prev === 'terms' ? (legalReturnPageRef.current || 'list') : prev
+          prev === 'privacy' || prev === 'terms' || prev === 'support' ? (legalReturnPageRef.current || 'list') : prev
         );
       }
     };
@@ -3056,8 +3115,10 @@ export default function App() {
     let cancelled = false;
     let unsubscribe = null;
 
-    const goAppAfterSso = () => {
+    const goAppAfterSso = (ctx = {}) => {
       if (cancelled) return;
+      if (ctx.householdId) setHouseholdId(ctx.householdId);
+      if (ctx.isAdmin !== undefined) setIsAdmin(ctx.isAdmin);
       setShowLoginExplicitly(false);
       setLoginLegalView(null);
       window.history.replaceState({}, '', '/app');
@@ -3124,25 +3185,30 @@ export default function App() {
         sessionStorage.removeItem(SSO_SESSION_KEY);
 
         const ssoUser = result.user;
-        const { mode, signupType, inviteCode, displayName: storedName } = ctx;
+        const { mode: ctxMode, signupType: ctxSignupType, inviteCode: ctxInvite, displayName: storedName } = ctx;
 
         const userRecSnap = await get(ref(database, `users/${ssoUser.uid}`));
         const existing = userRecSnap.val();
         if (existing?.householdId) {
           logger.info('Auth', 'SSO returning user (redirect), proceeding to app');
-          goAppAfterSso();
+          
+          let isAdmin = false;
+          const adminSnap = await get(ref(database, `households/${existing.householdId}/adminUid`));
+          isAdmin = adminSnap.val() === ssoUser.uid;
+          
+          goAppAfterSso({ householdId: existing.householdId, isAdmin });
           return;
         }
 
         const ssoDisplayName = (ssoUser.displayName || '').trim();
         const storedTrim = (storedName || '').trim();
-        if (mode === 'signup' && (ssoDisplayName || storedTrim)) {
-          await setupHouseholdForUser(ssoUser, {
-            signupType,
-            inviteCode,
+        if (ctxMode === 'signup' && (ssoDisplayName || storedTrim)) {
+          const householdId = await setupHouseholdForUser(ssoUser, {
+            signupType: ctxSignupType,
+            inviteCode: ctxInvite,
             displayName: ssoDisplayName || storedTrim
           });
-          goAppAfterSso();
+          goAppAfterSso({ householdId, isAdmin: ctxSignupType === 'create' });
           return;
         }
 
@@ -3285,7 +3351,7 @@ export default function App() {
             }
             const fetchedHouseholdId = userRecord.val()?.householdId || null;
             if (fetchedHouseholdId) userHouseholdId = fetchedHouseholdId;
-            if (!userRecord.val()?.displayName) {
+            if (!userRecord.val()?.displayName && !blockDismissLogin) {
               setNeedsDisplayName(true);
             }
             if (userHouseholdId) {
@@ -5131,7 +5197,9 @@ export default function App() {
     setExpandedCategories(prev => ({ ...prev, [cat]: !prev[cat] }));
   };
 
-  const handleLoginSuccess = useCallback(() => {
+  const handleLoginSuccess = useCallback((ctx = {}) => {
+    if (ctx.householdId) setHouseholdId(ctx.householdId);
+    if (ctx.isAdmin !== undefined) setIsAdmin(ctx.isAdmin);
     setShowLoginExplicitly(false);
     setLoginLegalView(null);
     window.history.replaceState({}, '', '/app');
@@ -5146,7 +5214,7 @@ export default function App() {
   };
 
   const openLoginLegalView = useCallback((view) => {
-    const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
+    const path = view === 'privacy' ? LEGAL_PATH_PRIVACY : view === 'support' ? LEGAL_PATH_SUPPORT : LEGAL_PATH_TERMS;
     window.history.pushState({ loginLegal: view }, '', path);
     setLoginLegalView(view);
   }, []);
@@ -5163,7 +5231,7 @@ export default function App() {
   const openAppLegalPage = useCallback((page) => {
     legalReturnPageRef.current = currentPage;
     setCurrentPage(page);
-    const path = page === 'privacy' ? LEGAL_PATH_PRIVACY : LEGAL_PATH_TERMS;
+    const path = page === 'privacy' ? LEGAL_PATH_PRIVACY : page === 'support' ? LEGAL_PATH_SUPPORT : LEGAL_PATH_TERMS;
     window.history.pushState({ appLegal: true }, '', path);
   }, [currentPage]);
 
@@ -5344,7 +5412,7 @@ export default function App() {
         r.setShowMenu(false);
         return;
       }
-      if (r.currentPage === 'privacy' || r.currentPage === 'terms') {
+      if (r.currentPage === 'privacy' || r.currentPage === 'terms' || r.currentPage === 'support') {
         r.closeAppLegalPage();
         return;
       }
@@ -5788,7 +5856,9 @@ export default function App() {
                           ? 'Household Insights'
                           : currentPage === 'settings'
                             ? 'Settings'
-                            : 'Account'}
+                            : currentPage === 'support'
+                              ? 'Support'
+                              : 'Account'}
                     </span>
                   </span>
                 )}
@@ -5827,6 +5897,7 @@ export default function App() {
                 <button onClick={() => { setCurrentPage('history'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'history' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'history' ? '#FF7A7A' : '#374151' }}><History size={20} />Purchase History</button>
                 <button onClick={() => { setCurrentPage('insights'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'insights' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'insights' ? '#FF7A7A' : '#374151' }}><BarChart3 size={20} />Household Insights</button>
                 <button onClick={() => { setCurrentPage('settings'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'settings' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'settings' ? '#FF7A7A' : '#374151' }}><Settings size={20} />Settings</button>
+                <button onClick={() => { setCurrentPage('support'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 border-b border-gray-100 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'support' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'support' ? '#FF7A7A' : '#374151' }}><LifeBuoy size={20} />Support</button>
                 <button onClick={() => { setCurrentPage('account'); setShowMenu(false); }} className={`w-full text-left px-6 py-4 font-semibold transition-colors hover:bg-gray-50 flex items-center gap-2 ${currentPage === 'account' ? 'bg-red-50' : ''}`} style={{ color: currentPage === 'account' ? '#FF7A7A' : '#374151' }}><UserCircle size={20} />Account</button>
               </div>
             </div>
@@ -5927,6 +5998,8 @@ export default function App() {
             <PrivacyPolicyPage onBack={closeAppLegalPage} />
           ) : currentPage === 'terms' ? (
             <TermsOfServicePage onBack={closeAppLegalPage} />
+          ) : currentPage === 'support' ? (
+            <SupportPage onBack={closeAppLegalPage} />
           ) : currentPage === 'account' ? (
             <div className="max-w-2xl mx-auto px-4 flex min-h-[calc(100dvh-5.5rem)] flex-col">
               <div className="space-y-3 shrink-0">
@@ -6040,6 +6113,16 @@ export default function App() {
                   className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
                 >
                   Privacy Policy
+                </button>
+                <span className="text-gray-300 select-none" aria-hidden="true">
+                  ·
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { openAppLegalPage('support'); setShowMenu(false); }}
+                  className="font-semibold underline decoration-gray-300 hover:decoration-gray-600"
+                >
+                  Support
                 </button>
                 <span className="text-gray-300 select-none" aria-hidden="true">
                   ·

@@ -11,7 +11,7 @@ export default defineConfig({
         server.middlewares.use((req, _res, next) => {
           const raw = req.url || '';
           const [pathOnly, query] = raw.split('?');
-          if (pathOnly === '/privacy' || pathOnly === '/terms') {
+          if (pathOnly === '/privacy' || pathOnly === '/terms' || pathOnly === '/support') {
             req.url = '/index.html' + (query != null && query !== '' ? `?${query}` : '');
           }
           if (pathOnly === '/account-deletion' || pathOnly === '/account-deletion/') {
@@ -53,7 +53,7 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/app.html',
-        navigateFallbackAllowlist: [/^\/app(\/|$)/, /^\/signin$/, /^\/signup$/, /^\/privacy$/, /^\/terms$/],
+        navigateFallbackAllowlist: [/^\/app(\/|$)/, /^\/signin$/, /^\/signup$/, /^\/privacy$/, /^\/terms$/, /^\/support$/],
         // Cache all static assets
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         // Runtime caching for Firebase and other APIs

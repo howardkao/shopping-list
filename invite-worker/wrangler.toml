@@ -5,8 +5,27 @@ compatibility_date = "2026-03-27"
 [vars]
 INVITE_FROM_EMAIL = "invite@myprovisions.app"
 APP_BASE_URL = "https://myprovisions.app"
+FIREBASE_PROJECT_ID = "kao-family-shopping-list"
 FIREBASE_DATABASE_URL = "https://kao-family-shopping-list-default-rtdb.firebaseio.com"
 FIREBASE_CLIENT_EMAIL = "firebase-adminsdk-fbsvc@kao-family-shopping-list.iam.gserviceaccount.com"
 
 [observability]
 enabled = true
+
+# Rate limiting — requires a one-time namespace creation in the Cloudflare dashboard.
+# Steps:
+#   1. Go to Cloudflare dashboard → Workers & Pages → your worker → Settings → Rate Limiting
+#      (or use: wrangler rate-limit create --limit 10 --period 60)
+#   2. Copy the returned namespace_id below and uncomment the block.
+# The worker code already handles the case where RATE_LIMITER is absent (graceful degradation).
+#
+# Rate limiting — Managed via Cloudflare WAF for Free plan compatibility.
+# To adjust limits, go to Cloudflare Dashboard -> Security -> WAF -> Rate Limiting.
+# The code below is for the Workers Rate Limiting API (Paid plans only).
+#
+# [[ratelimits]]
+# binding = "RATE_LIMITER"
+# namespace_id = "1"
+# [ratelimits.simple]
+# limit = 10
+# period = 60
